@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 课 · 读懂函数签名</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 1 课</div>
+<h1>读懂函数签名:C++ 代码的入口</h1>
+<p class="subtitle">学会读一行,就能猜出整段代码的"接口"。这是阅读 C++ 最高杠杆的第一项技能。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  看到任意一个 C++ 函数的<strong>第一行</strong>,你能立刻说出三件事:它<strong>返回什么类型</strong>、<strong>叫什么名字</strong>、<strong>要喂给它哪些输入</strong>。
+</div>
+
+<h2>从你已经懂的东西出发</h2>
+<p>
+你在 Houdini 里写过 <code>clamp(value, 0, 1)</code>,或者在着色器里见过它:把一个数限制在最小和最大值之间。
+你已经懂它<em>做什么</em>。现在我们只看它在 C++ 里<em>长什么样</em>。
+</p>
+
+<pre><code><span class="t-type">float</span> <span class="t-name">clamp</span>(<span class="t-type">float</span> value, <span class="t-type">float</span> minVal, <span class="t-type">float</span> maxVal)
+{
+    <span class="t-kw">if</span> (value &lt; minVal) <span class="t-kw">return</span> minVal;
+    <span class="t-kw">if</span> (value &gt; maxVal) <span class="t-kw">return</span> maxVal;
+    <span class="t-kw">return</span> value;
+}</code></pre>
+
+<p>先别管 <code>{ }</code> 里面的逻辑。只看<strong>第一行</strong>——这一行叫<strong>函数签名(function signature)</strong>。它是这个函数对外的"合同":告诉你能塞进去什么、会拿到什么。</p>
+
+<h2>签名的四个零件</h2>
+
+<pre><code><span class="t-type">float</span>  <span class="t-name">clamp</span>  (<span class="t-type">float</span> value,  <span class="t-type">float</span> minVal,  <span class="t-type">float</span> maxVal)
+ │       │        └──────────── 参数列表:每个都是「类型 名字」 ──────────┘
+ │       └─ 函数名:你调用时用的名字
+ └─ 返回类型:这个函数算完会"吐出"什么类型的值</code></pre>
+
+<p>
+关键差别,记住这一点就够本课了:<strong>在 C++ 里,类型是<em>明写</em>出来的</strong>。
+每个值前面都贴着它的类型标签——<code>float</code> 表示"带小数的数"。Houdini 的 VEX 里其实也是这样(<code>float</code>、<code>vector</code>、<code>int</code>),只是你可能没太留意。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  把函数想成一个 <strong>Houdini 节点</strong>:<strong>参数列表</strong>就是节点左上角的<strong>输入端口</strong>(每个端口有规定的数据类型),<strong>返回类型</strong>就是节点底部的<strong>输出端口</strong>。读签名 = 看一个节点收什么、出什么。
+</div>
+
+<h2>常见的类型标签(够你起步了)</h2>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">C++ 写法</th><th>意思</th><th>VFX 里类似</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>int</code></td><td>整数(没有小数)</td><td>VEX 的 <code>int</code>、点编号</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>float</code></td><td>带小数的数</td><td>VEX 的 <code>float</code>、属性值</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>bool</code></td><td>真/假(true/false)</td><td>开关、勾选框</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>void</code></td><td>不返回任何值</td><td>只"做事"、不输出的节点</td></tr>
+  <tr><td style="padding:0.4rem 0;"><code>float*</code> / <code>float&amp;</code></td><td>(后面课讲)指向某个 float</td><td>引用一份数据,先眼熟</td></tr>
+</table>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>读签名,凭记忆作答。每题答完会马上告诉你对错和原因。</p>
+
+<div class="quiz" id="quiz1"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-functions/" target="_blank">LearnCpp · Introduction to functions</a>
+  —— 全网公认最好的免费 C++ 教程里讲"函数"的一章。本课对应它的开头部分,看英文原版能加深印象。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——任何一行代码看不懂、想要更多 VFX 例子、或者想知道 <code>float&amp;</code> 那个 <code>&amp;</code> 到底是啥,直接在对话里问我。卡住是正常的,问出来就解决了。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:走进 <code>{ }</code> 里面——<strong>追踪一个值怎么流过函数体</strong>,给定输入算出 <code>clamp</code> 的输出。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz1", [
+  {
+    q: "看这个签名:<code>int countPoints(float radius)</code>。它<strong>返回</strong>什么类型?",
+    options: ["返回 int", "返回 float", "什么都不返回"],
+    correct: 0,
+    why: "签名最前面的 int 就是返回类型;radius 是它的输入参数,类型是 float。"
+  },
+  {
+    q: "<code>void moveObject(float x, float y, float z)</code> 接收<strong>几个</strong>参数?",
+    options: ["一个参数", "两个参数", "三个参数"],
+    correct: 2,
+    why: "括号里逗号分隔的有三项:x、y、z,各自类型都是 float。void 表示它不返回值。"
+  },
+  {
+    q: "下面哪个函数<strong>不会吐出任何返回值</strong>?",
+    options: ["bool isVisible()", "void resetCache()", "float getMass()"],
+    correct: 1,
+    why: "返回类型是 void 的函数只做事、不返回值;另外两个分别返回 bool 和 float。"
+  },
+  {
+    q: "<code>float dot(vector a, vector b)</code> 里,<code>a</code> 的类型是?",
+    options: ["类型是 float", "类型是 dot", "类型是 vector"],
+    correct: 2,
+    why: "参数写法是「类型 名字」,所以 a 的类型是它前面的 vector,而 float 是整个函数的返回类型。"
+  }
+]);
+</script>
+
+</body>
+</html>
