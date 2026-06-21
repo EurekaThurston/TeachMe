@@ -14,7 +14,7 @@
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
-  读懂签名里的 <code>T&amp;</code> 和 <code>const T&amp;</code>:理解"传引用"让函数能<strong>改调用方的数据</strong>,而 <code>const&amp;</code> 是<strong>"只读、不复制"</strong>;并明白为什么真实 HDK/引擎代码里参数几乎<strong>全是 <code>const&amp;</code></strong>。
+  读懂签名里的 <code>T&amp;</code> 和 <code>const T&amp;</code>:理解"传引用"让函数能<strong>改调用方的数据</strong>,而 <code>const&amp;</code> 是<strong>"只读、不复制"</strong>;并明白为什么真实引擎代码里参数几乎<strong>全是 <code>const&amp;</code></strong>。
 </div>
 
 <h2>热身 · 回忆第 5 课(别翻笔记)</h2>
@@ -37,11 +37,6 @@ alias = <span class="t-num">9.0</span>;                  <span class="t-cmt">// 
 <li><strong>必须在出生时就绑定。</strong> 你不能写 <code>float&amp; alias;</code> 然后晚点再说它指谁——声明的那一刻就得给它一个变量去绑。</li>
 <li><strong>绑了就不能改绑。</strong> 之后无论怎么给 <code>alias</code> 赋值,都是在改<em>它绑的那个原件</em>,而不是让它去当别人的别名。这点跟下一课的"指针"正好相反,先记住。</li>
 </ul>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  引用就像在 Houdini 里给一个已有属性<strong>建了一个 alias 通道</strong>:它没复制点云、没多占内存,只是另一个能读写<em>同一份</em>数据的入口。你从 alias 通道写值,主属性立刻变——因为它们本来就是同一份。
-</div>
 
 <h2>核心区别:按值传递 vs 按引用传递</h2>
 <p>
@@ -77,8 +72,8 @@ modify(mass);
 </p>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  按值传一份几何 = 先把整个点云<strong>复制一份</strong>再交给函数,贵且浪费。按引用传 = 把<strong>原件本身</strong>递过去,函数直接在原点云上操作——就像一个节点拿到的是上游真实的几何句柄,而不是它的快照。
+  <span class="label">对照 HLSL / Blueprint</span>
+  你在 HLSL 写过 <code>out</code>/<code>inout</code> 参数:函数能把结果写回调用方的变量——那正是 C++ 的 <code>T&amp;</code>。Blueprint 函数的输入引脚也有一个 "Pass-by-Reference" 勾选项,勾上后函数里改它就改到了外面的变量。没有 <code>&amp;</code> 的普通参数则相当于不勾——函数只拿到一份拷贝。
 </div>
 
 <h2><code>const T&amp;</code>:只读引用 —— 既不复制,又不让你改</h2>
@@ -107,27 +102,23 @@ modify(mass);
 <li><strong>通用。</strong> <code>const T&amp;</code> 还能接收临时值和字面量(比如直接传一个表达式的结果),而非 const 的 <code>T&amp;</code> 不行——这点 <a href="https://www.learncpp.com/cpp-tutorial/lvalue-references-to-const/" target="_blank">LearnCpp 12.4</a> 讲得很细。</li>
 </ul>
 
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>const T&amp;</code> 就是一个<strong>"只读输入端口"</strong>:节点能把上游的数据接进来看、参与计算,但绝不会反过来改上游。这正是大多数节点对输入的态度——读它,不毁它。
-</div>
-
 <h2>你会在真实代码里看到</h2>
-<p>下面是 Houdini HDK 风格的一段真实签名(几乎每个 HDK 函数都长这样)。别管细节,只盯着参数上的 <code>const … &amp;</code>:</p>
+<p>下面是 Unreal 风格的一段真实签名(引擎里这种写法到处都是)。别管细节,只盯着参数上的 <code>const … &amp;</code>:</p>
 
-<pre><code><span class="t-cmt">// 计算一个几何体的包围盒(HDK 风格)</span>
-<span class="t-type">bool</span> <span class="t-name">computeBounds</span>(<span class="t-kw">const</span> <span class="t-type">GU_Detail</span>&amp; gdp, <span class="t-type">UT_BoundingBox</span>&amp; box)
+<pre><code><span class="t-cmt">// 计算一个 actor 的包围盒(Unreal 风格)</span>
+<span class="t-type">bool</span> <span class="t-name">ComputeBounds</span>(<span class="t-kw">const</span> <span class="t-type">AActor</span>&amp; actor, <span class="t-type">FBox</span>&amp; box)
 {
-    <span class="t-kw">return</span> gdp.getBBox(&amp;box);   <span class="t-cmt">// 读 gdp(只读),把结果写进 box</span>
+    box = actor.GetComponentsBoundingBox();   <span class="t-cmt">// 读 actor(只读),把结果写进 box</span>
+    <span class="t-kw">return</span> box.IsValid;
 }</code></pre>
 
-<p>这一行签名里两个 <code>&amp;</code> 各司其职,读懂它你就读懂了 HDK 的惯例:</p>
+<p>这一行签名里两个 <code>&amp;</code> 各司其职,读懂它你就读懂了引擎代码的惯例:</p>
 <ul>
-<li><code>const GU_Detail&amp; gdp</code> —— <strong>输入</strong>:整份几何,只读借用,不复制(几何很大,复制会很贵)。</li>
-<li><code>UT_BoundingBox&amp; box</code> —— <strong>输出</strong>:没有 <code>const</code>,所以函数会<em>写</em>它;调用方传一个空盒子进去,函数把算好的包围盒填回来。返回值 <code>bool</code> 只表示成功/失败。</li>
+<li><code>const AActor&amp; actor</code> —— <strong>输入</strong>:整个 actor,只读借用,不复制(大对象,复制会很贵)。</li>
+<li><code>FBox&amp; box</code> —— <strong>输出</strong>:没有 <code>const</code>,所以函数会<em>写</em>它;调用方传一个空盒子进去,函数把算好的包围盒填回来。返回值 <code>bool</code> 只表示成功/失败。</li>
 </ul>
 
-<p>引擎侧也一样。Unreal 里你会反复见到这种成对出现的模式:</p>
+<p>这种模式在引擎里成对出现得极其频繁。再看一个:</p>
 
 <pre><code><span class="t-cmt">// 把一个世界坐标点找最近的样条点(UE 风格)</span>
 <span class="t-type">void</span> <span class="t-name">FindClosest</span>(<span class="t-kw">const</span> <span class="t-type">FVector</span>&amp; worldPos, <span class="t-type">FVector</span>&amp; outClosest)
@@ -148,14 +139,14 @@ modify(mass);
 
 <h2>性能账:引用 vs 拷贝</h2>
 <p>
-为什么这件事在 VFX 里格外要紧?因为你的数据常常<strong>很大</strong>。一个 <code>float</code> 复制起来不值一提,但一份几何、一个上百万点的数组、一条长字符串,按值传一次就要实打实搬一遍内存。
+为什么这件事在 VFX 里格外要紧?因为你的数据常常<strong>很大</strong>。一个 <code>float</code> 复制起来不值一提,但一个上百万元素的数组、一份网格、一条长字符串,按值传一次就要实打实搬一遍内存。
 </p>
 <ul>
-<li><strong>小而便宜的类型</strong>(<code>int</code>、<code>float</code>、<code>bool</code>):按值传就好,复制成本几乎为零,反而更直观。</li>
-<li><strong>大或复制昂贵的类型</strong>(几何、容器、字符串、矩阵):用 <code>const T&amp;</code> 传,只读时零拷贝;需要函数写回时用 <code>T&amp;</code>。</li>
+<li><strong>小而便宜的类型</strong>(<code>int</code>、<code>float</code>、<code>bool</code>、<code>FVector</code>):按值传就好,复制成本几乎为零,反而更直观。</li>
+<li><strong>大或复制昂贵的类型</strong>(<code>TArray</code>、<code>FString</code>、网格、矩阵):用 <code>const T&amp;</code> 传,只读时零拷贝;需要函数写回时用 <code>T&amp;</code>。</li>
 </ul>
 <p>
-所以当你在一段每帧、每点都跑的热代码里看到 <code>const GU_Detail&amp;</code> 而不是 <code>GU_Detail</code>,那不是随手写的——是作者在<strong>有意避免复制大几何</strong>。读懂这个意图,你就开始像写代码的人一样思考了。
+所以当你在一段每帧都跑的热代码里看到 <code>const FMeshData&amp;</code> 而不是 <code>FMeshData</code>,那不是随手写的——是作者在<strong>有意避免复制大对象</strong>。读懂这个意图,你就开始像写代码的人一样思考了。
 </p>
 
 <h2>练一练 · 立刻反馈</h2>
@@ -169,7 +160,7 @@ modify(mass);
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 比如:为什么 <code>const T&amp;</code> 能接字面量而 <code>T&amp;</code> 不能?什么时候该传 <code>T&amp;</code> 什么时候传 <code>const T&amp;</code>?返回引用到底什么时候安全?——直接问,我给你拆开讲,也能给更多 Houdini/UE 的真实例子。
+  <strong>有疑问就问我。</strong> 比如:为什么 <code>const T&amp;</code> 能接字面量而 <code>T&amp;</code> 不能?什么时候该传 <code>T&amp;</code> 什么时候传 <code>const T&amp;</code>?返回引用到底什么时候安全?——直接问,我给你拆开讲,也能给更多 Unreal 的真实例子。
 </div>
 
 <div class="lesson-footer">
@@ -209,7 +200,7 @@ renderQuiz("quiz6", [
     why: "& 让它零拷贝直接借原件;const 上锁让函数只能读不能写。既省复制开销又安全。"
   },
   {
-    q: "真实 HDK/引擎代码里参数几乎都用 <code>const T&amp;</code>,最主要<strong>为了什么</strong>?",
+    q: "真实 Unreal/引擎代码里参数几乎都用 <code>const T&amp;</code>,最主要<strong>为了什么</strong>?",
     options: ["避免复制大对象", "允许函数改原件", "强制函数返回值"],
     correct: 0,
     why: "几何、字符串、容器复制很贵;const& 零拷贝又保证只读,所以是默认首选的传参方式。"

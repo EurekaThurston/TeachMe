@@ -10,18 +10,18 @@
 
 <div class="lesson-kicker">C++ for VFX TAs · 第 12 课</div>
 <h1>class 深入 —— 构造、继承与 <code>virtual</code></h1>
-<p class="subtitle">上一课你认识了 class 的"零件"。这一课看它的<em>一生</em>:怎么出生、怎么被扩展、怎么在派生节点里重写自己的计算逻辑。</p>
+<p class="subtitle">上一课你认识了 class 的"零件"。这一课看它的<em>一生</em>:怎么出生、怎么被扩展、怎么在派生类里重写自己的逻辑。</p>
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
-  读懂类的<strong>生命周期与扩展机制</strong>——构造函数 / 析构函数、<code>this</code>、<code>const</code> 成员函数,以及<strong>继承 + <code>virtual</code> / <code>override</code></strong>。这正是 HDK 和引擎里那些节点类(<code>SOP_Node</code> 派生、<code>cook()</code> 重写)长的样子。
+  读懂类的<strong>生命周期与扩展机制</strong>——构造函数 / 析构函数、<code>this</code>、<code>const</code> 成员函数,以及<strong>继承 + <code>virtual</code> / <code>override</code></strong>。这正是 Unreal 里那些类(从 <code>AActor</code> 派生、重写 <code>BeginPlay()</code> / <code>Tick()</code>)长的样子。
 </div>
 
 <h2>热身 · 回忆第 11 课(别翻笔记)</h2>
 <p>先凭记忆答一题,把上次的东西捞回来——主动回忆比重看一遍记得牢。</p>
 <div class="quiz" id="warmup"></div>
 
-<h2>构造函数:节点被创建时的初始化</h2>
+<h2>构造函数:对象被创建时的初始化</h2>
 <p>
 一个 <code>class</code> 里可以有一个<strong>跟类同名</strong>的特殊函数,它叫<strong>构造函数(constructor)</strong>。
 每次你<em>创建</em>这个类的对象,它会自动跑一遍——专门用来给成员变量赋初值。你不用手动调用它,创建对象的那一刻 C++ 就替你调了。
@@ -45,13 +45,8 @@
 注意两个特征:<strong>没有返回类型</strong>(连 <code>void</code> 都不写),<strong>名字和类一模一样</strong>。看到这两点同时出现,就知道"这是构造函数"。
 </p>
 <p>
-冒号后面那串 <code>: x(px), y(py), z(pz)</code> 叫<strong>成员初始化列表(member initializer list)</strong>。读法很简单:<code>x(px)</code> 就是"用 <code>px</code> 去初始化成员 <code>x</code>"。VEX 里你给一个新 point 写 <code>@P = {1,2,0};</code> 是同一个意思——给刚诞生的东西定好初值。
+冒号后面那串 <code>: x(px), y(py), z(pz)</code> 叫<strong>成员初始化列表(member initializer list)</strong>。读法很简单:<code>x(px)</code> 就是"用 <code>px</code> 去初始化成员 <code>x</code>"——给刚诞生的对象定好初值。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  构造函数 = 节点<strong>第一次被放到网络里那一刻</strong>的初始化:默认参数填好、内部缓存清零、句柄连上。你没点任何东西,Houdini 已经替你把这个新节点"立起来"了——构造函数就是那段"立起来"的代码。
-</div>
 
 <h2>析构函数与 <code>this</code>:对象的收尾与"我自己"</h2>
 <p>
@@ -103,72 +98,74 @@
 读代码的好处:看到 <code>length() const</code>、<code>getName() const</code>,你<strong>立刻知道这是个"查询"函数</strong>,只读不写,放心调用;没有 <code>const</code> 的(如 <code>scale()</code>、<code>normalize()</code>)则可能改对象。这是一条非常省事的速读线索。
 </p>
 
-<h2>继承 + <code>virtual</code> / <code>override</code>:派生你自己的节点</h2>
+<h2>继承 + <code>virtual</code> / <code>override</code>:派生你自己的 Actor</h2>
 <p>
 重头戏来了。<strong>继承(inheritance)</strong>让一个类"接手"另一个类的全部东西,再加上自己的。写法是冒号加 <code>public 基类名</code>:
 </p>
 
-<pre><code><span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>   <span class="t-cmt">// SOP_Star「是一个」SOP_Node,并继承它的一切</span>
+<pre><code><span class="t-kw">class</span> <span class="t-type">AEnemy</span> : <span class="t-kw">public</span> <span class="t-type">AActor</span>   <span class="t-cmt">// AEnemy「是一个」AActor,并继承它的一切</span>
 {
-    <span class="t-cmt">// 这里只写「星形节点」额外/不同的部分,</span>
-    <span class="t-cmt">// SOP_Node 已有的端口、参数机制全部自动继承过来</span>
+    <span class="t-cmt">// 这里只写「敌人」额外/不同的部分,</span>
+    <span class="t-cmt">// AActor 已有的 Transform、组件、生命周期机制全部自动继承过来</span>
 };</code></pre>
 
 <p>
-读法:<code>SOP_Star</code> <strong>是一个</strong> <code>SOP_Node</code>(子类 / 派生类),<code>SOP_Node</code> 是它的<strong>基类 / 父类</strong>。子类白拿父类的成员变量和函数,只需补上自己独有的差异。这就是"<strong>基于一个基础节点类型,派生出你自己的定制节点</strong>"。
+读法:<code>AEnemy</code> <strong>是一个</strong> <code>AActor</code>(子类 / 派生类),<code>AActor</code> 是它的<strong>基类 / 父类</strong>。子类白拿父类的成员变量和函数,只需补上自己独有的差异。这就是"<strong>基于一个基础类型,派生出你自己的定制类</strong>"——和你在蓝图里基于 Actor 新建一个子 Blueprint 是同一回事。
 </p>
 <p>
 但派生不只是"加东西",更重要的是<strong>重写父类的某段逻辑</strong>。父类把一个函数标成 <code>virtual</code>("虚函数",意思是"子类可以替换我"),子类用 <code>override</code> 写一个同名同签名的版本顶替它:
 </p>
 
-<pre><code><span class="t-kw">class</span> <span class="t-type">SOP_Node</span>          <span class="t-cmt">// —— 基类(框架提供)——</span>
+<pre><code><span class="t-kw">class</span> <span class="t-type">AActor</span>          <span class="t-cmt">// —— 基类(引擎提供)——</span>
 {
 <span class="t-kw">public</span>:
-    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">cook</span>();   <span class="t-cmt">// virtual:声明「子类可以重写我的计算逻辑」</span>
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime);   <span class="t-cmt">// virtual:声明「子类可以重写我每帧的逻辑」</span>
 };
 
-<span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>   <span class="t-cmt">// —— 你的派生节点 ——</span>
+<span class="t-kw">class</span> <span class="t-type">AEnemy</span> : <span class="t-kw">public</span> <span class="t-type">AActor</span>   <span class="t-cmt">// —— 你的派生类 ——</span>
 {
 <span class="t-kw">public</span>:
-    <span class="t-type">void</span> <span class="t-name">cook</span>() <span class="t-kw">override</span>;   <span class="t-cmt">// override:用「我的」cook 顶替父类那个</span>
+    <span class="t-type">void</span> <span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime) <span class="t-kw">override</span>;   <span class="t-cmt">// override:用「我的」Tick 顶替父类那个</span>
 };</code></pre>
 
 <p>
-为什么这能成立?因为框架内部是<strong>用一个父类指针/引用</strong>来持有你的节点的(回想第 7 课):它手里拿的是 <code>SOP_Node*</code>,但实际指向的对象是 <code>SOP_Star</code>。当它写 <code>node-&gt;cook()</code> 时,<code>virtual</code> 保证:<strong>运行时真正跑的是对象实际类型的那个 <code>cook</code></strong>——也就是你写的 <code>SOP_Star::cook</code>。这叫<strong>运行时多态(runtime polymorphism)</strong>。
+为什么这能成立?因为引擎内部是<strong>用一个父类指针/引用</strong>来持有你的对象的(回想第 7 课):它手里拿的是 <code>AActor*</code>,但实际指向的对象是 <code>AEnemy</code>。当它写 <code>Actor-&gt;Tick(dt)</code> 时,<code>virtual</code> 保证:<strong>运行时真正跑的是对象实际类型的那个 <code>Tick</code></strong>——也就是你写的 <code>AEnemy::Tick</code>。这叫<strong>运行时多态(runtime polymorphism)</strong>。
 </p>
 <p>
-这就是你会在节点的 <code>cook()</code> / <code>computeXXX()</code> 上反复看到 <code>override</code> 的原因:框架在某个时刻调 <code>cook()</code>,而你<strong>把自己的计算塞进了那个被调用的位置</strong>。(参见 LearnCpp 25.2 对虚函数"解析到最派生版本"的说明。)
+这就是你会在 <code>BeginPlay()</code> / <code>Tick()</code> 上反复看到 <code>override</code> 的原因:引擎在某个时刻调 <code>Tick()</code>,而你<strong>把自己的逻辑塞进了那个被调用的位置</strong>。这跟你在子 Blueprint 里重写(Override)一个父类 Event / Function 是完全一样的机制。(参见 LearnCpp 25.2 对虚函数"解析到最派生版本"的说明。)
 </p>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  父类 <code>SOP_Node</code> 像 Houdini 的<strong>"通用 SOP 节点骨架"</strong>:输入端口、参数面板、何时该重新计算,框架都安排好了。你派生一个 <code>SOP_Star</code> 并 <code>override</code> 它的 <code>cook()</code>,等于说"<strong>框架你照常运转,但'算几何'这一步换成我的逻辑</strong>"——就像你在派生节点里重写了那个 Compute 的内部。
+  <span class="label">读法</span>
+  父类 <code>AActor</code> 像 Unreal 的<strong>"通用 Actor 骨架"</strong>:Transform、组件、何时 BeginPlay、何时 Tick,引擎都安排好了。你派生一个 <code>AEnemy</code> 并 <code>override</code> 它的 <code>Tick()</code>,等于说"<strong>引擎你照常运转,但'每帧干什么'这一步换成我的逻辑</strong>"——就是你在蓝图里 Override 父类那个 Event 时做的事。
 </div>
 
-<h2>你会在真实代码里看到(HDK 风格示意)</h2>
+<h2>你会在真实代码里看到(Unreal 风格示意)</h2>
 <p>
-把上面拼起来,真实的 Houdini 自定义 SOP 节点大致长这样(已简化,仅作示意):
+把上面拼起来,真实的 Unreal 自定义 Actor 大致长这样(已简化,仅作示意):
 </p>
 
-<pre><code><span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>
+<pre><code><span class="t-kw">class</span> <span class="t-type">AEnemy</span> : <span class="t-kw">public</span> <span class="t-type">AActor</span>
 {
 <span class="t-kw">public</span>:
-    <span class="t-name">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
-        : <span class="t-type">SOP_Node</span>(net, name, op)   <span class="t-cmt">// 构造:先调父类构造,把自己「立起来」</span>
+    <span class="t-name">AEnemy</span>()
     {
+        PrimaryActorTick.bCanEverTick = <span class="t-kw">true</span>;   <span class="t-cmt">// 构造:把自己「立起来」、配好默认值</span>
     }
 
-    ~<span class="t-name">SOP_Star</span>() <span class="t-kw">override</span> {}        <span class="t-cmt">// 析构:节点销毁时清理(这里没东西要清)</span>
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">BeginPlay</span>() <span class="t-kw">override</span>;   <span class="t-cmt">// 重写父类:游戏开始时引擎调一次</span>
 
-<span class="t-kw">protected</span>:
-    <span class="t-cmt">// 重写父类的计算入口:框架在需要时调它,你的几何在这里生成</span>
-    <span class="t-type">OP_ERROR</span> <span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context) <span class="t-kw">override</span>;
+    <span class="t-cmt">// 重写父类的每帧入口:引擎每帧调它,你的逻辑在这里跑</span>
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime) <span class="t-kw">override</span>;
 
-    <span class="t-type">int</span>   <span class="t-name">numPoints</span>(<span class="t-type">fpreal</span> t) <span class="t-kw">const</span>;   <span class="t-cmt">// const:只读查询,不改节点</span>
+    <span class="t-type">float</span> <span class="t-name">GetHealth</span>() <span class="t-kw">const</span>;   <span class="t-cmt">// const:只读查询,不改对象</span>
+
+<span class="t-kw">private</span>:
+    <span class="t-type">float</span> Health;
 };</code></pre>
 
 <p>
-你<em>读</em>这段时该看到的信号:<code>: public SOP_Node</code>(这是个派生节点)、构造函数把 <code>net/name/op</code> 转交给父类构造、<code>cookMySop(...) override</code>(<strong>这就是该节点真正干活的地方</strong>)、<code>numPoints(...) const</code>(只读查询)。你不需要会写,但这几个标记一眼扫过,就知道"<strong>逻辑在 <code>cookMySop</code> 里,我要改行为就改它</strong>"。
+你<em>读</em>这段时该看到的信号:<code>: public AActor</code>(这是个派生 Actor)、构造函数里配默认值、<code>Tick(...) override</code>(<strong>这就是该 Actor 每帧真正干活的地方</strong>)、<code>GetHealth() const</code>(只读查询)。你不需要会写,但这几个标记一眼扫过,就知道"<strong>逻辑在 <code>Tick</code> 里,我要改行为就改它</strong>"。
 </p>
 
 <h2>读代码易错点</h2>
@@ -176,8 +173,8 @@
 <ul>
   <li><strong>忘了构造/析构"何时"被调用。</strong> 它们<em>没有显式调用点</em>——构造在对象创建那一刻自动跑,析构在对象销毁那一刻自动跑。在代码里找不到 <code>obj.Vec3()</code> 这种调用是正常的,别去找。</li>
   <li><strong>把 <code>override</code> 当成"新函数"。</strong> 带 <code>override</code> 的函数<em>不是新增功能</em>,而是<strong>替换</strong>了父类里那个同名虚函数。要理解它,得先去父类看 <code>virtual</code> 版本的"合同"是什么。</li>
-  <li><strong>漏看 <code>virtual</code>。</strong> 父类函数前那个 <code>virtual</code> 容易被忽略,但它是多态的开关:有它,<code>基类指针-&gt;cook()</code> 才会跑到子类版本;没它,跑的就是父类那个死板版本。</li>
-  <li><strong>看到 <code>-&gt;</code> 慌张。</strong> 用 <code>-&gt;</code> 只说明左边是个<strong>指针</strong>(第 7 课):<code>node-&gt;cook()</code> = "对 node 指向的那个对象调 cook"。等价于 <code>(*node).cook()</code>,只是更顺手。</li>
+  <li><strong>漏看 <code>virtual</code>。</strong> 父类函数前那个 <code>virtual</code> 容易被忽略,但它是多态的开关:有它,<code>基类指针-&gt;Tick()</code> 才会跑到子类版本;没它,跑的就是父类那个死板版本。</li>
+  <li><strong>看到 <code>-&gt;</code> 慌张。</strong> 用 <code>-&gt;</code> 只说明左边是个<strong>指针</strong>(第 7 课):<code>Actor-&gt;Tick(dt)</code> = "对 Actor 指向的那个对象调 Tick"。等价于 <code>(*Actor).Tick(dt)</code>,只是更顺手。</li>
   <li><strong>把末尾 <code>const</code> 和开头 <code>const</code> 混为一谈。</strong> 开头的 <code>const</code>(如 <code>const char *name</code>)修饰参数;<strong>结尾</strong>的 <code>const</code> 修饰整个成员函数,承诺"不改对象"。位置不同,意思不同。</li>
 </ul>
 
@@ -188,11 +185,11 @@
 <div class="primary-source">
   <span class="label">主推资源(读一篇就好)</span>
   <a href="https://www.learncpp.com/cpp-tutorial/virtual-functions/" target="_blank">LearnCpp · 25.2 — Virtual functions and polymorphism</a>
-  —— 权威免费教程里专讲<strong>虚函数与多态</strong>的一章:为什么基类指针调虚函数会"解析到最派生的版本"。读完你对节点 <code>cook()/override</code> 背后的机制会彻底踏实。
+  —— 权威免费教程里专讲<strong>虚函数与多态</strong>的一章:为什么基类指针调虚函数会"解析到最派生的版本"。读完你对 <code>Tick()/override</code> 背后的机制会彻底踏实。
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 我是你的老师——比如:<code>public</code> 继承和别的继承有什么区别?为什么析构函数也常带 <code>virtual</code>?初始化列表里为什么要先调父类构造?或者想要更贴近你手头某段 HDK / 引擎代码的例子——直接在对话里问我,我给你拆开讲。
+  <strong>有疑问就问我。</strong> 我是你的老师——比如:<code>public</code> 继承和别的继承有什么区别?为什么析构函数也常带 <code>virtual</code>?初始化列表里为什么要先调父类构造?或者想要更贴近你手头某段 Unreal / 引擎代码的例子——直接在对话里问我,我给你拆开讲。
 </div>
 
 <div class="lesson-footer">
@@ -220,7 +217,7 @@ renderQuiz("quiz12", [
     why: "构造函数的两大特征:名字与类相同、没有返回类型;它在对象创建时自动运行来初始化成员。"
   },
   {
-    q: "看到 <code>~SOP_Star()</code> 这个函数,它会在<strong>什么时候</strong>自动运行?",
+    q: "看到 <code>~AEnemy()</code> 这个函数,它会在<strong>什么时候</strong>自动运行?",
     options: ["在对象创建时跑", "在对象销毁时跑", "在每次调用时跑"],
     correct: 1,
     why: "前缀 ~ 表示析构函数,它在对象销毁(离开作用域或被 delete)时自动运行,负责清理。"
@@ -232,22 +229,22 @@ renderQuiz("quiz12", [
     why: "结尾的 const 是成员函数对调用者的承诺:不会修改对象的任何成员,所以它是只读查询函数。"
   },
   {
-    q: "<code>class SOP_Star : public SOP_Node</code> 这一行说明 <code>SOP_Star</code> 是?",
-    options: ["SOP_Node 的基类", "SOP_Node 的派生类", "SOP_Node 的别名啊"],
+    q: "<code>class AEnemy : public AActor</code> 这一行说明 <code>AEnemy</code> 是?",
+    options: ["AActor 的基类", "AActor 的派生类", "AActor 的别名啊"],
     correct: 1,
-    why: "冒号后写 public 基类名,表示左边是派生类(子类),它继承右边 SOP_Node(基类)的全部成员。"
+    why: "冒号后写 public 基类名,表示左边是派生类(子类),它继承右边 AActor(基类)的全部成员。"
   },
   {
-    q: "父类写 <code>virtual void cook();</code>,子类写 <code>void cook() override;</code>。子类的 cook 是?",
+    q: "父类写 <code>virtual void Tick();</code>,子类写 <code>void Tick() override;</code>。子类的 Tick 是?",
     options: ["新增的额外函数", "顶替父类的版本", "父类函数的备份"],
     correct: 1,
-    why: "override 表示重写:它替换父类那个虚函数。基类指针调 cook() 时,运行时会跑到子类这个版本。"
+    why: "override 表示重写:它替换父类那个虚函数。基类指针调 Tick() 时,运行时会跑到子类这个版本。"
   },
   {
-    q: "框架持有 <code>SOP_Node *node</code> 并写 <code>node-&gt;cook()</code>,用 <code>-&gt;</code> 是因为?",
-    options: ["node 是一个指针", "cook 是个虚函数", "node 属于父类型"],
+    q: "引擎持有 <code>AActor *Actor</code> 并写 <code>Actor-&gt;Tick()</code>,用 <code>-&gt;</code> 是因为?",
+    options: ["Actor 是个指针", "Tick 是虚函数", "Actor 属于父类"],
     correct: 0,
-    why: "-> 用于通过指针访问成员;node 是指针,所以用 node->cook()(等价于 (*node).cook())。"
+    why: "-> 用于通过指针访问成员;Actor 是指针,所以用 Actor->Tick()(等价于 (*Actor).Tick())。"
   }
 ]);
 </script>

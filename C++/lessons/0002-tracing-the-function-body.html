@@ -44,11 +44,6 @@
 
 <p><strong>③ <code>return</code> 是立刻退出。</strong> 一旦执行到 <code>return</code>,函数当场把那个值吐出去、<em>结束</em>,后面的行根本不会再跑。这点最关键——很多人读错就是忘了 return 会"提前离场"。</p>
 
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  把函数体想成 Houdini 的一串 <strong>Switch / 节点链</strong>:<code>if</code> 像一个根据条件决定走哪条线的开关,<code>return</code> 就是<strong>直接连到输出端口</strong>——数据一旦接到输出,后面的节点就不参与了。
-</div>
-
 <h2>跟我手跑一遍:<code>clamp(5.0, 0.0, 1.0)</code></h2>
 <p>把 <code>value=5.0</code>、<code>minVal=0.0</code>、<code>maxVal=1.0</code> 代进去,逐行执行:</p>
 <pre><code><span class="t-cmt">// value=5.0, minVal=0.0, maxVal=1.0</span>

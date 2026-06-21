@@ -52,26 +52,21 @@ T        <span class="t-name">maxValue</span>(T a, T b)   <span class="t-cmt">//
 </p>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  模板就像一个<strong>类型无关的 HDA / 节点模具</strong>。你做了一个"取较大值"的 HDA,它不在乎进来的是 <code>float</code> 属性还是 <code>int</code> 属性——你给它喂哪种类型的输入,它就生成对应类型的具体节点。<code>template&lt;typename T&gt;</code> 就是 HDA 上那个"输入类型随你"的接口,<code>T</code> 是占位符,真正接上线的那一刻才定下来。
+  <span class="label">你熟悉的一个真实对照</span>
+  你在 Unreal 里写的 <code>TArray&lt;float&gt;</code> 和 <code>TArray&lt;FVector&gt;</code> 就是<strong>同一个模具喂不同类型</strong>:<code>TArray</code> 这份"动态数组"逻辑只写了一遍,尖括号里填 <code>float</code> 还是 <code>FVector</code>,就生成对应类型的具体容器。<code>template&lt;typename T&gt;</code> 里的 <code>T</code> 就是那个占位符,调用时才被填实。
 </div>
 
 <h2>类模板:<code>std::vector&lt;float&gt;</code> 是"用 float 浇出来的 vector"</h2>
 <p>
 第 9 课你见过 <code>std::vector</code>——一个能装一串同类型东西的"动态数组"。它其实是个<strong>类模板</strong>:<code>std::vector&lt;T&gt;</code> 是<em>模具</em>,尖括号里填什么,就浇出装什么的成品。
 </p>
-<pre><code>std::vector&lt;<span class="t-type">float</span>&gt;      points;   <span class="t-cmt">// 用 float 浇出来:一串浮点数</span>
-std::vector&lt;<span class="t-type">int</span>&gt;        ids;      <span class="t-cmt">// 用 int 浇出来:一串整数(比如点编号)</span>
-std::vector&lt;UT_Vector3&gt; positions; <span class="t-cmt">// 用 Houdini 的向量类型浇出来:一串三维向量</span></code></pre>
+<pre><code>std::vector&lt;<span class="t-type">float</span>&gt;   points;   <span class="t-cmt">// 用 float 浇出来:一串浮点数</span>
+std::vector&lt;<span class="t-type">int</span>&gt;     ids;      <span class="t-cmt">// 用 int 浇出来:一串整数(比如索引)</span>
+std::vector&lt;FVector&gt; positions; <span class="t-cmt">// 用引擎的向量类型 FVector 浇出来:一串三维向量</span></code></pre>
 <p>
 读这种类型时,把尖括号读成"装着…的":<code>std::vector&lt;float&gt;</code> = "装着 <code>float</code> 的 vector"。
 <code>std::vector</code> 这个词单独出现没有意义——它只是模具;<strong>必须配上 <code>&lt;...&gt;</code> 才是一个能用的具体类型</strong>。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>std::vector&lt;float&gt;</code> 和 <code>std::vector&lt;UT_Vector3&gt;</code> 就像<strong>同一个节点处理不同的属性类型</strong>:一个在处理标量属性(密度、温度),一个在处理向量属性(位置 <code>P</code>、速度 <code>v</code>)。节点逻辑相同,只是流过的属性类型不同。
-</div>
 
 <h2>你会在真实代码里看到</h2>
 <p>读真实头文件时,模板会和别的东西叠在一起出现。先眼熟,不用全懂:</p>
@@ -116,7 +111,7 @@ std::vector&lt;<span class="t-type">float</span>&gt;          <span class="t-cmt
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 我是你的老师——比如 <code>std::unique_ptr&lt;Mesh&gt;</code> 那个尖括号到底装的是什么、<code>const … &amp;</code> 又是干嘛的、或者想要更多 Houdini / 渲染器里的真实模板签名来练手,直接在对话里问我。被 <code>&lt;&gt;</code> 卡住很正常,问出来就通了。
+  <strong>有疑问就问我。</strong> 我是你的老师——比如 <code>std::unique_ptr&lt;Mesh&gt;</code> 那个尖括号到底装的是什么、<code>const … &amp;</code> 又是干嘛的、或者想要更多 Unreal 里的真实模板签名(<code>TArray&lt;FVector&gt;</code>、<code>TSubclassOf&lt;AActor&gt;</code>、<code>TObjectPtr&lt;UStaticMeshComponent&gt;</code>)来练手,直接在对话里问我。被 <code>&lt;&gt;</code> 卡住很正常,问出来就通了。
 </div>
 
 <div class="lesson-footer">

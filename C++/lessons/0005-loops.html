@@ -10,7 +10,7 @@
 
 <div class="lesson-kicker">C++ for VFX TAs · 第 5 课</div>
 <h1>循环 —— 逐点处理的引擎</h1>
-<p class="subtitle">几何代码 99% 的时间在干一件事:对一堆点、一堆图元,各做一遍同样的处理。看懂循环,你就看懂了 HDK 的主干。</p>
+<p class="subtitle">引擎代码 99% 的时间在干一件事:对一堆元素(actor、粒子、顶点)各做一遍同样的处理。看懂循环,你就看懂了真实代码的主干。</p>
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
@@ -23,18 +23,13 @@
 
 <h2>为什么循环就是 VFX 代码的全部</h2>
 <p>
-你在 Houdini 里丢一个 <strong>Point Wrangle</strong>,写一句 <code>@P.y += 1;</code>,然后它就<em>对每一个点</em>各跑一遍。你从没写过"遍历所有点"这件事——Houdini 帮你藏起来了。
-而在 C++ / HDK 里,这个"对每个点跑一遍"是<strong>你要亲眼看到的代码</strong>:它就是一个<strong>循环(loop)</strong>。
+在 Blueprint 里你拖一个 <strong>For Each Loop</strong> 节点接上一个数组,它就<em>对每一个元素</em>各跑一遍连出去的逻辑。HLSL 里写实例化、做卷积采样,也是一个 <code>for</code> 循环把同一段算式套到每个样本上。
+在 C++ 里,这个"对每个元素跑一遍"是<strong>你要亲眼看到的代码</strong>:它就是一个<strong>循环(loop)</strong>。
 </p>
 <p>
 循环只做一件事:<strong>把同一段代码重复执行很多次</strong>。读循环时,你脑子里要回答两个问题——
 <strong>(1) 这段代码会跑几次?(2) 每一次它在对哪个数据做什么?</strong> 答出这两点,这个循环你就读懂了。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>for</code> 循环 = <strong>Houdini 对每个点跑一遍 wrangle</strong>。循环的"次数"= 点的数量;<strong>循环体(花括号里那段)</strong>= 节点对<strong>单个</strong>元素做的那点事。Wrangle 把循环藏了,C++ 把它摊在你面前——仅此而已。
-</div>
 
 <h2>while 循环:最朴素的"条件成立就一直跑"</h2>
 <p><code>while</code> 是最容易看懂的循环。结构就一句话:<strong>只要括号里的条件为真,就把花括号里那段再跑一遍</strong>。条件一旦变假,循环结束,代码继续往下走。</p>
@@ -80,7 +75,7 @@
 所以一轮的节奏是 <strong>②→④→③→②→④→③…</strong>,直到 ② 为假。上面这个 <code>for</code> 跟前面那个 <code>while</code> 完全等价——只是把"初始化 / 条件 / 更新"三处<strong>收拢到了一行</strong>,读起来一眼就知道这是个数着数跑的循环。这也是为什么 C++ 代码里数组、点列表的遍历几乎都用 <code>for</code>。
 </p>
 
-<h2>range-based for:最像 VEX 的那种"自动逐点"</h2>
+<h2>range-based for:最省心的"挨个拿出来处理"</h2>
 <p>
 经典 <code>for</code> 要你管计数器 <code>i</code>、还要用 <code>i</code> 去取第 <code>i</code> 个元素。但很多时候你<strong>根本不在乎序号</strong>,只想"把这一堆东西挨个拿出来处理一遍"。这时就用 <strong>range-based for</strong>(范围 for):
 </p>
@@ -92,16 +87,11 @@
 
 <p>
 读法:<strong>"对 <code>points</code> 里的每一个元素,把它叫做 <code>p</code>,然后执行花括号里那段"</strong>。冒号 <code>:</code> 右边是<strong>那一堆数据</strong>,左边是<strong>每次拿出来的那一个</strong>。
-这跟 VEX 里 <code>@P.y += 1;</code> 自动对每个点跑一遍,是<strong>同一个心智模型</strong>——只不过 C++ 把"遍历哪一堆"明写成了 <code>: points</code>。
+你不用再管计数器 <code>i</code>、也不用 <code>points[i]</code> 去取——C++ 把"遍历哪一堆"明写成了 <code>: points</code>,剩下的交给它。
 </p>
 <p>
 那个 <code>auto&amp;</code> 先眼熟:<code>auto</code> 是"类型让编译器自己猜"(下一课讲引用 <code>&amp;</code>,它让你<strong>真正改到原数据</strong>而不是改一份拷贝)。本课你只要能<strong>读出"逐个遍历 points"这层意思</strong>就达标了。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  range-based for 就是 wrangle 里的 <code>@P</code> 那种"<strong>自动逐点</strong>":你写的代码是<strong>针对单个点</strong>的(<code>p.y += 1</code>),框架负责把它套到每个点上。区别只在于:VEX 帮你隐藏了 <code>: points</code>,而 C++ 让你看见你正在遍历哪一堆几何。
-</div>
 
 <h2>break、continue 与嵌套循环</h2>
 <p>循环里有两个能改变流程的关键词,读真实代码经常撞见:</p>
@@ -131,27 +121,27 @@
 
 <h2>你会在真实代码里看到</h2>
 <p>
-下面这段是 HDK / Houdini 几何代码里<strong>最高频</strong>的样子:遍历一个几何体的所有点,把每个点的位置抬高。<code>std::vector&lt;UT_Vector3&gt;</code> 你现在只要读成"一<strong>排</strong>位置(vector 是个能装很多元素的容器,下一课细讲)";<code>.size()</code> 读成"里面有多少个"。
+下面这段是 Unreal 引擎代码里<strong>最高频</strong>的样子:遍历一组顶点位置,把每个抬高。<code>TArray&lt;FVector&gt;</code> 你现在只要读成"一<strong>排</strong>位置(<code>TArray</code> 是 Unreal 那个能装很多元素的数组容器,下一课细讲)";<code>.Num()</code> 读成"里面有多少个"。
 </p>
 
-<pre><code><span class="t-cmt">// positions 是这块几何所有点的位置,排成一长串</span>
-<span class="t-type">std::vector</span>&lt;<span class="t-type">UT_Vector3</span>&gt; positions = mesh.getPositions();
+<pre><code><span class="t-cmt">// positions 是这个网格所有顶点的位置,排成一长串</span>
+<span class="t-type">TArray</span>&lt;<span class="t-type">FVector</span>&gt; positions = mesh.GetVertexPositions();
 
 <span class="t-cmt">// 经典 for:用序号 i 一个个取出来处理</span>
-<span class="t-kw">for</span> (<span class="t-type">size_t</span> i = <span class="t-num">0</span>; i &lt; positions.size(); i++)
+<span class="t-kw">for</span> (<span class="t-type">int32</span> i = <span class="t-num">0</span>; i &lt; positions.Num(); i++)
 {
-    positions[i].y += <span class="t-num">1.0f</span>;     <span class="t-cmt">// 把第 i 个点抬高 1</span>
+    positions[i].Z += <span class="t-num">1.0f</span>;     <span class="t-cmt">// 把第 i 个顶点抬高 1(UE 里 Z 是上)</span>
 }
 
-<span class="t-cmt">// 同样的事,range-based for 写法更短、更像 @P</span>
-<span class="t-kw">for</span> (<span class="t-type">UT_Vector3</span>&amp; P : positions)
+<span class="t-cmt">// 同样的事,range-based for 写法更短</span>
+<span class="t-kw">for</span> (<span class="t-type">FVector</span>&amp; P : positions)
 {
-    P.y += <span class="t-num">1.0f</span>;             <span class="t-cmt">// 对每个点 P,抬高 1</span>
+    P.Z += <span class="t-num">1.0f</span>;             <span class="t-cmt">// 对每个位置 P,抬高 1</span>
 }</code></pre>
 
 <p>
-看到这种结构,你的脑内独白应该是:<em>"它在遍历所有点,对每个点的 y 加 1。跑的次数 = 点的数量。"</em>
-真实的 HDK 还常写成 <code>for (GA_Offset ptoff : range)</code> 这种用<strong>偏移量</strong>遍历点的形式——名字不同,但<strong>骨架完全一样</strong>:冒号右边是"一堆点",左边是"当前这一个"。认出骨架,你就能读懂八成几何循环。
+看到这种结构,你的脑内独白应该是:<em>"它在遍历所有顶点,对每个的 Z 加 1。跑的次数 = 顶点的数量。"</em>
+真实代码里容器名、类型名千变万化,但<strong>骨架完全一样</strong>:冒号右边是"一堆元素",左边是"当前这一个"。认出骨架,你就能读懂八成遍历循环。
 </p>
 
 <h2>读代码易错点</h2>

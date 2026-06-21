@@ -21,18 +21,13 @@
 <p>先凭记忆答一题,把上次"头文件与编译单元"的东西捞回来——主动回忆比重看一遍记得牢。</p>
 <div class="quiz" id="warmup"></div>
 
-<h2>从你已经懂的东西出发:节点路径</h2>
+<h2>你其实天天在用:<code>UKismetMathLibrary::</code> 这种前缀</h2>
 <p>
-在 Houdini 里,你的网络是有<strong>层级</strong>的:<code>/obj/geo1/scatter1</code>。同一个名字 <code>scatter1</code> 在 <code>/obj/geo1</code> 里和在 <code>/obj/geo2</code> 里互不打架,因为<strong>路径前缀</strong>把它们分到了不同的"范围"里。斜杠 <code>/</code> 告诉你:沿着这条路径,去那个范围里找这个节点。
+如果你在 Unreal 里读过 C++,这些 <code>::</code> 你早就见过:<code>FMath::Clamp(...)</code>、<code>UKismetMathLibrary::RandomFloat()</code>、<code>UKismetSystemLibrary::PrintString(...)</code>。<code>FMath</code>、<code>UKismetMathLibrary</code> 就是左边的"范围",<code>Clamp</code>、<code>RandomFloat</code> 是要在那个范围里找的名字。<code>::</code> 就是把这两者连起来:<em>去左边那个范围里,找右边这个名字</em>。
 </p>
 <p>
-C++ 的<strong>命名空间(namespace)</strong>就是这个思路:把一堆名字归到一个组里,避免不同库的同名冲突。而<strong>作用域解析运算符(scope resolution operator)</strong><code>::</code> 就像那个斜杠——它告诉编译器:<em>去左边那个范围里,找右边这个名字</em>。
+C++ 的<strong>命名空间(namespace)</strong>就是这个思路:把一堆名字归到一个组里,避免不同库的同名冲突。而<strong>作用域解析运算符(scope resolution operator)</strong><code>::</code> 做的就是上面那件事——它告诉编译器:<em>去左边那个范围里,找右边这个名字</em>。<code>std::</code> 同理:看到它,就知道这个名字来自 C++ 标准库,而不是别人写的库。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  命名空间像 Houdini 的<strong>网络层级 / 节点路径</strong>(<code>/obj/geo1/...</code>);<code>::</code> 像路径里的<strong>分隔符</strong>,告诉你"去哪个范围里找这个名字"。而 <code>std::</code> 就像一个官方工具库统一贴的<strong>命名前缀</strong>——看到它,你就知道这个名字来自 C++ 标准库,而不是别人写的库。
-</div>
 
 <h2>命名空间是什么:防撞车的名字分组</h2>
 <p>
@@ -95,38 +90,38 @@ cout &lt;&lt; weights.<span class="t-name">size</span>();   <span class="t-cmt">
 为什么大型代码里<strong>通常不建议在头文件里这么写</strong>?因为头文件会被很多 <code>.cpp</code> 包含(回想第 13 课)。一旦头文件里写了 <code>using namespace std;</code>,它就把 <code>std</code> 的全部名字强行摊给<em>每一个</em>包含它的文件——这会悄悄把命名空间"防撞车"的好处给抵消掉,重新引入冲突风险。所以真实代码里你常看到:<code>.cpp</code> 内部偶尔用,头文件里几乎从不用,而是老老实实写全 <code>std::</code> 前缀。<strong>读代码时看到全写的 <code>std::</code>,别嫌啰嗦——那是负责任的写法。</strong>
 </p>
 
-<h2>HDK 里的 <code>UT_</code> / <code>GA_</code> 前缀:也是"分组防撞",但不一样</h2>
+<h2>Unreal 的 <code>F</code> / <code>U</code> / <code>A</code> 前缀:也是"分组防撞",但不一样</h2>
 <p>
-如果你读过 Houdini 的 C++ SDK(HDK),会看到满屏的 <code>UT_Vector3</code>、<code>GA_Offset</code>、<code>GU_Detail</code>、<code>GEO_Primitive</code>。这些 <code>UT_</code>/<code>GA_</code>/<code>GU_</code>/<code>GEO_</code> 前缀的<strong>作用</strong>和命名空间类似——都是为了"分组、防撞车",让你一眼看出这个名字属于哪个子系统(<code>UT_</code> = Utility,<code>GA_</code> = Geometry Attribute,等等)。
+你在 Unreal 里看到的 <code>FVector</code>、<code>FString</code>、<code>UStaticMeshComponent</code>、<code>AActor</code> 前面那个单字母 <code>F</code>/<code>U</code>/<code>A</code> 前缀,<strong>作用</strong>也类似命名空间——都是为了让你一眼看出这个名字属于哪一类(<code>F</code> = 普通结构体/类,<code>U</code> = 继承自 <code>UObject</code> 的类,<code>A</code> = 继承自 <code>AActor</code> 的类)。
 </p>
 <p>
-但要明确区分:这些<strong>大多只是类名前缀,不是真正的命名空间</strong>。也就是说,<code>UT_Vector3</code> 是一整个类的名字(下划线只是名字的一部分),你<strong>不能</strong>写成 <code>UT::Vector3</code>。它跟 <code>std::vector</code> 那种真·命名空间在<em>形式</em>上不同:
+但要明确区分:这些<strong>只是类名前缀,不是真正的命名空间</strong>。也就是说,<code>FVector</code> 是一整个类的名字(那个 <code>F</code> 只是名字的一部分),你<strong>不能</strong>写成 <code>F::Vector</code>。它跟 <code>std::vector</code> 那种真·命名空间在<em>形式</em>上不同:
 </p>
 
-<pre><code>UT_Vector3 v;          <span class="t-cmt">// UT_ 是名字前缀,整体是一个类名(没有 ::)</span>
+<pre><code>FVector v;             <span class="t-cmt">// F 是名字前缀,整体是一个类名(没有 ::)</span>
 std::vector&lt;<span class="t-type">int</span>&gt; nums;   <span class="t-cmt">// std 是真正的命名空间,用 :: 进入</span></code></pre>
 
 <p>
-读 HDK 代码时记住这条区别:<strong>有 <code>::</code> 的才是命名空间或类作用域;只是个下划线前缀的,是命名约定。</strong>两者目的相同(防撞),形式不同。
+读 Unreal 代码时记住这条区别:<strong>有 <code>::</code> 的才是命名空间或类作用域;只是个字母前缀的,是命名约定。</strong>两者目的相同(防撞),形式不同。
 </p>
 
 <h2>你会在真实代码里看到</h2>
 <p>把上面所有读法揉在一起,下面是一段贴近真实风格的片段——逐个限定名读过去:</p>
 
 <pre><code><span class="t-cmt">// 标准库容器,装一组采样点</span>
-std::vector&lt;UT_Vector3&gt; samples;
+std::vector&lt;FVector&gt; samples;
 
-<span class="t-cmt">// GA_ 前缀:几何属性句柄(HDK 命名约定,不是命名空间)</span>
-GA_Offset ptOff = detail-&gt;<span class="t-name">pointOffset</span>(<span class="t-num">0</span>);
+<span class="t-cmt">// F 前缀:引擎自带的类型(Unreal 命名约定,不是命名空间)</span>
+FVector loc = actor-&gt;<span class="t-name">GetActorLocation</span>();
 
 <span class="t-cmt">// 嵌套类型:Mesh 内部定义的 Vertex</span>
 Mesh::Vertex first = mesh.<span class="t-name">getVertex</span>(<span class="t-num">0</span>);
 
-<span class="t-cmt">// 命名空间里的常量 + 标准库数学函数</span>
+<span class="t-cmt">// 类的静态成员 + 标准库数学函数</span>
 <span class="t-type">float</span> circ = <span class="t-num">2.0f</span> * math::pi * std::<span class="t-name">sqrt</span>(area);
 
-<span class="t-cmt">// 类的静态成员:Camera 这个类范围里的 reset</span>
-Camera::<span class="t-name">reset</span>();</code></pre>
+<span class="t-cmt">// 引擎数学库的静态函数:在 FMath 这个范围里找 Clamp</span>
+<span class="t-type">float</span> v = FMath::<span class="t-name">Clamp</span>(x, <span class="t-num">0.0f</span>, <span class="t-num">1.0f</span>);</code></pre>
 
 <p>
 读这一段,你不需要知道每个函数<em>怎么实现</em>。你只要能说出每个 <code>::</code> 左边是"哪个范围"、右边是"找什么名字",就已经读懂了它的结构。这就是本课的核心技能。
@@ -146,7 +141,7 @@ Camera::<span class="t-name">reset</span>();</code></pre>
 
 <p><strong>易错点 ② 漏掉前缀导致找不到名字。</strong> 如果你把 <code>std::sort</code> 写成裸的 <code>sort</code>,而当前范围又没有 <code>using namespace std;</code>,编译器会报错说找不到 <code>sort</code>。读别人代码时反过来想:如果一个名字没有任何前缀也能用,那它要么在当前命名空间里、要么前面有 <code>using</code> 把它引进来了——找一找上下文。</p>
 
-<p><strong>易错点 ③ 把 HDK 的下划线前缀误当成命名空间。</strong> 看到 <code>UT_Vector3</code> 别试图拆成 <code>UT::Vector3</code>——下划线是名字的一部分。只有真正带 <code>::</code> 的才是作用域。</p>
+<p><strong>易错点 ③ 把 Unreal 的字母前缀误当成命名空间。</strong> 看到 <code>FVector</code> 别试图拆成 <code>F::Vector</code>——那个 <code>F</code> 是名字的一部分。只有真正带 <code>::</code> 的才是作用域。</p>
 
 <h2>练一练 · 立刻反馈</h2>
 <p>读限定名,凭理解作答。每题答完会马上告诉你对错和原因。</p>
@@ -199,10 +194,10 @@ renderQuiz("quiz14", [
     why: "用在类型声明位置、且通过 类名:: 限定,Vertex 是定义在 Mesh 内部的嵌套类型;这里在用它声明变量 v。"
   },
   {
-    q: "关于 HDK 里的 <code>UT_Vector3</code>,下面哪句<strong>对</strong>?",
-    options: ["它可以改写成 UT::Vector3", "UT_ 是名字前缀非命名空间", "它是标准库提供的类模板"],
+    q: "关于 Unreal 里的 <code>FVector</code>,下面哪句<strong>对</strong>?",
+    options: ["它可以拆开改写成双冒号形式", "那个字母前缀并不是命名空间", "它是标准库直接提供的模板"],
     correct: 1,
-    why: "UT_ 只是类名前缀(下划线是名字一部分),不是命名空间,不能写成 UT::Vector3;它来自 HDK,不是标准库。"
+    why: "F 只是类名前缀(那个字母是名字一部分),不是命名空间,不能写成 F::Vector;它来自引擎,不是标准库。"
   },
   {
     q: "为什么<strong>头文件里</strong>通常不写 <code>using namespace std;</code>?",

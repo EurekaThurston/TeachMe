@@ -10,7 +10,7 @@
 
 <div class="lesson-kicker">C++ for VFX TAs · 第 10 课</div>
 <h1>std::string 与常见标准库类型</h1>
-<p class="subtitle">代码里的文字、和"名字 → 数据"的查表,在 C++ 里长什么样。这正是 DCC 属性系统的内核。</p>
+<p class="subtitle">代码里的文字、和"名字 → 数据"的查表,在 C++ 里长什么样。这正是蓝图里 String 变量和 Map 变量背后的东西。</p>
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
@@ -26,22 +26,18 @@
 你已经在第 9 课见过 <code>std::vector</code> 了。每次看到 <code>std::</code> 这个前缀,先在心里翻译成一句话:<strong>"这是 C++ <em>标准库</em>(Standard Library)提供的现成工具。"</strong>
 <code>std</code> 念作 "standard"。冒号那两个点 <code>::</code> 叫<strong>作用域解析(scope resolution)</strong>,意思是"<code>vector</code> 这个名字属于 <code>std</code> 这个<strong>命名空间(namespace)</strong>"。
 </p>
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  把 <code>std::</code> 想成 Houdini 里的 <strong>节点分类前缀</strong>——就像 <code>sop/</code>、<code>vop/</code> 告诉你这个节点属于哪个上下文。<code>std::</code> 是一整面<strong>"标准库工具架"</strong>:<code>std::string</code>(文字)、<code>std::vector</code>(数组)、<code>std::map</code>(查表)都摆在这面架子上,前缀只是告诉你"去标准库那面架子上拿"。
-</div>
 <p>
 命名空间的完整机制留到<strong>第 14 课</strong>细讲,这里你只需要建立直觉:看到 <code>std::</code> 不要慌,它不是某个项目自己写的怪东西,而是<strong>全世界 C++ 都通用的标准件</strong>。
 </p>
 
 <h2>std::string:代码里的"文字"</h2>
 <p>
-<code>std::string</code> 就是一段<strong>文本</strong>——一串字符,比如 <code>"P"</code>、<code>"Cd"</code>、<code>"render_high.exr"</code>。在 VFX 里这太常见了:<strong>属性名</strong>(<code>"P"</code>、<code>"N"</code>、<code>"Cd"</code>)、文件路径、节点名、通道名,全是字符串。
+<code>std::string</code> 就是一段<strong>文本</strong>——一串字符,比如 <code>"Health"</code>、<code>"BaseColor"</code>、<code>"render_high.exr"</code>。在 VFX 里这太常见了:<strong>参数名 / 变量名</strong>(<code>"Health"</code>、<code>"Velocity"</code>、<code>"BaseColor"</code>)、文件路径、资产名、通道名,全是字符串。(Unreal 里你还会看到 <code>FString</code> / <code>FName</code> 这两个引擎自己的字符串类型,概念和 <code>std::string</code> 一致。)
 </p>
 <pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;string&gt;</span>   <span class="t-cmt">// 用 std::string 前要包含这个头文件</span>
 
-<span class="t-type">std::string</span> attrName = "Cd";        <span class="t-cmt">// 一个属性名</span>
-<span class="t-type">std::string</span> channel  = "diffuse";   <span class="t-cmt">// 一个通道名</span></code></pre>
+<span class="t-type">std::string</span> paramName = "Health";   <span class="t-cmt">// 一个参数名</span>
+<span class="t-type">std::string</span> channel   = "diffuse";  <span class="t-cmt">// 一个通道名</span></code></pre>
 
 <h3>它比 C 的 char* 安全好用</h3>
 <p>
@@ -79,71 +75,71 @@
 
 <h2>std::map:名字 → 数据 的查表</h2>
 <p>
-重头戏。<code>std::map&lt;Key, Value&gt;</code> 是一张<strong>查找表</strong>:给它一个<strong>键(Key)</strong>,它还你对应的<strong>值(Value)</strong>。这跟 DCC 里<strong>属性系统</strong>的样子一模一样——你拿属性名 <code>"P"</code> 去问,系统还你那份位置数据。
+重头戏。<code>std::map&lt;Key, Value&gt;</code> 是一张<strong>查找表</strong>:给它一个<strong>键(Key)</strong>,它还你对应的<strong>值(Value)</strong>。这正是蓝图里 <strong>Map 变量</strong>的样子(C++ 里对应的引擎类型是 <code>TMap</code>)——你拿一个名字 <code>"Health"</code> 去查,它还你对应的那份数据。
 </p>
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>std::map&lt;std::string, ...&gt;</code> 就是 Houdini 几何体上的<strong>属性字典</strong>:键是属性名字符串 <code>"P"</code> / <code>"N"</code> / <code>"Cd"</code>,值是那条属性的数据。你平时 <code>@Cd = ...</code> 背后,引擎就是在一张"名字 → 数据"的 map 上做查找。读到 <code>std::map&lt;std::string, T&gt;</code> 时,脑子里直接浮现"属性表"三个字。
+  <span class="label">读法</span>
+  读到 <code>std::map&lt;std::string, T&gt;</code> 时,脑子里直接浮现"<strong>名字 → 数据 的查表</strong>":键是一个名字字符串,值是它对应的数据。这跟你在蓝图里建一个 Key 为 String、Value 为某类型的 <strong>Map 变量</strong>是同一件事。
 </div>
 
 <pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;map&gt;</span>
 <span class="t-kw">#include</span> <span class="t-cmt">&lt;string&gt;</span>
 
-<span class="t-type">std::map</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">int</span>&gt; attrSize;  <span class="t-cmt">// 属性名 → 每个属性占几个 float</span>
+<span class="t-type">std::map</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">int</span>&gt; paramSize;  <span class="t-cmt">// 参数名 → 每个参数占几个 float</span>
 
-attrSize["P"]  = 3;   <span class="t-cmt">// 位置是 3 个 float (x,y,z)</span>
-attrSize["N"]  = 3;   <span class="t-cmt">// 法线也是 3 个</span>
-attrSize["Cd"] = 3;   <span class="t-cmt">// 颜色 RGB,3 个</span>
-attrSize["uv"] = 2;   <span class="t-cmt">// UV,2 个</span>
+paramSize["Position"] = 3;   <span class="t-cmt">// 位置是 3 个 float (x,y,z)</span>
+paramSize["Normal"]   = 3;   <span class="t-cmt">// 法线也是 3 个</span>
+paramSize["Color"]    = 3;   <span class="t-cmt">// 颜色 RGB,3 个</span>
+paramSize["UV"]       = 2;   <span class="t-cmt">// UV,2 个</span>
 
-<span class="t-type">int</span> s = attrSize["P"];        <span class="t-cmt">// 用名字查:s == 3</span></code></pre>
+<span class="t-type">int</span> s = paramSize["Position"];   <span class="t-cmt">// 用名字查:s == 3</span></code></pre>
 
 <h3>用 [] 取值,vs. 用 .find() 安全地问"在不在"</h3>
 <p>
 <code>m["P"]</code> 是最直观的取值方式:方括号里放<strong>键</strong>。但有个读代码必须知道的坑:<strong>如果这个键<em>不存在</em>,<code>[]</code> 会悄悄<em>新建</em>一条默认值的条目</strong>。想"只查询、不创建"时,代码会改用 <code>.find()</code>:
 </p>
-<pre><code><span class="t-kw">auto</span> it = attrSize.find("Cd");     <span class="t-cmt">// 去表里找 "Cd"</span>
+<pre><code><span class="t-kw">auto</span> it = paramSize.find("Color");   <span class="t-cmt">// 去表里找 "Color"</span>
 
-<span class="t-kw">if</span> (it != attrSize.end())          <span class="t-cmt">// .end() 表示"没找到"的边界标记</span>
+<span class="t-kw">if</span> (it != paramSize.end())          <span class="t-cmt">// .end() 表示"没找到"的边界标记</span>
 {
     <span class="t-type">int</span> s = it-&gt;second;             <span class="t-cmt">// 找到了:it->second 就是对应的值 3</span>
 }
 <span class="t-kw">else</span>
 {
-    <span class="t-cmt">// 没有 "Cd" 这条属性</span>
+    <span class="t-cmt">// 没有 "Color" 这一项</span>
 }</code></pre>
 <p>
-这里 <code>it</code> 指向表里的一个<strong>条目</strong>,而每个条目<em>本身就是一个 <code>std::pair</code></em>:<code>it-&gt;first</code> 是键(<code>"Cd"</code>),<code>it-&gt;second</code> 是值(<code>3</code>)。看,前面学的 <code>.first</code> / <code>.second</code> 在这儿接上了。(<code>it-&gt;second</code> 的箭头 <code>-&gt;</code> 留到后面讲指针时细说,现在只当它是"取这个条目的 second"。)
+这里 <code>it</code> 指向表里的一个<strong>条目</strong>,而每个条目<em>本身就是一个 <code>std::pair</code></em>:<code>it-&gt;first</code> 是键(<code>"Color"</code>),<code>it-&gt;second</code> 是值(<code>3</code>)。看,前面学的 <code>.first</code> / <code>.second</code> 在这儿接上了。(<code>it-&gt;second</code> 的箭头 <code>-&gt;</code> 留到后面讲指针时细说,现在只当它是"取这个条目的 second"。)
 </p>
 
 <h3>迭代:把整张表走一遍</h3>
-<pre><code><span class="t-kw">for</span> (<span class="t-kw">const</span> <span class="t-kw">auto</span>&amp; kv : attrSize)   <span class="t-cmt">// kv 依次是表里的每个 pair</span>
+<pre><code><span class="t-kw">for</span> (<span class="t-kw">const</span> <span class="t-kw">auto</span>&amp; kv : paramSize)   <span class="t-cmt">// kv 依次是表里的每个 pair</span>
 {
-    <span class="t-type">std::string</span> name = kv.first;   <span class="t-cmt">// 键:属性名</span>
+    <span class="t-type">std::string</span> name = kv.first;   <span class="t-cmt">// 键:参数名</span>
     <span class="t-type">int</span>         size = kv.second;  <span class="t-cmt">// 值:占几个 float</span>
 }</code></pre>
 <p>这种 <code>for (... : 容器)</code> 的写法叫<strong>范围 for(range-based for)</strong>:不用管下标,直接"对容器里的每个元素轮一遍"。每轮拿到的 <code>kv</code> 又是个 <code>pair</code>,所以照样 <code>.first</code> / <code>.second</code>。</p>
 
 <h2>你会在真实代码里看到</h2>
-<p>把今天三样东西拼起来,这就是一个"按属性名查数据"的函数——和你在引擎、插件代码里读到的形状几乎一致:</p>
+<p>把今天三样东西拼起来,这就是一个"按名字查数据"的函数——和你在引擎、插件代码里读到的形状几乎一致:</p>
 <pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;string&gt;</span>
 <span class="t-kw">#include</span> <span class="t-cmt">&lt;map&gt;</span>
 <span class="t-kw">#include</span> <span class="t-cmt">&lt;vector&gt;</span>
 
-<span class="t-cmt">// 一张"属性名 → 这条属性所有点的值"的表</span>
-<span class="t-kw">using</span> AttributeTable = <span class="t-type">std::map</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">std::vector</span>&lt;<span class="t-type">float</span>&gt;&gt;;
+<span class="t-cmt">// 一张"参数名 → 这个参数的一串值"的表</span>
+<span class="t-kw">using</span> ParamTable = <span class="t-type">std::map</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">std::vector</span>&lt;<span class="t-type">float</span>&gt;&gt;;
 
-<span class="t-cmt">// 给定属性名,取出那条属性的数据;没有就返回一个空 vector</span>
-<span class="t-type">std::vector</span>&lt;<span class="t-type">float</span>&gt; <span class="t-name">getAttribute</span>(<span class="t-kw">const</span> AttributeTable&amp; attrs, <span class="t-kw">const</span> <span class="t-type">std::string</span>&amp; name)
+<span class="t-cmt">// 给定参数名,取出那一项的数据;没有就返回一个空 vector</span>
+<span class="t-type">std::vector</span>&lt;<span class="t-type">float</span>&gt; <span class="t-name">getParam</span>(<span class="t-kw">const</span> ParamTable&amp; params, <span class="t-kw">const</span> <span class="t-type">std::string</span>&amp; name)
 {
-    <span class="t-kw">auto</span> it = attrs.find(name);        <span class="t-cmt">// 用名字去查表</span>
-    <span class="t-kw">if</span> (it != attrs.end())
+    <span class="t-kw">auto</span> it = params.find(name);       <span class="t-cmt">// 用名字去查表</span>
+    <span class="t-kw">if</span> (it != params.end())
         <span class="t-kw">return</span> it-&gt;second;              <span class="t-cmt">// 找到 → 返回那份数据</span>
 
     <span class="t-kw">return</span> {};                         <span class="t-cmt">// 没找到 → 返回空 vector</span>
 }</code></pre>
 <p>
-一眼读出它的"合同":喂进去一张<strong>属性表</strong>和一个<strong>属性名字符串</strong>,吐出来一个 <code>std::vector&lt;float&gt;</code>(那条属性的数值)。<code>using AttributeTable = ...</code> 只是给那个又长又啰嗦的 map 类型起了个<strong>别名</strong>,方便人读——真实代码很爱这么干。
+一眼读出它的"合同":喂进去一张<strong>参数表</strong>和一个<strong>参数名字符串</strong>,吐出来一个 <code>std::vector&lt;float&gt;</code>(那一项的数值)。<code>using ParamTable = ...</code> 只是给那个又长又啰嗦的 map 类型起了个<strong>别名</strong>,方便人读——真实代码很爱这么干。
 </p>
 <div class="callout callout-key">
   <span class="label">头文件,先点一下</span>
@@ -185,7 +181,7 @@ attrSize["uv"] = 2;   <span class="t-cmt">// UV,2 个</span>
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 比如:<code>std::map</code> 为什么键是有序的?<code>it-&gt;second</code> 那个箭头 <code>-&gt;</code> 到底怎么回事?<code>std::unordered_map</code> 和它差在哪?或者想要更多 Houdini 属性表的对照例子——直接在对话里问我,我给你拆开讲。
+  <strong>有疑问就问我。</strong> 比如:<code>std::map</code> 为什么键是有序的?<code>it-&gt;second</code> 那个箭头 <code>-&gt;</code> 到底怎么回事?<code>std::unordered_map</code> 和它差在哪?或者想要更多贴近 Unreal(<code>TMap</code> / 蓝图 Map 变量)的对照例子——直接在对话里问我,我给你拆开讲。
 </div>
 
 <div class="lesson-footer">

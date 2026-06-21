@@ -10,11 +10,11 @@
 
 <div class="lesson-kicker">C++ for VFX TAs · 第 7 课</div>
 <h1>指针 pointers —— 一个存"地址"的变量</h1>
-<p class="subtitle">这是整门课最硬的一堵墙。翻过去,你就能读懂 Houdini HDK、Unreal、各种渲染器里那些满屏的 <code>*</code> 和 <code>-&gt;</code>。慢慢来,这一课值得多花时间。</p>
+<p class="subtitle">这是整门课最硬的一堵墙。翻过去,你就能读懂 Unreal、各种渲染器里那些满屏的 <code>*</code> 和 <code>-&gt;</code>。慢慢来,这一课值得多花时间。</p>
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
-  你能读懂 <code>T*</code> 指针、<code>&amp;</code> 取地址、<code>*</code> 解引用、<code>nullptr</code>,说清<strong>指针和引用的区别</strong>,并且分得清读真实 DCC/HDK 代码绕不开的 <code>.</code> 与 <code>-&gt;</code>。读完这一课,你看真实 C++ 不会再被那一堆符号劝退。
+  你能读懂 <code>T*</code> 指针、<code>&amp;</code> 取地址、<code>*</code> 解引用、<code>nullptr</code>,说清<strong>指针和引用的区别</strong>,并且分得清读真实引擎代码绕不开的 <code>.</code> 与 <code>-&gt;</code>。读完这一课,你看真实 C++ 不会再被那一堆符号劝退。
 </div>
 
 <h2>热身 · 回忆第 6 课(别翻笔记)</h2>
@@ -23,15 +23,15 @@
 
 <h2>先从一个你已经懂的画面出发</h2>
 <p>
-在 Houdini 里,一根<strong>连线</strong>从来不"装"数据。它只是告诉下游节点:"你要的几何在<em>那个</em> SOP 的输出口。"数据本体待在那个节点里,连线只是<strong>指向它的一根线</strong>。你顺着这根线,就能去拿、去改那份几何。
+在 Blueprint 里,一个 <strong>Object Reference 变量</strong>(比如一个 <code>Actor</code> 引用)从来不"装"那个 actor 本身。它只记着"我指向场景里<em>那个</em> actor";真正的 actor 数据待在别处,这个变量只是<strong>指向它的一根线</strong>。这个变量可以是空的(<code>None</code>),也可以随时改指向另一个 actor——你早就用过这套行为了。
 </p>
 <p>
-<strong>指针(pointer)就是这根线。</strong> 一个普通变量 <code>float mass = 7.0;</code> 自己<em>装着</em>值 7.0;而一个指针变量不装值,它装的是"那个值在内存里的<strong>地址</strong>"——相当于一张写着门牌号的纸条。纸条本身不是房子,但顺着门牌号你能找到房子。
+<strong>指针(pointer)就是这个 Object Reference 变量在 C++ 里的样子。</strong> 一个普通变量 <code>float mass = 7.0;</code> 自己<em>装着</em>值 7.0;而一个指针变量不装值,它装的是"那个值在内存里的<strong>地址</strong>"——相当于一张写着门牌号的纸条。纸条本身不是房子,但顺着门牌号你能找到房子。
 </p>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  普通变量 = <strong>节点里那份真正的几何数据</strong>。指针 = <strong>指向那份数据的一根连线</strong>(它只记着"数据在哪")。后面要讲的 <code>-&gt;</code>,就是"<strong>顺着这根连线钻进去,拿里面的东西</strong>"。
+  <span class="label">对照 Blueprint</span>
+  Blueprint 里的 Object Reference 变量,底层就是一个指针:它能为空(<code>None</code> = <code>nullptr</code>)、能改指向别的 actor。这正好对上 <code>T*</code> 的两个特点——可空、可改绑;而上一课的引用 <code>T&amp;</code> 两者都做不到。
 </div>
 
 <h2>三个符号,一次说清:<code>T*</code> / <code>&amp;</code> / <code>*</code></h2>
@@ -80,7 +80,7 @@
     *ptr = <span class="t-num">5</span>;            <span class="t-cmt">// 确认非空,才敢顺着它去改值</span>
 }</code></pre>
 <p>
-为什么要有空指针?因为很多 API 会用"返回 <code>nullptr</code>"来表示<strong>"没找到 / 失败了"</strong>。比如"按名字找一个节点",找不到就还你一个 <code>nullptr</code>。所以真实代码里到处是"<strong>先判空,再解引用</strong>"的套路——这点下面"易错点"会重点讲。
+为什么要有空指针?因为很多 API 会用"返回 <code>nullptr</code>"来表示<strong>"没找到 / 失败了"</strong>。比如"按名字找一个 actor",找不到就还你一个 <code>nullptr</code>(就像 Blueprint 里 Get 一个引用结果是 <code>None</code>)。所以真实代码里到处是"<strong>先判空,再解引用</strong>"的套路——这点下面"易错点"会重点讲。
 </p>
 
 <h2>指针 vs 引用:这对近亲到底差在哪</h2>
@@ -97,46 +97,41 @@
 一句话记住:<strong>引用是"焊死的别名"</strong>(必须接、不能换、用起来像本体);<strong>指针是"可插拔的线"</strong>(可以悬空、可以改插口、用前常要先解引用或判空)。正因为指针能为空、能改指向,API 设计者爱用它来表达"可有可无"和"动态查找"。
 </p>
 
-<h2>你会在真实代码里看到:HDK 的几何指针</h2>
+<h2>你会在真实代码里看到:Unreal 的对象指针</h2>
 <p>
-下面这段是<strong>示意性</strong>的 Houdini HDK 风格代码(真实头文件更复杂,这里框出来只为让你认得这个<em>形状</em>)。一个 SOP 节点的核心函数,常常长这样:</p>
-<pre><code><span class="t-cmt">// 示意:一个 SOP 在 cook 时,Houdini 把"指向几何的指针"给你</span>
-<span class="t-type">GU_Detail</span>* <span class="t-name">buildGeometry</span>(<span class="t-type">GU_Detail</span>* gdp)
+下面这段是<strong>示意性</strong>的 Unreal 风格代码(真实头文件更复杂,这里框出来只为让你认得这个<em>形状</em>)。一个处理 actor 的函数,常常长这样:</p>
+<pre><code><span class="t-cmt">// 示意:引擎把"指向 actor 的指针"给你</span>
+<span class="t-type">AActor</span>* <span class="t-name">SetupActor</span>(<span class="t-type">AActor</span>* actor)
 {
-    <span class="t-kw">if</span> (gdp == <span class="t-kw">nullptr</span>)        <span class="t-cmt">// ① 先判空:线接上了吗</span>
+    <span class="t-kw">if</span> (actor == <span class="t-kw">nullptr</span>)      <span class="t-cmt">// ① 先判空:线接上了吗</span>
         <span class="t-kw">return</span> <span class="t-kw">nullptr</span>;
 
-    <span class="t-type">GA_Offset</span> pt = gdp-&gt;<span class="t-name">appendPoint</span>();   <span class="t-cmt">// ② 顺着指针调它的方法:加一个点</span>
-    gdp-&gt;<span class="t-name">setPos3</span>(pt, <span class="t-type">UT_Vector3</span>(<span class="t-num">0</span>, <span class="t-num">1</span>, <span class="t-num">0</span>));  <span class="t-cmt">// ③ 再顺着指针设这个点的位置</span>
+    actor-&gt;<span class="t-name">SetActorLocation</span>(<span class="t-type">FVector</span>(<span class="t-num">0</span>, <span class="t-num">0</span>, <span class="t-num">1</span>));  <span class="t-cmt">// ② 顺着指针调它的方法:设位置</span>
+    actor-&gt;<span class="t-name">SetActorHiddenInGame</span>(<span class="t-kw">false</span>);             <span class="t-cmt">// ③ 再顺着指针调一个方法</span>
 
-    <span class="t-kw">return</span> gdp;                  <span class="t-cmt">// ④ 把这根指向几何的线还回去</span>
+    <span class="t-kw">return</span> actor;                <span class="t-cmt">// ④ 把这根指向 actor 的线还回去</span>
 }</code></pre>
 <p>
-读法:<code>GU_Detail*</code> 就是"<strong>指向一份几何细节(点/面/属性)的指针</strong>"。Houdini 不会把整份几何<em>复制</em>给你(太大了),而是给你<strong>一根指向它的线</strong>,你顺着线就地操作。函数最后 <code>return gdp;</code> 又把这根线还回去。这就是为什么 HDK、Unreal、渲染器 API 满屏都是 <code>*</code>:<strong>大对象都用指针传来传去,只传地址、不搬数据</strong>。
+读法:<code>AActor*</code> 就是"<strong>指向一个 actor 的指针</strong>"。引擎不会把整个 actor <em>复制</em>给你(太大了),而是给你<strong>一根指向它的线</strong>,你顺着线就地操作。函数最后 <code>return actor;</code> 又把这根线还回去。这就是为什么 Unreal、渲染器 API 满屏都是 <code>*</code>:<strong>大对象都用指针传来传去,只传地址、不搬数据</strong>。
 </p>
 
-<h2>关键招式:<code>.</code> 和 <code>-&gt;</code> 的区别(读 DCC 代码绕不开)</h2>
+<h2>关键招式:<code>.</code> 和 <code>-&gt;</code> 的区别(读引擎代码绕不开)</h2>
 <p>对象有成员(属性和方法)。怎么取成员,取决于你手里是<strong>对象本身</strong>还是<strong>指向对象的指针</strong>:</p>
-<pre><code><span class="t-type">GU_Detail</span>  geo;          <span class="t-cmt">// geo 是对象本体</span>
-<span class="t-type">GU_Detail</span>* gdp = &amp;geo;   <span class="t-cmt">// gdp 是指向它的指针</span>
+<pre><code><span class="t-type">FVector</span>  pos;            <span class="t-cmt">// pos 是对象本体</span>
+<span class="t-type">FVector</span>* ptr = &amp;pos;     <span class="t-cmt">// ptr 是指向它的指针</span>
 
-geo.<span class="t-name">appendPoint</span>();        <span class="t-cmt">// 对象/引用 → 用点  .</span>
-gdp-&gt;<span class="t-name">appendPoint</span>();        <span class="t-cmt">// 指针       → 用箭头 -&gt;</span>
-(*gdp).<span class="t-name">appendPoint</span>();     <span class="t-cmt">// 完全等价:先 * 解引用,再用点 .</span></code></pre>
+pos.<span class="t-name">Normalize</span>();          <span class="t-cmt">// 对象/引用 → 用点  .</span>
+ptr-&gt;<span class="t-name">Normalize</span>();          <span class="t-cmt">// 指针       → 用箭头 -&gt;</span>
+(*ptr).<span class="t-name">Normalize</span>();       <span class="t-cmt">// 完全等价:先 * 解引用,再用点 .</span></code></pre>
 <p>
 <strong><code>p-&gt;member</code> 就是 <code>(*p).member</code> 的简写。</strong> 因为"先解引用再取成员"太常用,C++ 给了 <code>-&gt;</code> 这个快捷写法。所以记忆口诀很简单:<br>
 ● 手里是<strong>对象或引用</strong>(没有 <code>*</code> 的那种)→ 用 <code>.</code><br>
 ● 手里是<strong>指针</strong>(类型带 <code>*</code> 的那种)→ 用 <code>-&gt;</code>
 </p>
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>-&gt;</code> 这个箭头,就是"<strong>顺着连线钻进那个节点,去拿/调它里面的东西</strong>"。你手里只有一根线(指针),想用里面的功能,就得沿着箭头进去。手里直接就是节点本体(对象),那就用 <code>.</code> 当场取。
-</div>
-
 <h2>读代码易错点(这一节最值钱)</h2>
 <p><strong>① 对 <code>nullptr</code> 解引用 = 崩溃。</strong> 一根悬空的线,你非要顺着它去拿东西,程序当场炸(crash)。所以真实代码里 <code>if (p != nullptr)</code> / <code>if (p)</code> 这种判空随处可见——它不是啰嗦,是保命。读代码时看到判空,就知道"作者在防这根线没接上"。</p>
-<pre><code><span class="t-type">GU_Detail</span>* gdp = <span class="t-kw">nullptr</span>;
-gdp-&gt;<span class="t-name">appendPoint</span>();    <span class="t-cmt">// ✗ 危险!顺着一根空线去操作 → 崩溃</span></code></pre>
+<pre><code><span class="t-type">AActor</span>* actor = <span class="t-kw">nullptr</span>;
+actor-&gt;<span class="t-name">SetActorHiddenInGame</span>(<span class="t-kw">true</span>);    <span class="t-cmt">// ✗ 危险!顺着一根空线去操作 → 崩溃</span></code></pre>
 
 <p><strong>② <code>&amp;</code> 的两副面孔,别认错。</strong> 同一个 <code>&amp;</code>,在 <code>int&amp; r</code>(类型旁)是"引用",在 <code>&amp;count</code>(变量前)是"取地址"。看位置,不看符号长相。</p>
 
@@ -155,7 +150,7 @@ gdp-&gt;<span class="t-name">appendPoint</span>();    <span class="t-cmt">// ✗
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 这一课是公认的难关,卡住非常正常。比如:为什么 <code>*</code> 和 <code>&amp;</code> 要一符多义?<code>gdp-&gt;foo()</code> 到底等于什么?为什么 HDK 全用指针不用引用?——直接在对话里问我,我给你画图、再举 Houdini 的例子拆开讲。
+  <strong>有疑问就问我。</strong> 这一课是公认的难关,卡住非常正常。比如:为什么 <code>*</code> 和 <code>&amp;</code> 要一符多义?<code>actor-&gt;Foo()</code> 到底等于什么?为什么引擎里大对象全用指针不用引用?——直接在对话里问我,我给你画图、再举 Unreal 的例子拆开讲。
 </div>
 
 <div class="lesson-footer">
@@ -189,10 +184,10 @@ renderQuiz("quiz7", [
     why: "*p 是解引用,顺着地址改那头的值。p 指向 n,所以等于把 n 改成 20。"
   },
   {
-    q: "<code>GU_Detail* gdp;</code> 想调它的方法,正确的取成员符号是?",
+    q: "<code>AActor* actor;</code> 想调它的方法,正确的取成员符号是?",
     options: ["要用点号 .", "要用箭头 ->", "要用与号 &amp;"],
     correct: 1,
-    why: "gdp 是指针(类型带 *),取成员要用箭头 ->;gdp->foo() 等价于 (*gdp).foo()。点 . 用于对象或引用本体。"
+    why: "actor 是指针(类型带 *),取成员要用箭头 ->;actor->Foo() 等价于 (*actor).Foo()。点 . 用于对象或引用本体。"
   },
   {
     q: "关于 <code>nullptr</code>,下面哪句<strong>对</strong>?",

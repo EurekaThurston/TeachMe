@@ -23,7 +23,7 @@
 
 <h2>为什么代码要分成两种文件</h2>
 <p>
-你打开一个真实的 C++ 工程(比如 Houdini 的 HDK、某个渲染器的源码),会看到成对出现的文件:<code>Vector3.h</code> 和 <code>Vector3.cpp</code>、<code>Camera.h</code> 和 <code>Camera.cpp</code>……为什么不写在一个文件里?
+你打开一个真实的 C++ 工程(比如 Unreal 引擎、某个渲染器的源码),会看到成对出现的文件:<code>Vector3.h</code> 和 <code>Vector3.cpp</code>、<code>Camera.h</code> 和 <code>Camera.cpp</code>……为什么不写在一个文件里?
 </p>
 <p>
 分工很简单,记住这一句:<strong><code>.h</code> 放声明(declaration),<code>.cpp</code> 放定义(definition)</strong>。
@@ -34,8 +34,8 @@
 </ul>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>.h</code> 像一个节点 / HDA 的<strong>接口:参数面板(对外长什么样,有哪些输入输出端口)</strong>;<code>.cpp</code> 像它<strong>内部的实现网络</strong>。别人调用你的节点时,只需要看参数面板(<code>.h</code>),根本不用关心里面那张网怎么连(<code>.cpp</code>)。
+  <span class="label">读法</span>
+  一句话记牢:<code>.h</code> 是<strong>对外的接口</strong>(别人要调用你,只需看这份签名),<code>.cpp</code> 是<strong>内部实现</strong>(怎么干活,调用方不必关心)。
 </div>
 
 <h2>一个贯穿全课的配对例子:Vector3</h2>
@@ -95,8 +95,8 @@
 </table>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>#include "Vector3.h"</code> 像在你的场景里<strong>引用进一个现成的 HDA 定义</strong>:你没有重写它的内部网络,只是把它的"接口契约"拉进来,这样你的代码就知道 <code>Vector3</code>、<code>dot()</code> 这些名字代表什么、能怎么用。
+  <span class="label">你熟悉的一个真实对照</span>
+  这和你在 HLSL 里写 <code>#include "/Engine/Private/Common.ush"</code> 是<strong>同一个机制</strong>:着色器编译前,预处理器把那个 <code>.ush</code>/<code>.usf</code> 文件的内容整段贴进来,你的着色器才认识里面定义的函数和宏。C++ 的 <code>#include "Vector3.h"</code> 完全一样,只是贴的是 C++ 头文件。
 </div>
 
 <h2>为什么需要 <code>#pragma once</code> / include guard</h2>
@@ -118,20 +118,20 @@
 <p>看到任意一个头文件顶上有 <code>#pragma once</code> 或这种 <code>#ifndef / #define / #endif</code> 包夹,你就知道:这是在<strong>防止重复包含</strong>,不是什么业务逻辑,扫一眼即可。</p>
 
 <h2>你会在真实代码里看到</h2>
-<p>真实工程里 <code>.cpp</code> 顶部往往有一长串 <code>#include</code>。这是一段 HDK(Houdini Development Kit)风格的头部,扫一眼能认出层次就够了:</p>
+<p>真实工程里 <code>.cpp</code> 顶部往往有一长串 <code>#include</code>。下面是一段 Unreal 风格的头部,扫一眼能认出层次就够了:</p>
 
-<pre><code><span class="t-cmt">// ===== SOP_MyDeform.cpp 的开头 =====</span>
-<span class="t-kw">#include</span> <span class="t-name">"SOP_MyDeform.h"</span>   <span class="t-cmt">// 1) 配对的自家头文件,通常放最前</span>
+<pre><code><span class="t-cmt">// ===== MyDeformComponent.cpp 的开头 =====</span>
+<span class="t-kw">#include</span> <span class="t-name">"MyDeformComponent.h"</span>   <span class="t-cmt">// 1) 配对的自家头文件,通常放最前</span>
 
-<span class="t-kw">#include</span> &lt;SOP/SOP_Node.h&gt;     <span class="t-cmt">// 2) HDK 提供的节点基类</span>
-<span class="t-kw">#include</span> &lt;GEO/GEO_Point.h&gt;    <span class="t-cmt">//    几何点的接口</span>
-<span class="t-kw">#include</span> &lt;UT/UT_Vector3.h&gt;    <span class="t-cmt">//    Houdini 自己的向量类型</span>
+<span class="t-kw">#include</span> <span class="t-name">"GameFramework/Actor.h"</span>   <span class="t-cmt">// 2) 引擎提供的基类</span>
+<span class="t-kw">#include</span> <span class="t-name">"Components/StaticMeshComponent.h"</span>   <span class="t-cmt">//    组件类型</span>
+<span class="t-kw">#include</span> <span class="t-name">"Math/Vector.h"</span>   <span class="t-cmt">//    引擎自己的向量类型 FVector</span>
 
 <span class="t-kw">#include</span> &lt;vector&gt;             <span class="t-cmt">// 3) C++ 标准库</span>
 <span class="t-kw">#include</span> &lt;cmath&gt;</code></pre>
 
 <p>
-两种括号的区别:<code>"双引号"</code> 一般是<strong>你自己项目里的</strong>头文件;<code>&lt;尖括号&gt;</code> 一般是<strong>库或系统</strong>提供的头文件(标准库、HDK 等)。读代码时,这串 <code>#include</code> 就是这个文件的"依赖清单"——它用到了哪些外部东西,一目了然。
+两种括号的区别:<code>"双引号"</code> 一般是<strong>你自己项目里的</strong>头文件;<code>&lt;尖括号&gt;</code> 一般是<strong>库或系统</strong>提供的头文件(标准库等)。读代码时,这串 <code>#include</code> 就是这个文件的"依赖清单"——它用到了哪些外部东西,一目了然。
 </p>
 
 <h2>关键:编译 → 链接,是两步</h2>
@@ -144,11 +144,6 @@
 <p>
 <strong>② 链接(link):把所有目标文件拼到一起。</strong> 编译完每个 <code>.cpp</code> 各得一个 <code>.o</code>。<strong>链接器(linker)</strong>负责把它们缝合成最终的可执行文件 / 库:谁调用了 <code>dot()</code>,就去所有 <code>.o</code> 里找到 <code>dot()</code> 的<strong>定义</strong>,把这根线接上。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <strong>编译</strong>像分别检查每一个节点内部接得通不通(单个节点自己的问题);<strong>链接</strong>像最后<strong>把所有节点连成一张能跑的大网</strong>——某个输入端口期待有人喂数据,链接器就负责找到那根输出线接上。少了哪根线,网就跑不起来。
-</div>
 
 <h2>读代码易错点:链接错误 ≠ 编译错误</h2>
 <p>这是本课最值钱的一节。两类报错出现在不同阶段,意味着完全不同的毛病:</p>

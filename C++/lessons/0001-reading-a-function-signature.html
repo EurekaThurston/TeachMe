@@ -19,7 +19,7 @@
 
 <h2>从你已经懂的东西出发</h2>
 <p>
-你在 Houdini 里写过 <code>clamp(value, 0, 1)</code>,或者在着色器里见过它:把一个数限制在最小和最大值之间。
+你在 HLSL / 着色器里写过 <code>clamp(value, 0, 1)</code>:把一个数限制在最小和最大值之间。
 你已经懂它<em>做什么</em>。现在我们只看它在 C++ 里<em>长什么样</em>。
 </p>
 
@@ -41,23 +41,18 @@
 
 <p>
 关键差别,记住这一点就够本课了:<strong>在 C++ 里,类型是<em>明写</em>出来的</strong>。
-每个值前面都贴着它的类型标签——<code>float</code> 表示"带小数的数"。Houdini 的 VEX 里其实也是这样(<code>float</code>、<code>vector</code>、<code>int</code>),只是你可能没太留意。
+每个值前面都贴着它的类型标签——<code>float</code> 表示"带小数的数"。HLSL 里其实也是这样(<code>float</code>、<code>float3</code>、<code>int</code>),只是你可能没太留意。
 </p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  把函数想成一个 <strong>Houdini 节点</strong>:<strong>参数列表</strong>就是节点左上角的<strong>输入端口</strong>(每个端口有规定的数据类型),<strong>返回类型</strong>就是节点底部的<strong>输出端口</strong>。读签名 = 看一个节点收什么、出什么。
-</div>
 
 <h2>常见的类型标签(够你起步了)</h2>
 <table style="width:100%; border-collapse:collapse; font-size:0.96rem;">
   <tr style="border-bottom:1px solid var(--rule); text-align:left;">
-    <th style="padding:0.4rem 0;">C++ 写法</th><th>意思</th><th>VFX 里类似</th>
+    <th style="padding:0.4rem 0;">C++ 写法</th><th>意思</th><th>HLSL 里类似</th>
   </tr>
-  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>int</code></td><td>整数(没有小数)</td><td>VEX 的 <code>int</code>、点编号</td></tr>
-  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>float</code></td><td>带小数的数</td><td>VEX 的 <code>float</code>、属性值</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>int</code></td><td>整数(没有小数)</td><td>HLSL 的 <code>int</code>、索引</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>float</code></td><td>带小数的数</td><td>HLSL 的 <code>float</code>、分量值</td></tr>
   <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>bool</code></td><td>真/假(true/false)</td><td>开关、勾选框</td></tr>
-  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>void</code></td><td>不返回任何值</td><td>只"做事"、不输出的节点</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>void</code></td><td>不返回任何值</td><td>只"做事"、不返回值的函数</td></tr>
   <tr><td style="padding:0.4rem 0;"><code>float*</code> / <code>float&amp;</code></td><td>(后面课讲)指向某个 float</td><td>引用一份数据,先眼熟</td></tr>
 </table>
 
@@ -73,7 +68,7 @@
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 我是你的老师——任何一行代码看不懂、想要更多 VFX 例子、或者想知道 <code>float&amp;</code> 那个 <code>&amp;</code> 到底是啥,直接在对话里问我。卡住是正常的,问出来就解决了。
+  <strong>有疑问就问我。</strong> 我是你的老师——任何一行代码看不懂、想要更多 Unreal 的真实例子、或者想知道 <code>float&amp;</code> 那个 <code>&amp;</code> 到底是啥,直接在对话里问我。卡住是正常的,问出来就解决了。
 </div>
 
 <div class="lesson-footer">
