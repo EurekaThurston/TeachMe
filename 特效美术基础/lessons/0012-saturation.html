@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 12 课 · 饱和度作为工具:不是越高越好</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  /* 0012 课内独有样式 */
+  .cc-scene {
+    position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px;
+    overflow: hidden; border: 1px solid var(--rule); box-shadow: 0 2px 10px var(--shadow);
+    margin: 0.4rem 0; background: linear-gradient(160deg,#2c3340 0%,#222833 60%,#1a1f27 100%);
+  }
+  .cc-blob { position: absolute; border-radius: 50%; filter: blur(0.5px); transition: filter 0.18s; }
+  /* 环境块:开关「灰衬纯」后被降饱和 */
+  .cc-desat-env { filter: saturate(0.18) blur(0.5px) !important; }
+  .cc-focus { box-shadow: 0 0 24px 6px rgba(255,90,60,0.35); }
+  .cc-range { width: 100%; margin: 0.3rem 0 0.2rem; accent-color: var(--accent); }
+  .cc-readout { font-size: 0.82rem; color: var(--muted); margin: 0.1rem 0 0.6rem; }
+  .cc-readout strong { color: var(--ink); }
+  .budget-bar { display: flex; height: 1.7rem; border-radius: 4px; overflow: hidden; border: 1px solid var(--rule); margin: 0.8rem 0 0.3rem; }
+  .budget-bar > span { display: flex; align-items: center; justify-content: center; font-size: 0.72rem; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 12 课</div>
+<h1>饱和度作为工具:不是"越高越好"</h1>
+<p class="subtitle">新人最常犯的色彩错:把每个特效的 saturation 都拉满。结果满屏鲜艳,却一个焦点都没有。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  把<strong>饱和度 saturation</strong>当成一件<strong>对比工具</strong>来用,而不是一个"越高越好"的旋钮。眼睛被画面里<strong>相对最饱和</strong>的那一处吸引——所以靠"周围灰、焦点纯"来制造焦点,而不是把所有东西一起拉满。
+</div>
+
+<h2>饱和度是对比,不是绝对值</h2>
+<p>
+回忆第 9 课:一个颜色拆成 <strong>hue(色相)</strong>、<strong>saturation(饱和度,也叫 chroma)</strong>、<strong>value(明度)</strong>。
+saturation 描述一块色"有多鲜、离灰有多远"。新人直觉是:鲜 = 好看 = 显眼,所以把它往高拉。
+</p>
+<p>
+但眼睛读的是<strong>对比</strong>,不是绝对值。和第 1 课讲明度时一模一样的道理:一块高饱和色显不显眼,取决于它<strong>周围有多饱和</strong>。
+全场都是高饱和时,谁也不比谁更鲜——<strong>相对最饱和处消失了,焦点也就没了</strong>。饱和度因此跟 value 一样,是一件制造焦点的<strong>对比工具</strong>:它的价值来自"差",不来自"高"。
+</p>
+
+<div class="callout callout-key">
+  <span class="label">核心定律</span>
+  眼睛被<strong>相对最饱和</strong>的区域吸引。一块纯色之所以"跳",是因为它<strong>周围更灰</strong>。把全场一起拉满,等于把对比抹平——鲜艳还在,焦点没了。
+</div>
+
+<h2>动手:全局饱和度滑块</h2>
+<p>
+下面是一个小场景:一团暖色"主技能命中"(中间偏右),周围是几块冷色环境光与次要粒子。
+拖动滑块,把<strong>整个场景</strong>的饱和度从灰一路拉到满。注意看:<strong>拉满时,中间那团命中反而不跳了</strong>——因为周围也一样鲜,它失去了"相对最饱和"的位置。
+</p>
+
+<div class="cc-scene" id="satScene">
+  <div class="cc-blob" style="width:30%;aspect-ratio:1;left:6%;top:14%;
+    background:radial-gradient(circle,#3aa0d8 0%,rgba(58,160,216,0) 70%);"></div>
+  <div class="cc-blob" style="width:26%;aspect-ratio:1;left:64%;top:52%;
+    background:radial-gradient(circle,#4f7fd0 0%,rgba(79,127,208,0) 70%);"></div>
+  <div class="cc-blob" style="width:22%;aspect-ratio:1;left:20%;top:56%;
+    background:radial-gradient(circle,#39c89a 0%,rgba(57,200,154,0) 70%);"></div>
+  <div class="cc-blob" style="width:34%;aspect-ratio:1;left:40%;top:24%;
+    background:radial-gradient(circle,#ffd9a0 0%,#ff6a3c 42%,rgba(255,106,60,0) 72%);"></div>
+</div>
+<input type="range" min="0" max="200" value="100" class="cc-range" id="satSlider" aria-label="全局饱和度">
+<p class="cc-readout">全局饱和度:<strong id="satLabel">100%</strong></p>
+
+<div class="callout callout-vfx">
+  <span class="label">看到了什么</span>
+  低饱和端:场景偏灰,但那团暖色命中<strong>依然是全场最鲜的</strong>,焦点清楚。一路拉满:每块色都在喊,<strong>没有一处比别处更鲜</strong>,画面变成均匀的噪声,你的眼睛无处落脚。鲜艳不等于有焦点。
+</div>
+
+<h2>"灰衬纯":大师画面的秘密</h2>
+<p>
+翻任何一张大师插画或一帧高水准游戏画面,用取色器量一圈,你会发现:<strong>绝大部分面积是低饱和(偏灰)的</strong>,只有<strong>极少数关键处</strong>才是高饱和的纯色。这就是 <strong>gray foil(灰衬纯)</strong>:大量的灰,是为了衬出那一点点纯色——纯色因此"跳"得出来。
+</p>
+<p>
+这跟"调色板里有没有鲜艳颜色"无关,而跟<strong>鲜艳色占多大面积、放在哪</strong>有关。下面这个开关演示:同一个场景,点一下<strong>把周围环境降饱和</strong>(焦点不动),中间那团命中会瞬间"唱"起来。
+</p>
+
+<div class="cc-scene" id="foilScene">
+  <div class="cc-blob cc-env" style="width:30%;aspect-ratio:1;left:6%;top:14%;
+    background:radial-gradient(circle,#3aa0d8 0%,rgba(58,160,216,0) 70%);"></div>
+  <div class="cc-blob cc-env" style="width:26%;aspect-ratio:1;left:64%;top:52%;
+    background:radial-gradient(circle,#7a5fd0 0%,rgba(122,95,208,0) 70%);"></div>
+  <div class="cc-blob cc-env" style="width:22%;aspect-ratio:1;left:20%;top:56%;
+    background:radial-gradient(circle,#39c89a 0%,rgba(57,200,154,0) 70%);"></div>
+  <div class="cc-blob cc-focus" style="width:32%;aspect-ratio:1;left:41%;top:26%;
+    background:radial-gradient(circle,#fff0c8 0%,#ff5a3c 44%,rgba(255,90,60,0) 72%);"></div>
+</div>
+<div class="toggle-row">
+  <button id="foilBtn" class="btn" data-on="↩ 还原:周围也饱和" data-off="◐ 降低周围饱和(灰衬纯)">◐ 降低周围饱和(灰衬纯)</button>
+  <span class="scene-caption" style="margin:0;">← 点一下,再点回来,来回对比</span>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">看到了什么</span>
+  没改焦点一个像素,只是把<strong>周围降了饱和</strong>,焦点就立刻"跳"出来了。这证明:焦点的鲜不是它自己的事,是<strong>它和周围饱和度的差</strong>。给环境降饱和,等于给焦点让出"最饱和"这个独一无二的位置。
+</div>
+
+<h2>过饱和的代价</h2>
+<p>
+当你把每个特效都拉满饱和,会同时付出三笔代价:
+</p>
+<ul>
+  <li><strong>互相打架</strong>:每块色都在抢"最鲜"的位置,谁也赢不了,画面失去层次(回扣第 3 课的明度归组——饱和度也需要"归组",分主次)。</li>
+  <li><strong>廉价、刺眼</strong>:满屏高饱和是一种典型的"业余感"。真实世界里强光、烟雾、大气会把颜色往灰里压,全鲜会显得假、塑料、像广告闪光。</li>
+  <li><strong>丢焦点</strong>:这是最致命的。玩家在战斗里需要"一眼看到关键信息",满屏高饱和等于没有重点——所有东西一样响,就等于全是噪声。</li>
+</ul>
+<p>
+所以"把所有特效拉满饱和"不是更好看,而是<strong>把对比预算一次性烧光</strong>。新人几乎都踩这个坑,因为单独看一个特效时,高饱和确实更"漂亮";但特效从不单独存在,它活在一整帧繁杂的画面里。
+</p>
+
+<h2>饱和与明度配合:最跳的焦点</h2>
+<p>
+饱和度不单干。<strong>最跳的焦点 = 高饱和 + 高明度对比,同一处命中</strong>。第 1 课说"明度是可读性的地基",这一课加一层:在明度已经拉开的焦点上,再叠一个<strong>全场最高的饱和度</strong>,两件对比工具同时指向同一点,焦点就会"焊"在那里。
+</p>
+<p>
+反过来,如果焦点的饱和高、但明度跟背景一样(回到第 1 课的反例),它照样糊;如果明度跳、但饱和跟环境一样平,它"清楚但不抓人"。两者叠在一处,才有真正的冲击力。把它想成<strong>饱和预算</strong>:像 HDR value 的峰值一样,你只有有限的"最鲜额度",把它全部押在焦点上。
+</p>
+
+<div class="budget-bar" aria-hidden="true">
+  <span style="flex:7;background:#5a6b7a">环境 · 低饱和(70% 面积)</span>
+  <span style="flex:2;background:#9a7d4a">次要 · 中饱和</span>
+  <span style="flex:1;background:#ff5a3c">焦点 · 满饱和</span>
+</div>
+<p class="scene-caption">饱和预算示意:把"最鲜"留给小面积焦点,大面积压灰当衬底。</p>
+
+<h2>接回 Niagara</h2>
+<p>
+回到你的 Color 曲线和 <code>Emissive</code>。把"饱和度是对比工具"翻译成具体操作:
+</p>
+<ul>
+  <li><strong>别把每个系统都拉满 saturation。</strong> 给一套技能定一个"饱和度层级":环境/拖尾/烟低饱和,主命中点最高饱和。</li>
+  <li><strong>环境与次要特效主动降饱和</strong>(在 Color 曲线里把中段往灰拉),给焦点让出"最饱和"的位置——这就是灰衬纯。</li>
+  <li><strong>主技能命中点给全场最高饱和</strong>,并和它的 HDR value 峰值<strong>对齐在同一帧、同一处</strong>(回扣第 4 课的时间维度:命中那一刻,饱和与明度一起冲到顶)。</li>
+  <li><strong>留"饱和预算"。</strong> 像管 HDR 强度一样管饱和:一帧里只允许极小面积是满饱和,其余都是衬托。</li>
+  <li><strong>自检</strong>:把特效放进真实战斗背景截图,问自己"全场相对最饱和的是不是我想让玩家看的那一点?"如果不是,先给周围降饱和,而不是给焦点再加。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>"全员拉满饱和最带感。"</strong> 单独看是,放进画面是噪声。鲜艳是相对的,全鲜=没有焦点。</li>
+  <li><strong>"越饱和越高级 / 越好看。"</strong> 恰恰相反,过饱和是最典型的廉价感来源;大师画面绝大部分面积是灰的。</li>
+  <li><strong>焦点不够饱和,被周围淹没。</strong> 有时问题不在焦点不够鲜,而在<strong>周围太鲜</strong>——先给环境降饱和,比给焦点加饱和更有效。</li>
+  <li><strong>只调饱和、忘了明度。</strong> 最跳的焦点要饱和与明度对比叠在同一处;光靠饱和救不了一个明度贴背景的特效。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz12"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light: A Guide for the Realist Painter》— James Gurney</a>
+  —— 看其中关于 <strong>saturation / chroma 控制</strong>的章节:Gurney 反复强调"大面积压低彩度、把高彩度留给少数关键处"。本课的"灰衬纯"与"饱和预算"就是这套思路在特效上的落地。<br>
+  想补色彩相对性的原典:<a href="https://www.artforum.com/columns/josef-alberss-interaction-of-color-193938/" target="_blank">Josef Albers《Interaction of Color》</a>(一个色的读感由邻色决定——下一课会深入)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师。想让我拿你自己的一张特效截图,量一圈饱和度、指出"对比预算"花在哪了;或者想要某个具体技能(爆炸/治疗/buff)的饱和度分层方案,直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>色彩构成:主色 + 点缀</strong>——颜色在画面里按面积怎么分配?为什么"大面积低饱和主色 + 小面积高饱和点缀"是经典法则,以及同一个色为什么换了背景就变了样。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/cc-tools.js"></script>
+<script>
+wireGlobalSaturation({ sliderId: "satSlider", sceneId: "satScene", labelId: "satLabel" });
+wireFoilToggle({ btnId: "foilBtn", sceneId: "foilScene" });
+renderQuiz("quiz12", [
+  {
+    q: "为什么把整个画面的饱和度一起拉满,焦点反而「不跳」了?",
+    options: ["相对最饱和处消失了,没了对比", "屏幕物理上无法显示太多鲜色", "高饱和会让显示器自动变暗"],
+    correct: 0,
+    why: "眼睛被相对最饱和处吸引。全场一起拉满,谁也不比谁更鲜,对比被抹平,焦点随之消失。"
+  },
+  {
+    q: "「灰衬纯」(gray foil)指的是大师画面里的什么规律?",
+    options: ["大量低饱和面积衬出少量高饱和", "大量高饱和面积压住少量灰色", "所有颜色都保持中等的饱和度"],
+    correct: 0,
+    why: "大面积偏灰、只有少数关键处是纯色,纯色才跳得出来。灰是为了衬纯。"
+  },
+  {
+    q: "焦点被周围淹没、不够显眼时,通常更有效的第一步是?",
+    options: ["把周围环境的饱和度降下来", "把焦点的饱和度再往上拉", "给整个画面统一加饱和度"],
+    correct: 0,
+    why: "鲜是相对的。常常是周围太鲜,而非焦点不够鲜;先给环境降饱和,让出「最饱和」的位置。"
+  },
+  {
+    q: "把每个特效都拉满饱和度,最致命的代价是?",
+    options: ["丢掉焦点,画面变成均匀噪声", "粒子数量被迫减少很多", "渲染开销显著上升变卡"],
+    correct: 0,
+    why: "所有东西一样响就等于全是噪声,玩家无处落脚——可读性(目标一)直接崩掉。"
+  },
+  {
+    q: "想做出「最跳」的焦点,饱和度应该怎样和明度配合?",
+    options: ["高饱和与高明度对比叠在同一处", "高饱和放焦点、高明度放背景", "两者都保持和环境一致即可"],
+    correct: 0,
+    why: "两件对比工具(饱和 + 明度对比)同时指向同一点,焦点才会「焊」住、最有冲击力。"
+  },
+  {
+    q: "在 Niagara 里管理一套技能的饱和度,正确做法是?",
+    options: ["环境降饱和,把最高饱和留给命中点", "每个系统都把 saturation 拉满", "完全不动 Color,只调粒子数"],
+    correct: 0,
+    why: "像管 HDR 预算一样管饱和:大面积压灰当衬底,极小面积的命中点给全场最高饱和。"
+  }
+]);
+</script>
+
+</body>
+</html>

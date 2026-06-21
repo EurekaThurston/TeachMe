@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 10 课 · 色相环与配色关系:和谐来自有序的关系</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .wheel-lab { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .wheel-row { display: grid; grid-template-columns: auto 1fr; gap: 1.2rem; align-items: center; }
+  @media (max-width: 540px) { .wheel-row { grid-template-columns: 1fr; } }
+  #wheel { display: block; width: 260px; height: 260px; max-width: 100%; margin: 0 auto; cursor: crosshair; touch-action: none; }
+  .wheel-ctrl label { font-weight: 600; font-size: 0.9rem; display: block; margin-bottom: 0.3rem; }
+  .wheel-ctrl select { font-family: inherit; font-size: 0.95rem; padding: 0.4rem 0.6rem; border: 1px solid var(--rule); border-radius: 5px; background: var(--paper); color: var(--ink); width: 100%; }
+  .scheme-name { margin: 0.7rem 0 0.4rem; font-weight: 600; color: var(--accent); }
+  .palette { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
+  .pal-cell { flex: 1; aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--rule); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 0.25rem; }
+  .pal-cell span { font-size: 0.68rem; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); font-family: "SF Mono","Cascadia Code",Consolas,monospace; }
+  .hint { font-size: 0.82rem; color: var(--muted); text-align: center; margin: 0.5rem 0 0; }
+  .area-demo { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin: 1.2rem 0; }
+  .area-box { aspect-ratio: 16/10; border-radius: 7px; border: 1px solid var(--rule); position: relative; overflow: hidden; }
+  .area-cap { font-size: 0.8rem; color: var(--muted); text-align: center; margin: 0.35rem 0 0; }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 10 课</div>
+<h1>色相环与配色关系:和谐来自有序的关系</h1>
+<p class="subtitle">好看的配色不是「挑了几个好看的颜色」,而是这几个颜色在色环上<strong>站成了一个有规律的阵型</strong>,而且数量克制。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能在色环上认出五种配色阵型——<strong>互补 / 邻近 / 分裂互补 / 三角 / 矩形</strong>——并明白:和谐 = <strong>有序的色相关系 + 克制的色数</strong>。给特效配色时,先选一个阵型,而不是随手撞色。
+</div>
+
+<h2>色环:把 hue 排成一圈</h2>
+<p>
+第 9 课说 hue 是 0–360° 的角度。把所有 hue 首尾相接排成一圈,就是<strong>色环 color wheel</strong>。配色关系全是「在这个圈上,几个点彼此的角度关系」。
+</p>
+<div class="callout callout-vfx">
+  <span class="label">VFX 注意:加色光,不是颜料</span>
+  美术教材里常见的是 <strong>RYB</strong> 颜料色环(红黄蓝为原色,互补是红↔绿)。但你做的是<strong>实时特效——发光、叠加,是加色光 RGB</strong>:原色是红绿蓝,互补是红↔青、绿↔品红、蓝↔黄。两套色环的「互补对」不一样。本课与 demo 全用 <strong>RGB/HSV 光色环</strong>,跟你引擎里所见一致。原理(有序关系 + 限制色数)两套通用。
+</div>
+
+<h2>动手:可交互色环 + 配色阵型</h2>
+<p>
+下面是一个真色环。先从下拉选一个<strong>配色方案</strong>,再<strong>点色环上任意一处</strong>定你的主色(大圈标记),它在该方案下的<strong>伙伴色</strong>会同时高亮,下方给出选出的 <strong>2–3 色调色板</strong>。换方案、换主色,感受每种阵型的气质。
+</p>
+
+<div class="wheel-lab">
+  <div class="wheel-row">
+    <canvas id="wheel" width="260" height="260"></canvas>
+    <div class="wheel-ctrl">
+      <label for="schemeSel">配色方案 Scheme</label>
+      <select id="schemeSel">
+        <option value="complementary">互补 Complementary(对位最跳)</option>
+        <option value="analogous">邻近 Analogous(和谐统一)</option>
+        <option value="splitcomp">分裂互补 Split-Comp(对比不刺)</option>
+        <option value="triadic">三角 Triadic(活泼平衡)</option>
+      </select>
+      <p class="scheme-name" id="schemeName">互补 Complementary</p>
+      <div class="palette" id="palette"></div>
+      <p class="hint">点色环换主色 · 大圈是主色,小圈是伙伴色</p>
+    </div>
+  </div>
+</div>
+
+<h2>五种阵型的气质与用途</h2>
+<ul>
+  <li><strong>互补 Complementary(环上 180°,对位)</strong>——色相对比最大、最「跳」。做<strong>焦点、能量碰撞、冰火对撞</strong>极好。但满屏等量互补会震眼,需面积控制。</li>
+  <li><strong>邻近 Analogous(相邻 30° 一段)</strong>——色相都挨着,天然<strong>和谐统一、安静</strong>。适合做一团统一气质的效果(一团绿毒、一片紫雾),或 color-over-life 在邻近段内过渡,顺滑不脏。</li>
+  <li><strong>分裂互补 Split-Complementary(主色 + 互补两侧)</strong>——保留互补的对比张力,但<strong>不像纯互补那么刺</strong>,更耐看。新手想要对比又怕翻车时的安全牌。</li>
+  <li><strong>三角 Triadic(环上三等分 120°)</strong>——三色拉满距离,<strong>活泼、平衡、有张力</strong>。卡通 / 风格化项目常用。三色都强时一样要靠面积分主次。</li>
+  <li><strong>矩形 Tetradic(两对互补,四色)</strong>——色最多、最难驾驭。给得了丰富层次,但<strong>极易失控</strong>,务必一主三辅、严控面积。新手慎用。</li>
+</ul>
+
+<h2>和谐到底从哪来</h2>
+<p>
+注意:上面每种方案都不是「这几个颜色本身好看」,而是<strong>它们彼此的角度关系是有规律的</strong>。这就是和谐的来源——<strong>有序的关系 + 限制色数</strong>,这两件事比「努力挑好看的颜色」高级得多。
+</p>
+<ul>
+  <li><strong>有序的关系。</strong> 包豪斯的 <strong>Itten</strong> 把色彩和谐系统化成「七种对比」与色环阵型——和谐是结构,不是运气。</li>
+  <li><strong>相对性。</strong> <strong>Albers</strong>(《Interaction of Color》)证明同一个颜色在不同邻色旁会「变」——所以配色是看<strong>关系</strong>,不是看孤立色块。你引擎里调好的颜色,放进不同背景读感会变。</li>
+  <li><strong>限制色数。</strong> 把调色板压到 2–3 个 hue,画面立刻显得「设计过」。色数失控是新手作品「乱」的头号原因。</li>
+</ul>
+
+<h2>互补的威力 —— 与它的脾气</h2>
+<p>
+互补色<strong>并置</strong>时,色相对比被最大化,边界处互相「点燃」,所以它是制造<strong>焦点和能量碰撞</strong>的最强工具:暖橙能量核 + 冷蓝环境光,一眼抓住。
+</p>
+<p>
+但它有脾气:<strong>两色等面积、等饱和地铺满,会强烈震眼(vibration),又吵又廉价。</strong> 解法是<strong>面积控制</strong>——一个大面积主色 + 一小撮互补点缀,对比的爽感留住,刺眼去掉。下面左右对比一下(这正是 0012 饱和度、0013 主色+点缀要深入的):
+</p>
+
+<div class="area-demo">
+  <div>
+    <div class="area-box" style="background:repeating-linear-gradient(45deg,#1f8ad6 0 22px,#e07a16 22px 44px);"></div>
+    <p class="area-cap"><strong>等面积互补</strong> · 震眼、吵、没焦点</p>
+  </div>
+  <div>
+    <div class="area-box" style="background:#11456b;">
+      <div style="position:absolute;left:38%;top:30%;width:24%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#ffd089 0%,#f08a1c 55%,rgba(240,138,28,0) 78%);"></div>
+    </div>
+    <p class="area-cap"><strong>大冷场 + 小暖点缀</strong> · 对比留住、焦点清楚</p>
+  </div>
+</div>
+
+<h2>接回 Niagara</h2>
+<ul>
+  <li><strong>每个特效先定一个 2–3 色小调色板</strong>(主色 + 互补 / 邻近点缀),写进规范,别每次随手撞色。一个项目里所有技能各撞各的色,整体就花。</li>
+  <li><strong>能量核心用互补 accent。</strong> 主体冷,核心给一点互补暖(或反之),核心立刻「亮」起来、抓眼——用色相对比帮明度对比做焦点。</li>
+  <li><strong>Color-over-life 在邻近色内过渡更顺。</strong> 生命周期颜色曲线如果跨越大段 hue(红→绿),中途会经过脏灰过渡区;在邻近段内(橙→黄→白)过渡则干净、有「升温」感。</li>
+  <li><strong>互补不要等面积。</strong> 引擎里很容易两个高饱和互补色各占半屏——记得一主一辅、严控点缀面积。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>无方案随机撞色。</strong> 凭感觉这加一点那加一点,色相关系无序,画面就「乱」。先选一个阵型。</li>
+  <li><strong>互补色等面积、等饱和用。</strong> 最经典的翻车,震眼又廉价。靠面积分主次。</li>
+  <li><strong>色数失控。</strong> 一个特效里五六个 hue 各自为政。压到 2–3 个 hue。</li>
+  <li><strong>只看孤立色块挑色。</strong> 忽略 Albers 的相对性——同一色放进不同背景读感会变,要看关系。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz10"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.goodreads.com/book/show/8384010" target="_blank">《The Art of Color》— Johannes Itten</a>
+  —— 包豪斯把色彩<strong>和谐</strong>(七种对比、色环阵型)系统化的原典,本课五种配色方案的理论根。<br>
+  想补「色彩相对性」(为什么同一色随邻色而变):<a href="https://www.artforum.com/columns/josef-alberss-interaction-of-color-193938/" target="_blank">Josef Albers《Interaction of Color》</a>。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我帮你某个特效定一套 2–3 色的调色板?或者纠结「RYB 互补和 RGB 互补到底哪个对」「triadic 在风格化项目怎么用才不花」?直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>冷暖 Temperature</strong>——颜色除了 hue,还分冷暖,而且冷暖是<em>相对</em>的。暖色前进、冷色后退,能造空间、焦点和「属性感」。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/color-tools.js"></script>
+<script>
+wireColorWheel({
+  canvasId: "wheel",
+  selectId: "schemeSel",
+  paletteId: "palette",
+  nameOutId: "schemeName"
+});
+renderQuiz("quiz10", [
+  {
+    q: "配色「和谐」最主要来自?",
+    options: ["有序的色相关系 + 克制的色数", "尽量多挑几个好看的颜色", "把每个颜色都拉到最饱和"],
+    correct: 0,
+    why: "和谐是结构:几个色在色环上站成有规律的阵型,且色数克制。不是靠挑好看的孤立色块。"
+  },
+  {
+    q: "你做实时特效(发光叠加),用的色环应当是?",
+    options: ["RGB 加色光色环", "RYB 颜料色环", "CMYK 印刷色环"],
+    correct: 0,
+    why: "特效是加色光,原色红绿蓝,互补是红↔青等。RYB 颜料色环的互补对与之不同。"
+  },
+  {
+    q: "想让能量核心一眼抓住注意力,最直接的色相关系是?",
+    options: ["核心与环境用互补色", "核心与环境用邻近色", "核心与环境用同一色"],
+    correct: 0,
+    why: "互补并置把色相对比最大化,做焦点 / 能量碰撞最强。但要靠面积控制,别等面积铺满。"
+  },
+  {
+    q: "Color-over-life 颜色曲线想过渡得干净顺滑,最好?",
+    options: ["在邻近色段内过渡", "跨越互补两端过渡", "在三角三色间跳转"],
+    correct: 0,
+    why: "邻近段内(如橙→黄→白)过渡顺、有升温感;跨大段 hue(红→绿)中途会经过脏灰过渡区。"
+  },
+  {
+    q: "两个高饱和互补色等面积、等饱和地铺满画面,通常会?",
+    options: ["强烈震眼、吵且没焦点", "自动形成清晰的焦点", "整体明度被显著拉高"],
+    correct: 0,
+    why: "等面积互补会 vibration(震眼)、廉价、无主次。解法是一大主色 + 一小撮互补点缀。"
+  },
+  {
+    q: "一个项目里每个技能都随手各撞各的色,后果是?",
+    options: ["整体画面花、没有统一感", "战斗可读性自动变好", "渲染性能明显下降"],
+    correct: 0,
+    why: "色数与关系失控,整体就花。应给特效定 2–3 色小调色板并形成规范,而非随手撞色。"
+  }
+]);
+</script>
+
+</body>
+</html>

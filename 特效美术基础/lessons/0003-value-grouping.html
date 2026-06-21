@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 课 · 明度归组与层次:焦点放在最大反差</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  /* 课内独有样式:posterize 与对比滑块演示。不改 styles.css。 */
+  .demo-wrap { border: 1px solid var(--rule); border-radius: 8px; padding: 1rem; background: var(--panel); margin: 1.2rem 0; }
+  .demo-canvas-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+  @media (max-width: 540px) { .demo-canvas-row { grid-template-columns: 1fr; } }
+  .demo-canvas-row canvas { width: 100%; height: auto; display: block; border-radius: 6px; border: 1px solid var(--rule); image-rendering: auto; }
+  .slider-row { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.9rem; flex-wrap: wrap; }
+  .slider-row input[type=range] { flex: 1; min-width: 140px; }
+  .slider-row .val { font-family: "SF Mono", Consolas, monospace; font-size: 0.9rem; background: #f1ede4; padding: 0.1em 0.5em; border-radius: 3px; min-width: 2.2em; text-align: center; }
+  .slider-label { font-size: 0.86rem; color: var(--muted); }
+  /* 对比滑块演示:纯 CSS,改背景明度看主体跳不跳 */
+  .focus-stage { position: relative; width: 100%; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; border: 1px solid var(--rule); }
+  .focus-bg { position: absolute; inset: 0; }
+  .focus-core { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%,-50%);
+    border-radius: 50%; background: radial-gradient(circle, #fff7d6 0%, #ffd24a 45%, rgba(255,180,40,0) 75%); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 3 课</div>
+<h1>明度归组与层次:焦点放在最大反差</h1>
+<p class="subtitle">把画面眯成 3 块明度。眼睛会奔向<strong>最强的明度对比</strong>——所以「焦点」是你用反差摆出来的,不是碰运气。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能把任意画面在脑中简化成 <strong>3–4 个大明度块(notan 思维)</strong>,并据此<strong>主动安排焦点</strong>:把<strong>最大的明暗反差</strong>放在你想让玩家先看到的地方(通常是技能本身)。
+</div>
+
+<h2>notan:先把画面砍成 3 块</h2>
+<p>
+<strong>Notan</strong>(日语「浓淡」)指把一幅复杂画面<strong>归并成几大块明度</strong>来看——通常是<strong>暗 / 中 / 亮</strong>三档。专业画师在动笔前会先画一张拇指大的 <strong>3-value 缩略图(thumbnail)</strong>,只用三个灰,定下「哪块暗、哪块中、哪块亮」的大关系。如果这张三色缩略图就立不住、读不清,放大、加细节、上颜色也救不回来。
+</p>
+<p>
+对你而言,「眯眼看」就是最快的 notan 工具:眯到看不清细节时,画面自然塌成几个明度团块。<strong>能塌成清楚的 3 块 = 明度结构成立;塌成糊糊一片 = 没层次。</strong>
+</p>
+
+<div class="value-strip" aria-hidden="true">
+  <span style="background:#1d1d1d"></span><span style="background:#1d1d1d"></span>
+  <span style="background:#777"></span><span style="background:#777"></span>
+  <span style="background:#ededed"></span>
+</div>
+<p class="scene-caption">最朴素的 3-value 关系:暗(背景)、中(次要)、亮(主体)。先用这三档想清楚,再谈颜色。</p>
+
+<h2>焦点定律:最强明度对比 = 视觉焦点</h2>
+<p>
+这是本课的硬核心:<strong>眼睛被画面里最强的那处明度对比吸引过去。</strong> 不是被最饱和、也不一定是最大,而是<strong>明暗反差最剧烈</strong>的地方。
+</p>
+<p>所以「让玩家看技能」翻译成明度操作就是:让<strong>技能</strong>与它周围背景形成<strong>全画面最大的明度差</strong>。两条路:</p>
+<ul>
+  <li><strong>亮核暗景</strong>:技能是白热高明度,背景压暗——最常见,最直给。</li>
+  <li><strong>暗描边亮景</strong>:在亮背景前,反过来给技能压一圈更暗的边/烟,用「暗咬亮」制造反差。</li>
+</ul>
+
+<h2>读图层次 hierarchy:谁满对比、谁退场</h2>
+<p>一幅画面里不该人人都喊。按重要性分配对比:</p>
+<ul>
+  <li><strong>主体(主技能)</strong>:给<strong>满对比</strong>——最大明度差,占住焦点。</li>
+  <li><strong>次要元素(拖尾、环境特效)</strong>:<strong>减对比</strong>,明度往背景靠一点,自觉退到第二层。</li>
+  <li><strong>背景</strong>:<strong>压成一团</strong>,明度收窄、别有抢眼的局部反差,给主体让路。</li>
+</ul>
+
+<div class="callout callout-key">
+  <span class="label">对比要节制</span>
+  <strong>到处都是高对比 = 没有焦点。</strong> 如果画面里每个角落都有强烈明暗反差,眼睛被同时往十个方向拽,结果谁都看不进去。对比是一种<strong>稀缺资源</strong>:把它<em>集中</em>在主角身上才有焦点。战斗里多特效叠加时,这条尤其要命——必须有人是主角,其余压住。
+</div>
+
+<h2>动手一:把场景量化成 N 个明度(posterize)</h2>
+<p>
+左边是一个模拟战斗帧(暗背景、几个中明度元素、一个亮技能核)。拖滑块把它<strong>量化(posterize)</strong>成右边的 N 个明度档:档数越少,越接近 notan 缩略图。一路拖到 <strong>3</strong>,看画面塌成哪三块——以及<strong>亮技能核是否始终待在最高那一档</strong>(那就是焦点)。
+</p>
+
+<div class="demo-wrap">
+  <div class="demo-canvas-row">
+    <div>
+      <canvas id="srcCanvas" width="320" height="180"></canvas>
+      <p class="scene-caption" style="margin-bottom:0;">原图(连续明度)</p>
+    </div>
+    <div>
+      <canvas id="outCanvas" width="320" height="180"></canvas>
+      <p class="scene-caption" style="margin-bottom:0;">量化为 <span id="lvLabel">3</span> 档明度</p>
+    </div>
+  </div>
+  <div class="slider-row">
+    <span class="slider-label">明度档数</span>
+    <input type="range" id="lvSlider" min="2" max="8" step="1" value="3">
+    <span class="val" id="lvVal">3</span>
+  </div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">应该看到什么</span>
+  量化到 <strong>3 档</strong>:背景并进最暗块、几个元素并进中灰块、技能核单独占最亮块——三档分明、焦点清楚。这说明这帧的明度结构<strong>立得住</strong>:就算砍到三个灰,主体依然是全场最亮、反差最大,眼睛照样奔向它。如果到了 3 档技能核和别的东西并进了同一块,那就是焦点没拉开。
+</div>
+
+<h2>动手二:背景越暗,主体越跳</h2>
+<p>
+技能核<strong>本身不变</strong>,只拖动滑块改<strong>背景明度</strong>。看同一个核,如何随着背景变暗而越来越「跳」——这就是焦点由<strong>明度差</strong>决定,而非核自己变亮。
+</p>
+
+<div class="demo-wrap">
+  <div class="focus-stage">
+    <div class="focus-bg" id="focusBg"></div>
+    <div class="focus-core"></div>
+  </div>
+  <div class="slider-row">
+    <span class="slider-label">背景明度</span>
+    <input type="range" id="bgSlider" min="8" max="92" step="1" value="70">
+    <span class="val" id="bgVal">70</span>
+  </div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">应该看到什么</span>
+  背景越亮,核与背景明度差越小,核越「平」、越溶进画面;背景越暗,明度差越大,<strong>同一个核越往外跳</strong>。你一根手指都没动核,只动了背景——焦点强度由<strong>两者的明度差</strong>说了算。
+</div>
+
+<h2>接回 Niagara</h2>
+<p>把「焦点 = 最大明度反差」翻成你引擎里的旋钮:</p>
+<ul>
+  <li><strong>emissive 强度分层。</strong> 主技能的 emissive / HDR 强度拉到<strong>最高</strong>;拖尾、环境特效、命中残留压低。让明度有梯队,而不是齐刷刷一样亮。</li>
+  <li><strong>给特效让路。</strong> 背景、地面贴花、环境光适当压暗,腾出暗场,主特效才有反差可言。在很亮的场景里,这一步比继续加亮特效更有效。</li>
+  <li><strong>别让每个粒子都最亮。</strong> 如果所有 sprite 的 value 都挤在高位,画面就是一片白——<strong>全亮 = 没层次 = 没焦点</strong>。要有亮核、有压住的中间层、有暗的烟和边。</li>
+  <li><strong>多特效同屏时排座次。</strong> 战斗里同时炸开好几个,先定谁是主角(这一下技能),给它最大反差;其余主动减对比退场。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>全屏 bloom 拉满。</strong> 整画面都泛光发亮,value 全挤到顶,反差被抹平——焦点丢失,变成一片亮糊。bloom 该是给<strong>最亮的核</strong>点睛,不是给整屏打光。</li>
+  <li><strong>次要特效和主技能一样亮。</strong> 拖尾、环境、buff 光和主技能一个亮度,它们就在<strong>抢戏打架</strong>,玩家不知道该看哪。次要的必须减对比、退一层。</li>
+  <li><strong>只顾把主体加亮,忘了压背景。</strong> 焦点是<strong>相对</strong>的。主体到顶了还不够跳?往往是背景太亮——压暗背景常比硬加主体更省、更有效。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz3"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://archive.org/details/andrew-loomis-creative-illustration" target="_blank">Andrew Loomis · Creative Illustration(免费合法扫描)</a>
+  —— 翻它的 <strong>Tone(明度)</strong>章:明度归组、3-value 缩略图、用反差控焦点,是黑白灰结构的标准教材。本课的 notan 与焦点定律就源出于此。<br>
+  想要软件无关的短视频:<a href="https://www.ctrlpaint.com/library" target="_blank">Ctrl+Paint 免费基础库</a>(找 value grouping / thumbnails 相关短片)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——想让我拿你一张多特效同屏的截图来排「焦点座次」、想要 Niagara 里 emissive 分层的具体数值思路,或者想搞清 notan 和上一课「剪影」、第一课「去色」怎么串成一条线,直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>明度的时间维度</strong>——特效是动画,冲击力来自明度的<strong>时间曲线</strong>:命中瞬间一个又亮又短的峰值,再衰减。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/vx-tools.js"></script>
+<script>
+// 画一个模拟战斗帧到 srcCanvas:暗背景 + 中明度元素 + 亮技能核
+(function () {
+  const c = document.getElementById("srcCanvas");
+  const ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  // 暗背景渐变
+  const bg = ctx.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, "#2a2d36");
+  bg.addColorStop(1, "#191b22");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+  // 地面 (中暗)
+  ctx.fillStyle = "#33363f"; ctx.fillRect(0, h * 0.72, w, h * 0.28);
+  // 两个中明度元素(柱子/敌人剪影)
+  ctx.fillStyle = "#565a66"; ctx.fillRect(w * 0.12, h * 0.42, w * 0.10, h * 0.34);
+  ctx.fillStyle = "#4c5562"; ctx.fillRect(w * 0.80, h * 0.46, w * 0.09, h * 0.30);
+  // 中明度环境光晕
+  let g2 = ctx.createRadialGradient(w*0.30, h*0.55, 0, w*0.30, h*0.55, w*0.22);
+  g2.addColorStop(0, "rgba(120,130,150,0.55)"); g2.addColorStop(1, "rgba(120,130,150,0)");
+  ctx.fillStyle = g2; ctx.fillRect(0, 0, w, h);
+  // 亮技能核(最高明度)
+  let g = ctx.createRadialGradient(w*0.52, h*0.50, 0, w*0.52, h*0.50, w*0.20);
+  g.addColorStop(0, "#fffdf0"); g.addColorStop(0.35, "#ffe07a"); g.addColorStop(1, "rgba(255,200,60,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+})();
+
+// 联动 label 文案
+(function () {
+  const slider = document.getElementById("lvSlider");
+  const val = document.getElementById("lvVal");
+  const lab = document.getElementById("lvLabel");
+  slider.addEventListener("input", () => { val.textContent = slider.value; lab.textContent = slider.value; });
+})();
+
+const renderPost = wirePosterize({
+  sliderId: "lvSlider", srcCanvasId: "srcCanvas", outCanvasId: "outCanvas", labelId: null
+});
+if (renderPost) renderPost(); // 初次绘制
+
+// 动手二:背景明度滑块
+(function () {
+  const slider = document.getElementById("bgSlider");
+  const val = document.getElementById("bgVal");
+  const bg = document.getElementById("focusBg");
+  function apply() {
+    const v = parseInt(slider.value, 10);
+    val.textContent = v;
+    const top = Math.round(v * 0.9), bot = Math.round(v * 0.6);
+    bg.style.background = "linear-gradient(160deg, hsl(220 12% " + top + "%), hsl(225 14% " + bot + "%))";
+  }
+  slider.addEventListener("input", apply);
+  apply();
+})();
+
+renderQuiz("quiz3", [
+  {
+    q: "notan / 明度归组的核心做法是?",
+    options: ["把画面简化成暗中亮几大块", "把每个细节都精确还原", "把所有颜色都调到最饱和"],
+    correct: 0,
+    why: "notan 是把复杂画面归并成 3–4 大块明度(暗/中/亮)。画师先用 3-value 缩略图定下大关系。"
+  },
+  {
+    q: "在一幅画面里,眼睛最先被哪里吸引过去?",
+    options: ["明度对比最强的地方", "面积占得最大的地方", "颜色最暖的那个地方"],
+    correct: 0,
+    why: "焦点定律:眼睛奔向最强的明度反差处。所以要玩家看技能,就让技能与背景形成最大明度差。"
+  },
+  {
+    q: "想让主技能在很亮的背景前也成为焦点,合理的做法是?",
+    options: ["给它压一圈更暗的边", "把它整体也调得更亮", "给它加更多彩色粒子"],
+    correct: 0,
+    why: "亮景前用「暗描边亮景」——压一圈更暗的边或烟,用暗咬亮制造反差,比一味加亮更有效。"
+  },
+  {
+    q: "画面里到处都是强烈明暗对比,结果通常是?",
+    options: ["没有焦点、谁都看不进", "焦点变得更突出清晰", "层次自动变得更丰富"],
+    correct: 0,
+    why: "对比是稀缺资源。处处高对比会把眼睛同时往多个方向拽,反而没了焦点;要把对比集中在主角。"
+  },
+  {
+    q: "在 Niagara 里,如果让每个粒子的 value 都挤在最高位,画面会?",
+    options: ["糊成一片白、没有层次", "层次和焦点都更分明", "剪影的方向更清楚"],
+    correct: 0,
+    why: "value 全挤高位 = 一片亮糊,反差被抹平,焦点消失。要分层:亮核、压住的中层、暗的烟与边。"
+  },
+  {
+    q: "战斗里同时炸开好几个特效时,处理层次的正确思路是?",
+    options: ["定一个主角给最大反差其余压住", "让它们全部一样亮以示公平", "把每个都各自拉到最高对比"],
+    correct: 0,
+    why: "必须排座次:这一下主技能是主角,给它满对比;拖尾/环境等次要元素主动减对比退场,避免抢戏。"
+  }
+]);
+</script>
+
+</body>
+</html>

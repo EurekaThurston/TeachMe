@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 14 课 · gameplay 的色彩语言:约定与可达性</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  /* 0014 课内独有样式 */
+  .cb-scene {
+    position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px;
+    overflow: hidden; border: 1px solid var(--rule); box-shadow: 0 2px 10px var(--shadow);
+    margin: 0.4rem 0;
+    background: linear-gradient(160deg,#4a5240 0%,#3f4636 55%,#363c2e 100%);
+    transition: filter 0.2s;
+  }
+  /* 两个 token:红敌 / 绿友。默认只靠 hue 区分(明度刻意接近、形状相同)。 */
+  .cb-token {
+    position: absolute; width: 16%; aspect-ratio: 1; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    transition: clip-path 0.2s, border-radius 0.2s, filter 0.2s, box-shadow 0.2s;
+  }
+  .cb-enemy { left: 24%; top: 38%; background: #b64034; }   /* 红:敌 */
+  .cb-friend { left: 60%; top: 38%; background: #4f9a48; }  /* 绿:友 (明度与红刻意接近) */
+  .cb-token .cb-icon { display: none; font-size: 1.4rem; line-height: 1; }
+
+  /* 补强:加上明度差 + 形状差 + 图标 后,即使红绿色盲也能分 */
+  .cc-coded .cb-enemy {
+    background: #8a1f16;                 /* 压暗:更深 = 危险 */
+    clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%);  /* 尖锐多边形 */
+    border-radius: 0;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.25);
+  }
+  .cc-coded .cb-friend {
+    background: #9fe06a;                 /* 提亮:更亮 = 安全 */
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.4);
+  }
+  .cc-coded .cb-icon { display: block; }
+
+  .cb-range { width: 100%; }
+  .cb-readout { font-size: 0.82rem; color: var(--muted); margin: 0.2rem 0 0.6rem; }
+  .cb-readout strong { color: var(--ink); }
+  .cb-status { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.82rem; color: var(--muted); margin: 0.4rem 0 0.2rem; }
+  .cb-status strong { color: var(--ink); }
+
+  /* 约定色表 */
+  .conv-table { display: grid; grid-template-columns: 2.4rem 1fr; gap: 0.4rem 0.7rem; align-items: center; margin: 1rem 0; }
+  .conv-sw { width: 2.4rem; height: 1.5rem; border-radius: 4px; border: 1px solid var(--rule); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 14 课</div>
+<h1>gameplay 的色彩语言:约定与可达性</h1>
+<p class="subtitle">游戏里的颜色不只是好看——它是一套玩家被训练过的语言。而这套语言,不能只靠 hue 来说。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  把特效色当成一套<strong>约定/UI 语言</strong>来设计:一致的色彩约定让玩家一眼读到信息(红=危险、绿=友/治疗…)。同时记住可达性铁律——约 <strong>8% 的男性是红绿色盲</strong>,关键信息<strong>绝不能只靠 hue</strong>,必须叠加 value(明度)、形状/剪影、动态。这一条直接服务目标①:让特效在系统层面"读得清"。
+</div>
+
+<h2>颜色是一套约定 / UI 语言</h2>
+<p>
+玩家不是看到红色才"觉得"危险——他们是被<strong>无数游戏训练</strong>成:红=敌/危险、绿=友/治疗/安全、黄=可交互/暴击/拾取、蓝=魔法/护盾/冷却。这是一套<strong>约定(convention)</strong>,跟红绿灯是一回事。
+</p>
+<p>
+你的特效,就是这套语言的<strong>载体</strong>。当一个 AOE 危险区是红色、一个治疗光环是绿色,玩家不需要读文字就懂——前提是你<strong>遵守了约定</strong>。可读性在这里不来自"单个特效好不好看",而来自"<strong>约定一致 + 与游戏整体调色板形成对比</strong>"。
+</p>
+
+<div class="conv-table" aria-hidden="true">
+  <div class="conv-sw" style="background:#c0392b"></div><div>红 — 敌方 / 危险 / 受击 / AOE 警告</div>
+  <div class="conv-sw" style="background:#27ae60"></div><div>绿 — 友方 / 治疗 / 安全 / 增益</div>
+  <div class="conv-sw" style="background:#e1b12c"></div><div>黄 — 可交互 / 暴击 / 拾取 / 高亮</div>
+  <div class="conv-sw" style="background:#2980d8"></div><div>蓝 — 魔法 / 护盾 / 冷却 / 法力</div>
+  <div class="conv-sw" style="background:#8e44ad"></div><div>紫 — 减益 / 中毒 / 精英 / 稀有</div>
+</div>
+<p class="scene-caption">常见(但非绝对)的游戏色彩约定。具体含义随项目而定,关键是「一致」。</p>
+
+<h2>项目色彩规范:一致性 > 好看</h2>
+<p>
+好的项目都有一份 <strong>VFX 配色规范(color spec)</strong>:伤害类型(火=橙、冰=青、电=紫白)、阵营(红队/蓝队)、状态(中毒=紫绿、燃烧=橙)各自有固定色。
+这份规范的价值不在"每条单独好看",而在<strong>整套一致</strong>:玩家学一次,处处适用。
+</p>
+<p>
+所以当你做第 37 个特效时,正确的问题不是"这个火球什么颜色最炫",而是"<strong>本项目的火属性是什么色,我有没有遵守</strong>"。自创一个更漂亮但不合规范的配色,等于在一套语言里说方言——单看没问题,放进系统就制造混乱。<strong>readability 来自一致性,不来自单个的好看。</strong>
+</p>
+
+<h2>与游戏整体调色板对比</h2>
+<p>
+约定之外还有第二条:特效要能从<strong>场景和 UI 里跳出来</strong>。重要信息应该用背景里<strong>少见、高对比</strong>的色。比如一个 AOE 危险区铺在地面上,用与地面<strong>互补</strong>的色(土黄地面 → 紫红警告)最跳;如果危险区的色和地面撞色,玩家就看不见警告——再"正确"的红也没用。
+</p>
+<p>
+这把第 10 课(互补)、第 13 课(按背景选色)和本课的"约定"接在了一起:<strong>先选符合约定的色,再在约定允许的范围内,挑与背景对比最强的那一版。</strong>
+</p>
+
+<h2>动手:色盲模拟(可达性铁律)</h2>
+<p>
+下面是一个典型场景:<strong>红色 = 敌、绿色 = 友</strong>。两个 token <strong>只靠 hue 区分</strong>(我故意让它们明度接近、形状相同)。正常色觉下你一眼能分。
+</p>
+<p>
+现在点<strong>「红绿色盲模拟」</strong>(deuteranopia 近似)——这是约 8% 男性玩家看到的画面。你会发现<strong>红和绿几乎变成同一种土黄</strong>,敌友难辨。然后点<strong>「补上明度 + 形状」</strong>:给敌人压暗 + 改成尖锐多边形 + 加图标,给友方提亮 + 保持圆形 + 加图标——即使在色盲模拟下,两者也<strong>重新可分</strong>。
+</p>
+
+<div class="cb-scene" id="cbScene">
+  <div class="cb-token cb-enemy">敌<span class="cb-icon" aria-hidden="true">✕</span></div>
+  <div class="cb-token cb-friend">友<span class="cb-icon" aria-hidden="true">＋</span></div>
+</div>
+<div class="toggle-row">
+  <button id="cbSim" class="btn">◐ 红绿色盲模拟</button>
+  <button id="cbFix" class="btn">＋ 补上明度 + 形状</button>
+</div>
+<div class="cb-status">
+  <span>当前色觉:<strong id="cbSimLabel">正常色觉</strong></span>
+  <span>编码方式:<strong id="cbFixLabel">只靠 hue 编码</strong></span>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">看到了什么</span>
+  只靠 hue 时,色盲模拟一开,红绿糊成一团——这就是"红敌绿友"对约 8% 玩家<strong>直接失效</strong>的真相。一旦叠上<strong>明度差(深=危险/亮=安全)+ 形状差(尖=敌/圆=友)+ 图标</strong>,信息就有了三条独立通道,任何一条都能读懂。这正是第 1 课"明度为王"在可达性上的回扣:<strong>把信息编码在明度和形状里,色盲、低对比、繁杂背景下都不丢。</strong>
+</div>
+
+<h2>接回 Niagara</h2>
+<p>
+把"色彩语言 + 可达性"落到 Niagara 的具体决策:
+</p>
+<ul>
+  <li><strong>危险预警别只靠红。</strong> 用<strong>高 value + 高对比色 + 形状/闪烁</strong>多通道编码:危险区给强明度脉冲、清晰的边界形状、节奏闪烁,而不仅是把 Color 调红。</li>
+  <li><strong>阵营区分叠加明度/形状差异。</strong> 红队/蓝队除了 hue,再给一个稳定的明度差或剪影差异(如不同的拖尾形状),让色盲玩家也能分敌我。</li>
+  <li><strong>遵循项目 VFX 配色规范。</strong> 火/冰/电、阵营、状态都按规范的固定色走,别为了"这个更炫"自创配色破坏一致性。</li>
+  <li><strong>与场景/UI 对比。</strong> 关键信息用背景里少见的色;AOE 危险区取与地面互补的色,确保从环境里跳出来(回扣第 10、13 课)。</li>
+  <li><strong>交付前两道检查:</strong>① <strong>去色</strong>(第 1 课的去色测试)——去掉颜色后,敌友/危险还分得清吗?② <strong>色盲模拟</strong>——在红绿色盲滤镜下,关键信息还读得出吗?两道都过,才算"系统层面读得清"。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>只用 hue 编码信息。</strong> 红敌绿友在约 8% 男性玩家、低对比、繁杂背景下都会失效。关键信息必须叠 value + 形状 + 动态。</li>
+  <li><strong>特效色与场景/UI 撞色。</strong> 危险警告和地面同色 → 看不见;特效和 UI 抢同一个色 → 信息混乱。要主动与背景/UI 拉开对比。</li>
+  <li><strong>无视项目规范自创配色。</strong> 单看更漂亮,放进系统是"说方言",破坏玩家学过的约定,整体可读性下降。</li>
+  <li><strong>以为"调成正确的红"就够了。</strong> 正确的 hue 只是第一步;没有明度/形状/对比的支撑,正确的红照样可能读不清。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz14"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://shahriyarshahrabi.medium.com/introduction-to-color-theory-for-games-art-and-tech-67bd4c8607d7" target="_blank">Shahriar Shahrabi —《Introduction to Color Theory for Games, Art and Tech》</a>
+  —— 技术美术把色彩理论接到游戏/渲染与<strong>可读性</strong>的长文,跟"颜色作为 gameplay 语言"最贴。<br>
+  想看一线团队怎么把这套用在风格化特效上:<a href="https://www.youtube.com/watch?v=x30j-PUN1G4" target="_blank">GDC《Art Directing VFX for Stylized Games》</a>(色彩约定 + 可读性的艺术指导)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师。想让我帮你把一套技能做"去色 + 色盲模拟"双检查、找出只靠 hue 的薄弱点;或者想要一份针对你项目的"伤害类型/阵营/状态"配色规范草稿,直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告(进入模块 D · 评判):<strong>特效评判框架</strong>——把前 14 课的明度、光影、色彩串成一张可操作的 checklist,让你能对任何一个特效(自己或他人的)说清"为什么好/不好",并给出可执行的改法(服务目标③)。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/cc-tools.js"></script>
+<script>
+wireColorBlindSim({
+  simBtnId: "cbSim", fixBtnId: "cbFix", sceneId: "cbScene",
+  simLabelId: "cbSimLabel", fixLabelId: "cbFixLabel"
+});
+renderQuiz("quiz14", [
+  {
+    q: "为什么说游戏里的颜色是一套「约定 / UI 语言」?",
+    options: ["玩家被训练出固定的色彩含义", "颜色本身天生带有情绪意义", "引擎规定了每种色的用途"],
+    correct: 0,
+    why: "红=危险、绿=友这类含义是玩家被无数游戏训练出来的约定,VFX 是这套语言的载体。"
+  },
+  {
+    q: "在一个项目里,特效配色规范最重要的价值是?",
+    options: ["整套一致,玩家学一次处处通用", "让每个特效单独看都最炫", "尽量多用鲜艳少见的颜色"],
+    correct: 0,
+    why: "readability 来自一致性,不来自单个好看。自创配色等于在一套语言里说方言,制造混乱。"
+  },
+  {
+    q: "约 8% 男性是红绿色盲,这对特效设计的直接含义是?",
+    options: ["关键信息不能只靠 hue 区分", "应该完全避免使用红和绿", "把所有特效都调得更饱和"],
+    correct: 0,
+    why: "只靠 hue(如红敌绿友)对这部分玩家失效。关键信息必须叠加 value、形状/剪影、动态。"
+  },
+  {
+    q: "一个 AOE 危险区铺在土黄色地面上,怎样最容易被看见?",
+    options: ["用与地面对比/互补的高对比色", "用和地面接近的同类土黄色", "把危险区做得尽量透明些"],
+    correct: 0,
+    why: "重要信息要用背景里少见、高对比的色(互补)才跳出来;撞色会让警告消失。"
+  },
+  {
+    q: "想让「红敌 vs 绿友」在红绿色盲下仍可分,最该补上?",
+    options: ["明度差 + 形状/剪影 + 图标", "更高的饱和度和更亮的红", "更多的粒子和更大的辉光"],
+    correct: 0,
+    why: "叠加明度、形状、图标等独立通道,任何一条都能读懂,不再依赖 hue 这一个通道。"
+  },
+  {
+    q: "一套技能交付前,验证「系统层面读得清」的两道检查是?",
+    options: ["去色测试 + 色盲模拟", "加饱和 + 加辉光强度", "提高帧率 + 降低开销"],
+    correct: 0,
+    why: "去色看明度是否还分得清、色盲模拟看是否只靠 hue;两道都过才算系统层面可读。"
+  }
+]);
+</script>
+
+</body>
+</html>

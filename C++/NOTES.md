@@ -9,6 +9,7 @@
 ## 教学手法(本工作区约定)
 - 每课极短,一个明确收获,落在 ZPD 内。
 - **少用类比、直接把代码讲清楚**(2026-06-21 用户明确纠正,见 learning-record 0002)。需桥接概念时优先用 Unreal 术语(UPROPERTY/Actor/Tick),别堆 Houdini/VEX 比喻。
+- **真要类比就锚 HLSL/shader 和 UE 蓝图**——用户对这两者相对熟,Houdini/VEX 不熟。
 - 阅读技能优先于写代码;但保留交互测验做即时反馈。
 - 共享组件:`assets/styles.css`(Tufte 风格主样式)、`assets/quiz.js`(测验小部件,equal-length 选项、即时反馈)。新课一律复用,不内联重复代码。
 

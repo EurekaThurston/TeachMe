@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 15 课 · 特效评判框架</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .ck-row { border:1px solid var(--rule); border-radius:6px; margin:0.5rem 0; overflow:hidden; background:var(--panel); }
+  .ck-head { width:100%; display:flex; align-items:center; gap:0.7rem; text-align:left; cursor:pointer;
+    font-family:inherit; font-size:1rem; color:var(--ink); background:var(--panel); border:none; padding:0.8rem 1rem; }
+  .ck-head:hover { background:#f1ede4; }
+  .ck-head.open { background:var(--accent-soft); }
+  .ck-num { font-family:"SF Mono",Consolas,monospace; font-size:0.8rem; color:#fff; background:var(--accent);
+    min-width:1.5rem; height:1.5rem; border-radius:50%; display:flex; align-items:center; justify-content:center; }
+  .ck-q { flex:1; font-weight:600; }
+  .ck-caret { font-family:monospace; font-size:1.2rem; color:var(--accent); }
+  .ck-body { padding:0.3rem 1rem 0.9rem 3.2rem; font-size:0.95rem; border-top:1px solid var(--rule); }
+  .ck-body p { margin:0.5rem 0; }
+  .ck-link { font-size:0.88rem; color:var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">特效美术基础 for VFX · 第 15 课</div>
+<h1>特效评判框架:把整门课变成一张清单</h1>
+<p class="subtitle">评判的顺序 = 学习的顺序。给作品挑毛病,先看地基(明度/可读性),再谈"好不好看"。这一课把前 14 课收成一套你能反复用的流程。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  拿到任意一个特效(你的或别人的),你能按<strong>固定顺序</strong>走一遍 checklist,定位出<strong>最高优先级的 1–2 个问题</strong>,并给出<strong>可执行</strong>的改法——而不是停在"感觉不太对"。
+</div>
+
+<h2>评判顺序 = 学习顺序</h2>
+<p>
+为什么有顺序?因为问题有<strong>地基与上层之分</strong>。一个特效如果在战斗里根本<em>看不清</em>(明度/可读性塌了),你纠结它配色高不高级毫无意义——地基没夯,装修白搭。
+所以评判永远<strong>从下往上</strong>走:
+</p>
+<p style="font-size:0.96rem;">
+<strong>明度/可读性</strong> → <strong>剪影/形</strong> → <strong>明度层次/焦点</strong> → <strong>时间/峰值</strong> → <strong>光影逻辑</strong> → <strong>色彩(配色·冷暖·饱和·构成)</strong> → <strong>gameplay 语言/可达性</strong>。
+越靠前越是地基,越该先修。
+</p>
+
+<h2>可执行 checklist · 点开每一项</h2>
+<p>按顺序自问。点开看"看什么、怎么改、回哪一课复习"。给别人提意见时,也照这个顺序走。</p>
+<div id="checklist"></div>
+
+<h2>怎么把意见提给人</h2>
+<p>评判一个作品,和把意见<em>说出口</em>是两件事。一套好用的结构:</p>
+<ol>
+  <li><strong>先问它想达成什么</strong>——是想表现"沉重一击"还是"轻巧法术"?脱离意图谈对错没意义。</li>
+  <li><strong>只点最高优先级的 1–2 条</strong>——按上面的顺序,挑地基里最先崩的那个。一次抛十条,对方什么都改不动。</li>
+  <li><strong>给可执行改法</strong>——不是"感觉不对",而是"命中帧把核心 emissive 再提一档、背景压暗,拉开明度差"。</li>
+  <li><strong>对事不对人,正面也要说</strong>——指出哪里已经成立,对方才知道要保留什么。</li>
+</ol>
+
+<div class="callout callout-key">
+  <span class="label">优先级铁律</span>
+  <strong>永远先修可读性(明度),再谈好看。</strong> 焦点错位时纠结配色、剪影糊掉时讨论冷暖,都是在给塌了的地基刷漆。
+</div>
+
+<h2>接回 Niagara · 自检流程</h2>
+<p>把 checklist 落到一套你每次收尾都能跑的动作:</p>
+<ul>
+  <li><strong>截一张放进真实战斗背景的图</strong>(不是空场测试场)。</li>
+  <li><strong>去色</strong>看明度还跳不跳(<a href="0001-value-readability.html">第 1 课</a>的去色测试)。</li>
+  <li><strong>眯眼</strong>看剪影与焦点——主技能是不是那个最强对比。</li>
+  <li><strong>色盲模拟</strong>过一遍(<a href="0014-color-language.html">第 14 课</a>),确认信息不只靠 hue。</li>
+  <li><strong>停在峰值帧</strong>看冲击够不够"snap"(<a href="0004-value-over-time.html">第 4 课</a>)。</li>
+</ul>
+<p>对应旋钮:Emissive/HDR 强度与 Bloom(明度峰值)、Color-over-life 曲线(时间与冷暖)、材质混合(additive/alpha)、Light Renderer 与 decal(染环境光)、粒子数量与对齐(剪影)。</p>
+
+<h2>常见误区(作为评判者)</h2>
+<ul>
+  <li><strong>一上来谈颜色</strong>,不先看可读性——把地基问题晾在一边。</li>
+  <li><strong>一次抛太多问题</strong>——对方无从下手,反而什么都没改。</li>
+  <li><strong>只说"感觉不对"</strong>——没有可执行项的评价等于没说。</li>
+  <li><strong>脱离意图打分</strong>——用"重击"的标准去要求一个"轻法术"。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>这些是评判时最常见的判断题。凭理解作答。</p>
+<div class="quiz" id="quiz1"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=x30j-PUN1G4" target="_blank">GDC · Art Directing VFX for Stylized Games</a>
+  —— 一线团队怎样用明度/色彩/可读性的支柱去<strong>评审</strong>整套特效,正是这套 checklist 的工业版。<br>
+  实战智慧:把你的作品贴到 <a href="https://realtimevfx.com/" target="_blank">Real Time VFX 论坛</a>(有专门 critique 版块),让真实世界的同行用类似框架给你点评。
+</div>
+
+<div class="ask-teacher">
+  <strong>把作品发我,一起走一遍。</strong> 我是你的老师——把你或同事的特效截图/录屏发到对话里,我会陪你按这套 checklist 逐项过,帮你定位最该先改的那一两条,并给到 Niagara 里具体怎么动。
+</div>
+
+<div class="lesson-footer">
+  <p><strong>这是模块一(地基)的收官。</strong> 你现在手里有一套从明度到色彩到 gameplay 的完整判断框架。下一步建议:① 去 <a href="https://realtimevfx.com/" target="_blank">Real Time VFX</a> 贴作品求点评,把技能在真实反馈里磨利;② 或跟我说一声,进入下一阶段(更进阶的画面构图、风格化方向、特定项目的配色规范)。</p>
+  <p>总览:<a href="../SYLLABUS.html">课程地图</a> · <a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/crit-tools.js"></script>
+<script>
+wireChecklist("checklist", [
+  { q: "去色后还读得清吗?(明度·可读性)",
+    look: "截图去色或眯眼,特效是否还能从背景里跳出来;它与背景的明度差够不够。",
+    fix: "拉开明度差——亮核更白(HDR),或把背景/边缘压暗;别靠加饱和救。",
+    lesson: { href: "0001-value-readability.html", label: "第 1 课 · value 是可读性地基" } },
+  { q: "剪影认得出是什么吗?(形)",
+    look: "把特效填成纯黑,是否仍能读出「是什么、力往哪走」;有没有糊成一坨。",
+    fix: "精简粒子让亮团块成形、用 velocity/ribbon 给方向、强调 gesture 与负空间。",
+    lesson: { href: "0002-silhouette.html", label: "第 2 课 · 剪影 Silhouette" } },
+  { q: "焦点在它该在的地方吗?(明度层次)",
+    look: "画面里最强的明度/饱和对比,是否落在主技能上;次要元素有没有抢戏。",
+    fix: "主技能 emissive 最高、次要与背景压低;多特效同框时想清楚谁是主角。",
+    lesson: { href: "0003-value-grouping.html", label: "第 3 课 · 明度归组与层次" } },
+  { q: "峰值帧够「snap」吗?(时间)",
+    look: "命中瞬间有没有又亮又短的明度峰值;attack 快不快、decay 拖不拖。",
+    fix: "用 curve-over-life 做快起慢落、缩短并提亮峰值、让次要元素错峰出现。",
+    lesson: { href: "0004-value-over-time.html", label: "第 4 课 · 明度的时间维度" } },
+  { q: "光的逻辑可信吗?(光影)",
+    look: "发光体有没有照亮/染色周围;受光烟雾有没有体积(明暗交界);是不是像贴纸。",
+    fix: "加 Light Renderer/decal 染环境光、给烟六向光照出 terminator、分清自发光与受光。",
+    lesson: { href: "0005-light-source.html", label: "第 5–7 课 · 光影模块" } },
+  { q: "色彩有关系、有层次吗?(色彩)",
+    look: "是有调色板还是随手撞色;冷暖有没有层次;饱和是不是全屏拉满;主色与点缀的面积。",
+    fix: "定 2–3 色小调色板、加冷暖反差、降周围饱和让焦点唱、把高饱和 accent 留给小面积。",
+    lesson: { href: "0010-color-harmony.html", label: "第 10–13 课 · 色彩模块" } },
+  { q: "信息读得到吗(含色盲)?(gameplay 语言)",
+    look: "阵营/危险/状态是否只靠 hue 区分;去色 + 色盲模拟下信息还在不在;符不符合项目规范。",
+    fix: "叠加 value 对比 + 形状 + 动态闪烁、遵循项目配色规范、收尾做色盲与去色测试。",
+    lesson: { href: "0014-color-language.html", label: "第 14 课 · gameplay 色彩语言" } }
+]);
+
+renderQuiz("quiz1", [
+  {
+    q: "一个特效「颜色好看但战斗里老看不清」,最该先动哪个?",
+    options: ["先拉开它与背景明度差", "先把配色换得更高级些", "先给它加更多发光粒子"],
+    correct: 0,
+    why: "可读性是地基,先用明度差解决「看不清」;配色与粒子都是上层,地基没夯谈它们没用。"
+  },
+  {
+    q: "走评判 checklist 时,正确的检查顺序起点是?",
+    options: ["从明度可读性开始查", "从配色是否高级查起", "从粒子数量多少查起"],
+    correct: 0,
+    why: "顺序从地基往上:先明度/可读性,再剪影、层次、光、色彩,最后 gameplay 语言。"
+  },
+  {
+    q: "给同事提意见时,最该避免的一种做法是?",
+    options: ["一口气抛出十条问题", "先点出最关键一两条", "随手给出可执行改法"],
+    correct: 0,
+    why: "一次抛十条,对方无从下手;挑地基里最先崩的一两条、给可执行改法,才推得动。"
+  },
+  {
+    q: "主技能特效和周围次要特效一样亮,核心问题在于?",
+    options: ["焦点被次要元素抢走", "峰值帧亮度还不够高", "它的饱和度调得太低"],
+    correct: 0,
+    why: "层次失控、焦点被稀释;把次要与背景压低、让主技能保持最强对比,焦点才回来。"
+  },
+  {
+    q: "想确认特效对色盲玩家也读得清,正确做法是?",
+    options: ["叠加明度与形状差异", "把红色调得更鲜艳些", "单纯增强红绿对比度"],
+    correct: 0,
+    why: "约 8% 男性红绿色盲,不能只靠 hue;叠加 value 对比、剪影、动态,信息才不丢。"
+  },
+  {
+    q: "评判只说「感觉不太对」却不给方向,主要毛病是?",
+    options: ["没给可执行的改法", "把话说得太委婉了", "没有先肯定其优点"],
+    correct: 0,
+    why: "没有可执行项的评价等于没说;要落到「哪个旋钮往哪调」对方才改得动。"
+  }
+]);
+</script>
+
+</body>
+</html>

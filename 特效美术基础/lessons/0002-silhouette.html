@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课 · 剪影 Silhouette:形先于色</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  /* 课内独有样式:剪影演示。不改 styles.css。 */
+  .sil-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.7rem; margin: 1.2rem 0; }
+  @media (max-width: 540px) { .sil-grid { grid-template-columns: 1fr; } }
+  .sil-card { border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: #f3efe6; }
+  .sil-card svg { display: block; width: 100%; height: auto; background: #f3efe6; }
+  /* 彩色 → 纯黑剪影切换:把所有填色压成黑 */
+  .is-silhouette .sil-fill { fill: #14140f !important; stroke: none !important; }
+  .is-silhouette .sil-bg { fill: #f3efe6 !important; }
+  .sil-tag { font-size: 0.8rem; color: var(--muted); text-align: center; padding: 0.4rem; }
+  /* 点击判断小游戏 */
+  .pick-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; margin: 1rem 0; }
+  @media (max-width: 540px) { .pick-row { grid-template-columns: 1fr; } }
+  .pick { cursor: pointer; border: 2px solid var(--rule); border-radius: 8px; background: #14140f; padding: 0; transition: border-color .12s; }
+  .pick:hover { border-color: var(--accent); }
+  .pick svg { display: block; width: 100%; height: auto; }
+  .pick.right { border-color: var(--good); box-shadow: 0 0 0 2px rgba(47,107,63,.25); }
+  .pick.wrong { border-color: var(--bad); box-shadow: 0 0 0 2px rgba(154,43,43,.25); }
+  .pick-fb { font-size: 0.93rem; min-height: 1.2em; margin-top: 0.5rem; }
+  .pick-fb.right { color: var(--good); } .pick-fb.wrong { color: var(--bad); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 2 课</div>
+<h1>剪影 Silhouette:形先于色</h1>
+<p class="subtitle">一个好特效,把它压成纯黑一团,你仍该一眼读出「这是什么、力往哪走」。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能用<strong>剪影测试</strong>判断一个特效的<strong>形(silhouette)</strong>读不读得清:把它压成纯黑,看它是否还能传达「是什么 + 力的方向」。因为眼睛读一张画的顺序是 <strong>形 → 明度 → 色彩 → 细节</strong>,形排第一。
+</div>
+
+<h2>阅读顺序:形排在最前面</h2>
+<p>
+人眼看任何画面,处理信息是有<strong>先后顺序</strong>的,而且很快:
+</p>
+<ul>
+  <li><strong>① 形 silhouette</strong> —— 最先,最快。大脑用<strong>轮廓团块</strong>认出「这是个什么东西」,几乎在意识到颜色之前就完成了。</li>
+  <li><strong>② 明度 value</strong> —— 接着读明暗大关系,定出哪块跳、哪块退(这是第 1 课)。</li>
+  <li><strong>③ 色彩 color</strong> —— 再读色相冷暖,传情绪、分阵营。</li>
+  <li><strong>④ 细节 detail</strong> —— 最后才看纹理、火花这些小东西。</li>
+</ul>
+<p>
+这条链条意味着一件很硬的事:<strong>如果形就读不清,后面三层做得再好都白搭</strong>。颜色再炫、自发光再亮,玩家第一眼没认出「这是个斩击」,这个特效在战斗里就是失败的。所以特效美术的第一道关,是<strong>剪影</strong>。
+</p>
+
+<h2>什么算一个「好剪影」</h2>
+<p>把一个形压成纯黑团块后,好坏由这几条决定:</p>
+<ul>
+  <li><strong>可识别 readable</strong> —— 黑团块本身就能说出「是什么」,不靠内部细节解释。</li>
+  <li><strong>力线 gesture / line of action</strong> —— 一条贯穿全形的<strong>主方向线</strong>,告诉你「力往哪走」。斩击有弧、冲击波向外炸、buff 向上升,都是 gesture。死板对称的团块没有 gesture,看着「不动」。</li>
+  <li><strong>负空间 negative space</strong> —— 形<strong>之间</strong>和<strong>之内</strong>的空隙也是设计。留出透气的负空间,团块才分得开、才不糊。</li>
+  <li><strong>大中小节奏 big-medium-small</strong> —— 一个主团块(大)、几个次团块(中)、少量碎块(小)。三档分明,眼睛有落点;全是均匀中等块,就是一坨。</li>
+  <li><strong>避免切线 tangent</strong> —— 两个形的边缘<strong>恰好擦着对齐</strong>(切线)会让它们粘成一块、深度感塌掉。让它们要么明显分开、要么明显交叠。</li>
+  <li><strong>避免呆板对称 / 糊成一坨</strong> —— 完全径向对称、或边缘糊成一个圆,都会杀掉可识别性和 gesture。</li>
+</ul>
+
+<h2>特效的剪影,跟角色不一样</h2>
+<p>
+你可能会想:特效是发光的、半透明的、一直在动,哪来「剪影」?有的——只是它的剪影由两样东西构成:
+</p>
+<ul>
+  <li><strong>亮部团块</strong>:sprite / mesh 的高 alpha + 高 emissive 区域,在画面上形成被读到的<strong>实心团块</strong>。半透明的边缘读不到,真正被读的是那块「实」的亮区。</li>
+  <li><strong>运动拖尾</strong>:粒子飞过的轨迹、ribbon 的带子,在视觉上拉出一条<strong>方向线</strong>——这正是特效的 gesture 来源。</li>
+</ul>
+<p>
+所以「爆炸蘑菇云」的剪影是向上膨胀的团 + 翻卷的边;「斩击」的剪影是一条带方向的弧;「buff 上升」的剪影是向上的螺旋拖尾。运动方向直接<strong>赋予了 gesture</strong>:静止一帧可能只是个亮团,但它的拖尾和扩张方向让人读出「力往哪走」。
+</p>
+
+<div class="callout callout-vfx">
+  <span class="label">方向力 direction of force</span>
+  特效的 gesture 几乎都来自<strong>力的方向</strong>,常见三类:<strong>向外</strong>(冲击波、爆炸,从一点炸开)、<strong>沿弧</strong>(斩击、挥砍,沿一条弧线扫过)、<strong>向内</strong>(吸取、聚能,从四周收向一点)。读特效剪影,先找这条力线:它指向哪,玩家的注意力就被带向哪。
+</div>
+
+<h2>动手一:彩色 ↔ 纯黑剪影</h2>
+<p>
+下面三个是同样的特效预览。彩色时都挺好看;点按钮把它们<strong>压成纯黑剪影</strong>——只看形。问自己:哪个还读得出「是什么、力往哪走」?哪个糊成了一坨?
+</p>
+
+<div class="sil-grid" id="silSet">
+  <div class="sil-card">
+    <!-- A: 斩击弧,清晰 gesture -->
+    <svg viewBox="0 0 120 120" aria-label="斩击弧特效">
+      <rect class="sil-bg" x="0" y="0" width="120" height="120" fill="#23262e"></rect>
+      <path class="sil-fill" d="M18 96 C 30 40, 78 22, 104 30 C 92 40, 70 44, 52 60 C 40 72, 30 86, 24 100 Z"
+            fill="#7fd6ff"></path>
+      <circle class="sil-fill" cx="100" cy="31" r="5" fill="#eaffff"></circle>
+    </svg>
+    <div class="sil-tag">A · 斩击弧</div>
+  </div>
+  <div class="sil-card">
+    <!-- B: 蘑菇云,有大中小 + 向上 gesture -->
+    <svg viewBox="0 0 120 120" aria-label="爆炸蘑菇云特效">
+      <rect class="sil-bg" x="0" y="0" width="120" height="120" fill="#2a2620"></rect>
+      <path class="sil-fill" d="M60 24 C 40 24, 30 40, 36 54 C 28 52, 22 60, 30 70 C 50 66, 70 66, 90 70 C 98 60, 92 52, 84 54 C 90 40, 80 24, 60 24 Z"
+            fill="#ffb24a"></path>
+      <rect class="sil-fill" x="52" y="64" width="16" height="34" rx="6" fill="#ff8a2a"></rect>
+      <circle class="sil-fill" cx="44" cy="100" r="6" fill="#ffd27f"></circle>
+      <circle class="sil-fill" cx="78" cy="102" r="4" fill="#ffd27f"></circle>
+    </svg>
+    <div class="sil-tag">B · 蘑菇云</div>
+  </div>
+  <div class="sil-card">
+    <!-- C: 糊成一坨的圆,对称无 gesture (反例) -->
+    <svg viewBox="0 0 120 120" aria-label="糊成一团的放射特效">
+      <rect class="sil-bg" x="0" y="0" width="120" height="120" fill="#251f2c"></rect>
+      <circle class="sil-fill" cx="60" cy="60" r="34" fill="#c479ff"></circle>
+      <circle class="sil-fill" cx="60" cy="60" r="44" fill="#9a5cff" opacity="0.6"></circle>
+      <circle class="sil-fill" cx="60" cy="18" r="6" fill="#c479ff"></circle>
+      <circle class="sil-fill" cx="60" cy="102" r="6" fill="#c479ff"></circle>
+      <circle class="sil-fill" cx="18" cy="60" r="6" fill="#c479ff"></circle>
+      <circle class="sil-fill" cx="102" cy="60" r="6" fill="#c479ff"></circle>
+    </svg>
+    <div class="sil-tag">C · 放射团(反例)</div>
+  </div>
+</div>
+
+<div class="toggle-row">
+  <button id="silBtn" class="btn" data-on="↩ 回到彩色" data-off="◼ 压成纯黑剪影">◼ 压成纯黑剪影</button>
+  <span class="scene-caption" style="margin:0;">← 来回切,对比哪个形最清</span>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">应该看到什么</span>
+  <strong>A 斩击弧</strong>:纯黑下仍是一条带方向的弧——力线一目了然,沿弧扫出。
+  <strong>B 蘑菇云</strong>:大团 + 柱子 + 小碎块,大中小节奏清楚,整体向上,读得出「向上炸开」。
+  <strong>C 放射团</strong>:压黑后只剩一个糊圆 + 完全对称的四个小点——既没 gesture(往哪都不往)、负空间也被均匀填死,这就是「一坨」。彩色时它靠颜色撑场,去掉颜色形就垮了。
+</div>
+
+<h2>动手二:哪个是「斩击」?</h2>
+<p>下面两个<strong>纯黑剪影</strong>,只凭形(不靠颜色),点出那个一眼读得出是<strong>斩击</strong>的。</p>
+
+<div class="pick-row" id="pickRow">
+  <button class="pick" data-correct="1" aria-label="选项一">
+    <svg viewBox="0 0 160 100">
+      <path d="M14 88 C 30 34, 96 18, 150 26 C 120 36, 84 38, 56 56 C 40 66, 26 78, 20 92 Z" fill="#f3efe6"></path>
+    </svg>
+  </button>
+  <button class="pick" data-correct="0" aria-label="选项二">
+    <svg viewBox="0 0 160 100">
+      <circle cx="80" cy="50" r="30" fill="#f3efe6"></circle>
+      <circle cx="80" cy="50" r="40" fill="#f3efe6" opacity="0.5"></circle>
+    </svg>
+  </button>
+</div>
+<div class="pick-fb" id="pickFb">点上面任意一个剪影。</div>
+
+<h2>接回 Niagara</h2>
+<p>
+玩家最终读到的,是你的 sprite / mesh 的 <code>alpha</code> + <code>emissive</code> 在屏幕上拼出的<strong>亮团块</strong>。把这条翻译成节点上的决策:
+</p>
+<ul>
+  <li><strong>别让粒子糊成无形状的圆球。</strong> 一堆软边圆 sprite 叠在一起,边缘互相溶掉,最后只剩一个糊圆——就是动手一里的 C。要么用带形状的贴图,要么靠排布和运动给它一个可读的外轮廓。</li>
+  <li><strong>用 size-over-life 控团块的成长</strong>,做出「大中小」节奏:主爆团大、二次团中、火星小,而不是所有粒子一样大。</li>
+  <li><strong>velocity alignment(速度对齐)</strong>让 sprite 顺着运动方向拉长,自然形成<strong>方向线 / gesture</strong>;</li>
+  <li><strong>ribbon</strong> 做斩击弧、拖尾,直接画出那条力线——比一堆点更能读出「力往哪走」;</li>
+  <li><strong>减冗余粒子</strong>。多不等于清。删掉那些只让边缘更糊、不贡献外形的粒子,剪影反而更利落。</li>
+</ul>
+<p>自检动作:把特效摆进真实战斗背景,截一帧,<strong>压成纯黑</strong>(或眯眼到只剩团块),看外形读不读得出「是什么 + 力往哪」。</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>「粒子越多越好」。</strong> 数量上去了,边缘互相溶解,剪影反而糊掉。清晰的形往往来自<strong>更少、更有组织</strong>的粒子。</li>
+  <li><strong>一切都做成对称放射。</strong> 完全径向对称很「安全」,但没有 gesture——力哪都不往,看着死。给它一个主方向。</li>
+  <li><strong>忽略负空间。</strong> 把团块之间的空隙全填满,大中小节奏和透气感一起没了,只剩一坨。留白也是形的一部分。</li>
+  <li><strong>只在彩色满配下评判。</strong> 颜色会替糟糕的形「遮丑」。永远用纯黑剪影 / 眯眼再判一次。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz2"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=-L2JvngkkWw" target="_blank">GDC · Visual Effects Bootcamp: Artistic Principles of VFX</a>
+  —— 暴雪/Riot 的一线讲座,把 shape / silhouette、color、timing、readability 这些美术基本功落到特效制作。本课的「形先于色 / 剪影测试」正对应其 shape 段落。<br>
+  想补造型基本功的短视频:<a href="https://www.ctrlpaint.com/library" target="_blank">Ctrl+Paint 免费基础库</a>(找 shape / silhouette 相关短片)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——想让我拿你自己的一张特效截图做剪影测试、想要更多 Niagara 里「用 ribbon / velocity alignment 做 gesture」的具体例子,或者想搞清「剪影」和上一课「明度」怎么衔接,直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>明度归组与层次</strong>——把画面眯成 3–4 个大明度块(notan),用「最大明暗反差放哪」来决定玩家先看到谁。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/vx-tools.js"></script>
+<script>
+wireSilhouetteToggle("silBtn", "silSet");
+
+// 动手二:点击判断
+(function () {
+  const row = document.getElementById("pickRow");
+  const fb = document.getElementById("pickFb");
+  let done = false;
+  row.querySelectorAll(".pick").forEach((b) => {
+    b.addEventListener("click", () => {
+      if (done) return;
+      done = true;
+      const right = b.dataset.correct === "1";
+      b.classList.add(right ? "right" : "wrong");
+      if (!right) {
+        const ans = row.querySelector('.pick[data-correct="1"]');
+        if (ans) ans.classList.add("right");
+      }
+      fb.className = "pick-fb " + (right ? "right" : "wrong");
+      fb.textContent = right
+        ? "✓ 对了。带方向的弧形 = 斩击的 gesture,力沿弧线扫出,一眼可读。"
+        : "✗ 不对。你选的是对称的圆团,没有方向、读不出动作;斩击是那条带方向的弧。";
+    });
+  });
+})();
+
+renderQuiz("quiz2", [
+  {
+    q: "人眼读一张画面时,最先处理、最快认出「这是什么」靠的是哪一层?",
+    options: ["形 silhouette(轮廓团块)", "色 color(色相与冷暖)", "细 detail(纹理与火花)"],
+    correct: 0,
+    why: "阅读顺序是 形 → 明度 → 色彩 → 细节。形排第一,几乎在读到颜色之前就完成识别。"
+  },
+  {
+    q: "一个特效的「gesture / 力线」最直接说明了什么?",
+    options: ["力往哪个方向走", "它用了几种颜色", "它发了多少粒子"],
+    correct: 0,
+    why: "gesture 是贯穿全形的主方向线,告诉你力往哪走:斩击沿弧、冲击波向外、buff 向上。"
+  },
+  {
+    q: "特效是发光半透明体,它被玩家读到的剪影主要由什么构成?",
+    options: ["亮部团块加上运动拖尾", "最暗的阴影边缘部分", "贴图里的高频细节纹理"],
+    correct: 0,
+    why: "高 alpha 与高 emissive 的亮区拼成被读的实心团块,运动拖尾拉出方向线,二者构成剪影。"
+  },
+  {
+    q: "在 Niagara 里,「粒子加得越多」常常导致剪影怎样?",
+    options: ["边缘互相溶解、糊成一坨", "外形变得更锐利清晰", "gesture 方向更明确了"],
+    correct: 0,
+    why: "大量软边 sprite 叠加会让边缘互相溶掉,外形糊成一个圆。清晰的形往往来自更少更有组织的粒子。"
+  },
+  {
+    q: "「冲击波 / 爆炸从一点炸开」属于哪一类方向力?",
+    options: ["向外(从一点散开)", "沿弧(沿弧线扫过)", "向内(从四周收拢)"],
+    correct: 0,
+    why: "三类方向力:向外(冲击波、爆炸)、沿弧(斩击、挥砍)、向内(吸取、聚能)。炸开是向外。"
+  },
+  {
+    q: "想判断一个特效的「形」读不读得清,最靠谱的自检是?",
+    options: ["压成纯黑剪影再看一眼", "把饱和度调到最高再看", "再叠一层更亮的粒子看"],
+    correct: 0,
+    why: "颜色会替糟糕的形遮丑。压成纯黑剪影或眯眼到只剩团块,才看得出形本身是否可读、有没有 gesture。"
+  }
+]);
+</script>
+
+</body>
+</html>

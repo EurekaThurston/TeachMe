@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 13 课 · 色彩构成:主色 + 点缀</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  /* 0013 课内独有样式 */
+  .cc-range { width: 100%; margin: 0.3rem 0 0.2rem; accent-color: var(--accent); }
+  .cc-readout { font-size: 0.82rem; color: var(--muted); margin: 0.1rem 0 0.6rem; }
+  .cc-readout strong { color: var(--ink); }
+
+  /* Albers 相对性 demo */
+  .albers-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin: 1.2rem 0 0.3rem; }
+  @media (max-width: 540px) { .albers-wrap { grid-template-columns: 1fr; } }
+  .albers-field { aspect-ratio: 4 / 3; border-radius: 8px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--rule); }
+  .albers-fieldA { background: #c9b24a; }   /* 暖黄底 */
+  .albers-fieldB { background: #2f6f8a; }   /* 冷青底 */
+  .albers-chip { width: 46%; aspect-ratio: 1; border-radius: 6px; background: #6f8a5a; } /* 同一个橄榄绿 */
+  .albers-bridge {
+    height: 2.2rem; border-radius: 6px; margin: 0.2rem 0 0.4rem;
+    background: linear-gradient(90deg,#c9b24a 0%,#c9b24a 18%,#6f8a5a 38%,#6f8a5a 62%,#2f6f8a 82%,#2f6f8a 100%);
+    opacity: 0; transition: opacity 0.25s;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.78rem; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  }
+
+  /* dominance / accent 面积比 demo */
+  .da-frame {
+    display: flex; height: 8rem; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--rule); box-shadow: 0 2px 10px var(--shadow); margin: 1rem 0 0.3rem;
+  }
+  .da-dominant {
+    flex: 1; min-width: 0;
+    background: linear-gradient(160deg,#3b4a55 0%,#2f3a44 100%);
+    display: flex; align-items: center; justify-content: center;
+    color: #8da0ad; font-size: 0.8rem;
+  }
+  .da-accent {
+    background: radial-gradient(circle at 50% 45%, #ffe6a0 0%, #ff8a2a 40%, #ff5a1e 72%, #d83a12 100%);
+    box-shadow: 0 0 22px 4px rgba(255,120,40,0.45);
+    display: flex; align-items: center; justify-content: center;
+    color: #3a1402; font-size: 0.78rem; font-weight: 600; transition: width 0.15s;
+  }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 13 课</div>
+<h1>色彩构成:主色 + 点缀</h1>
+<p class="subtitle">一套特效好不好看,常常不取决于你用了什么颜色,而取决于每种颜色各占多大面积。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  学会用<strong>面积/比例</strong>来构成色彩:大面积的<strong>低饱和主色(dominant)</strong>定氛围 + 小面积的<strong>高饱和点缀(accent)</strong>抓眼。同时理解 Albers 的核心——<strong>一个色的读感由它的邻色和面积决定</strong>,所以要按背景来选特效色。
+</div>
+
+<h2>色彩构成 = 颜色的面积分配</h2>
+<p>
+"色彩构成 color composition"听起来玄,其实就一句话:<strong>各种颜色在画面里按什么比例、占多大面积分布</strong>。
+注意——重点不是"你用了红还是蓝",而是<strong>每种色占多大面积、谁主谁次</strong>。同样三种颜色,面积一换,整张画的气质就变了。
+</p>
+<p>
+经典操作法则:<strong>大面积低饱和主色定基调,小面积高饱和点缀抓眼</strong>。室内设计里叫 <strong>60-30-10</strong>(60% 主色 / 30% 辅色 / 10% 点缀);电影/游戏里叫 <strong>color script</strong>(整片的色彩节奏表)。叫法不同,内核一样:<strong>有一个统治整体的色场,加上少量打破它的点缀。</strong>
+</p>
+
+<div class="callout callout-key">
+  <span class="label">核心定律</span>
+  <strong>主色(dominant)</strong>定氛围:大面积、低饱和、不抢戏。<strong>点缀(accent)</strong>抓眼:小面积、高饱和、命中焦点。<strong>面积越小,越能承受高饱和而不乱</strong>——这正是上一课"灰衬纯"的面积版。
+</div>
+
+<h2>动手一:Albers 相对性</h2>
+<p>
+下面两块大色块里,各放了<strong>一个中心小方块</strong>。左边底色是暖黄,右边底色是冷青。
+看那两个中心小方块——左边那个像是偏冷偏暗的绿,右边那个像是偏暖偏亮的绿,<strong>看上去是两种颜色</strong>。
+</p>
+<p>
+但其实<strong>它们是同一个 hex 颜色</strong>(同一个橄榄绿 <code>#6f8a5a</code>)。点下面的按钮,会拉出一条桥接条把两个中心色和它各自的底色并排——你会看到中间那一段确实是<strong>同一个色</strong>。它的读感被邻色彻底改写了。
+</p>
+
+<div class="albers-wrap">
+  <div class="albers-field albers-fieldA"><div class="albers-chip" id="albersA"></div></div>
+  <div class="albers-field albers-fieldB"><div class="albers-chip" id="albersB"></div></div>
+</div>
+<div class="albers-bridge" id="albersBridge">两边底色不同 · 中间这一段是同一个色 #6f8a5a</div>
+<div class="toggle-row">
+  <button id="albersReveal" class="btn" data-on="↩ 收起:再看相对性" data-off="揭示:两个中心其实同色">揭示:两个中心其实同色</button>
+  <span class="scene-caption" style="margin:0;">← 中心小方块两边用的是同一个 hex</span>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">这对特效意味着什么</span>
+  你在取色器里调出来的"好看的特效色",<strong>放进游戏场景后会变样</strong>——因为它周围的环境色变了。同一个治疗绿,在暖橙色的沙漠里和在冷蓝色的雪原里,读感完全不同。所以选特效色不能脱离背景,必须<strong>按场景背景来选</strong>。
+</div>
+
+<h2>动手二:主色 ↔ 点缀,面积比</h2>
+<p>
+下面是一个极简的"画面":大面积冷灰主色 + 一条暖橙点缀。拖动滑块改变<strong>点缀占的宽度</strong>。
+注意看:点缀<strong>越小,越"跳"、越像一个焦点</strong>,而且小面积时它的高饱和不会让画面乱;一旦把它拉大到三四成,它就不再是"点缀",而开始和主色<strong>打架</strong>,画面失衡。
+</p>
+
+<div class="da-frame">
+  <div class="da-dominant">主色 dominant · 低饱和 · 定氛围</div>
+  <div class="da-accent" id="daAccent" style="width:10%;">accent</div>
+</div>
+<input type="range" min="4" max="40" value="10" class="cc-range" id="daSlider" aria-label="点缀面积比">
+<p class="cc-readout" id="daLabel">点缀 10% · 主色 90%</p>
+
+<div class="callout callout-vfx">
+  <span class="label">看到了什么</span>
+  点缀越小越跳——因为<strong>对比是靠面积比放大的</strong>:一点点纯色嵌在大片灰里,差异最强。把最强的<strong>色相对比 / 饱和对比</strong>留给这一小块 accent(回扣第 10 课的配色关系、第 12 课的饱和预算),它就能用最小的面积抓住最多的注意力。
+</div>
+
+<h2>把最强对比留给小面积 accent</h2>
+<p>
+这是把前几课串起来的关键操作。你手里有几张"对比牌":<strong>明度对比</strong>(第 1 课)、<strong>色相对比 / 互补</strong>(第 10 课)、<strong>冷暖对比</strong>(第 11 课)、<strong>饱和对比</strong>(第 12 课)。
+色彩构成告诉你<strong>把这些牌打在哪</strong>:全部押在<strong>小面积的 accent 上</strong>。
+</p>
+<p>
+大面积主色场要"克制":低饱和、明度集中、色相统一(偏冷或偏暖一个方向)。这样它才是安静的衬底。然后在焦点那一小块,把色相拉到主色的<strong>对比/互补方向</strong>、饱和拉满、明度拉开——四张牌同时打在一小块上。面积小,所以再强也不乱;对比强,所以一眼就被抓住。
+</p>
+
+<h2>color script:整套特效的色彩协调</h2>
+<p>
+单个特效讲构成,<strong>一整套技能</strong>更要讲协调。Pixar 用 <strong>color script</strong> 给整部片定色彩节奏:哪场暖、哪场冷、accent 用什么。你的一套技能(同一个角色/同一个阵营)也该有一个<strong>统一的色调倾向</strong>,再用 accent 去区分不同技能。
+</p>
+<p>
+这里 Albers 再次起作用:<strong>同一个特效色,放在不同背景上读感不同</strong>。所以"这个技能该用什么色"不是孤立决定的,要同时看:① 整套技能的色彩家族(别每个技能各跑各的色相);② 它将出现的场景背景(暗冷场景里,暖亮特效最跳)。先定一个色彩家族,再按背景微调,而不是单看一个特效"好不好看"。
+</p>
+
+<h2>接回 Niagara</h2>
+<p>
+把"主色场 + 焦点 accent"翻译成 Niagara 的实际决策:
+</p>
+<ul>
+  <li><strong>给特效系统定"主色场 + 焦点 accent"。</strong> 一套技能先定一个低饱和主色调(冷或暖一个方向),再定一个高饱和 accent 色作为命中/核心。</li>
+  <li><strong>拖尾、烟、余波用低饱和主色</strong>(在 Color 曲线里压灰、面积大);<strong>命中点 / 核心用高饱和 accent</strong>(面积小、饱和满、明度峰值)。</li>
+  <li><strong>按场景背景色选特效色。</strong> 暗冷场景里用暖亮特效(最跳);亮暖场景里反过来。别在取色器里孤立调色,要把背景一起看(Albers)。</li>
+  <li><strong>整套技能保持色彩家族一致。</strong> 同一阵营/角色的技能共用一个主色倾向,只用小面积 accent 区分技能类型——玩家因此能"认得出这是谁的技能"。</li>
+  <li><strong>面积即预算。</strong> 高饱和 accent 的粒子面积/数量要少;一旦 accent 铺满半屏,它就不再是 accent。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>全是 accent、没有主色场。</strong> 每块都高饱和、都想抢眼,结果谁也不跳,画面乱(回扣第 12 课"全员拉满")。先有安静的主色,才有跳出来的点缀。</li>
+  <li><strong>不按背景选色。</strong> 在空场景里调得很美的特效,丢进真实关卡就"变样"或"消失"——忘了 Albers:邻色决定读感。</li>
+  <li><strong>特效之间没有统一色调。</strong> 一套技能每个各跑各的色相,玩家读不出"这是同一个角色/阵营"的家族感,信息层级混乱。</li>
+  <li><strong>把对比牌平摊到大面积上。</strong> 强对比要集中在小面积 accent 才有冲击;摊开就稀释了。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz13"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.artforum.com/columns/josef-alberss-interaction-of-color-193938/" target="_blank">Josef Albers《Interaction of Color》</a>
+  —— 色彩<strong>相对性</strong>的原典:同一个色随邻色而变,色的读感由上下文决定。本课的"按背景选特效色"就是它最直接的应用。<br>
+  想补色彩<strong>和谐/比例</strong>的理论面:<a href="https://www.goodreads.com/book/show/8384010" target="_blank">Johannes Itten《The Art of Color》</a>(七种对比、面积平衡,与 Albers 互补)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师。想让我拿你一套技能的截图,帮你定"主色场 + accent"的方案;或者你在某个具体场景背景下不知道特效该用什么色,把背景色给我,我们一起用 Albers 推一遍,直接在对话里问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>gameplay 的色彩语言</strong>——游戏里颜色是一套玩家被训练过的"约定/UI 语言"(红=危险、绿=友方…),以及为什么约 8% 男性红绿色盲意味着你<strong>绝不能只靠 hue</strong> 传递关键信息。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/cc-tools.js"></script>
+<script>
+wireAlbersDemo({ revealBtnId: "albersReveal", chipAId: "albersA", chipBId: "albersB", bridgeId: "albersBridge" });
+wireDominanceAccent({ sliderId: "daSlider", accentId: "daAccent", labelId: "daLabel" });
+renderQuiz("quiz13", [
+  {
+    q: "「色彩构成」的核心,主要取决于下面哪一点?",
+    options: ["每种颜色占的面积与主次比例", "你具体挑了哪几种漂亮颜色", "粒子用的混合模式是哪种"],
+    correct: 0,
+    why: "构成 = 颜色按面积/比例如何分配。同样几种色,面积一换,画面气质全变。"
+  },
+  {
+    q: "经典的「主色 + 点缀」法则里,点缀(accent)应该是?",
+    options: ["小面积、高饱和、命中焦点", "大面积、低饱和、铺满背景", "中面积、中饱和、平均分布"],
+    correct: 0,
+    why: "主色大面积低饱和定氛围,accent 小面积高饱和抓眼。面积越小越能承受高饱和而不乱。"
+  },
+  {
+    q: "Albers 的相对性告诉我们,同一个特效色?",
+    options: ["放在不同背景上读感会不同", "在任何背景上看都完全一样", "饱和度会随时间自动衰减"],
+    correct: 0,
+    why: "一个色的读感由邻色决定。所以选特效色不能脱离背景,要按场景背景来选。"
+  },
+  {
+    q: "明度/色相/冷暖/饱和这几张「对比牌」,最该打在哪里?",
+    options: ["集中在小面积的 accent 上", "平均摊到整个大面积主色", "全部留给背景不动焦点"],
+    correct: 0,
+    why: "强对比集中在小面积 accent 才有冲击;摊到大面积会被稀释,还会让画面打架。"
+  },
+  {
+    q: "一套技能(同角色/同阵营)在色彩上最该做到?",
+    options: ["统一主色调,用 accent 区分技能", "每个技能各跑各的鲜艳色相", "全部用同一个高饱和单色"],
+    correct: 0,
+    why: "统一色彩家族让玩家认出「这是谁的技能」,再用小面积 accent 区分类型(color script 思路)。"
+  },
+  {
+    q: "在暗冷调的场景里,想让一个特效最跳出来,通常选?",
+    options: ["小面积的暖亮高饱和 accent", "大面积的冷暗低饱和铺色", "和背景一致的冷蓝色调"],
+    correct: 0,
+    why: "暗冷背景里,暖亮高饱和的小面积 accent 与背景对比最强、最抓眼(Albers + 主色/点缀)。"
+  }
+]);
+</script>
+
+</body>
+</html>

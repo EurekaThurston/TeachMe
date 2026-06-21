@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 课 · 光的颜色:暖光冷影</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .ls-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .temp-stage { position: relative; width: 100%; height: 230px; border-radius: 8px; overflow: hidden; display:flex; align-items:flex-end; justify-content:center; }
+  .temp-ground { position:absolute; left:0; right:0; bottom:0; height:42%; }
+  .temp-sphere { width: 132px; height: 132px; border-radius: 50%; position:relative; bottom: 26%; box-shadow: 0 8px 20px rgba(0,0,0,0.4); }
+  .ls-readout { font-family: "SF Mono", Consolas, monospace; font-size: 0.95rem; }
+  .ls-readout b { color: var(--accent); }
+  .ls-slider { width: 100%; }
+  .ls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: center; margin: 0.6rem 0; }
+  @media (max-width: 540px){ .ls-row { grid-template-columns: 1fr; } }
+  .ls-label { font-size: 0.85rem; color: var(--muted); }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:0.9rem; margin:1rem 0; }
+  @media (max-width:540px){ .pair { grid-template-columns:1fr; } }
+  .pair .sw { height:78px; border-radius:6px; border:1px solid var(--rule); display:flex; align-items:flex-end; padding:0.3rem 0.5rem; font-size:0.72rem; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">特效美术基础 for VFX · 第 8 课</div>
+<h1>光的颜色:暖光冷影</h1>
+<p class="subtitle">明度讲完了亮暗,这一课讲光的「颜色」。一个口诀贯穿全程:暖光配冷影、冷光配暖影。暗部从来不是死黑。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能用<strong>冷暖关系</strong>而非单纯亮暗来安排特效的光与影:主光暖则暗部偏冷、主光冷则暗部偏暖,并让发光特效给它<strong>照到的表面染上自己的光色</strong>,让特效"属于"场景。
+</div>
+
+<h2>一、光是有颜色的(color temperature)</h2>
+<p>
+我们常默认光是"白"的,其实光有<strong>色温 color temperature</strong>:从暖橙(烛火、夕阳、钨丝灯)到冷蓝(阴天天光、月光、正午阴影里的天空光)。
+同一个物体,在暖光下偏橙黄、在冷光下偏青蓝——固有色没变,是<strong>光的颜色</strong>染了它。读光色,要看物体的亮面。
+</p>
+<div class="pair">
+  <div class="sw" style="background:linear-gradient(135deg,#e8a24a,#b9701f)">同一物 · 暖光下</div>
+  <div class="sw" style="background:linear-gradient(135deg,#7fa6c8,#3f6b93)">同一物 · 冷光下</div>
+</div>
+
+<h2>二、暖光冷影 / 冷光暖影</h2>
+<p>
+这是 Gurney 反复强调的核心关系:<strong>主光是暖的,阴影就偏冷;主光是冷的,阴影就偏暖。</strong>
+为什么?因为阴影并非"没有光",而是被<em>环境里另一种光</em>填充——通常是和主光相反色温的天光/反弹光。于是亮暗之间不只有明度差,还有一道<strong>冷暖张力</strong>,画面立刻"活"起来,而不是单色的明暗。
+</p>
+<p>拖动色温滑块。注意:你只在调<strong>光色</strong>,但球的<strong>暗面会自动偏向相反色温</strong>:</p>
+
+<div class="ls-panel">
+  <div class="temp-stage" id="tempStage" style="background:linear-gradient(180deg,#1b1f27,#2a2f3a);">
+    <div class="temp-ground" id="tempGround"></div>
+    <div class="temp-sphere" id="tempSphere"></div>
+  </div>
+  <div class="ls-row">
+    <div>
+      <label class="ls-label" for="tempSlider">光色:冷蓝 ← → 暖橙</label>
+      <input class="ls-slider" type="range" id="tempSlider" min="0" max="100" value="80">
+    </div>
+    <div class="ls-readout">亮面:<b id="litLabel">暖光(暖橙)</b><br>暗面:<b id="shadowLabel">→ 冷影(偏蓝)</b></div>
+  </div>
+</div>
+<p class="scene-caption">暖光 → 冷影、冷光 → 暖影。亮暗之间多了一道冷暖关系,比纯灰的明暗有层次得多。</p>
+
+<h2>三、环境光与反弹光:阴影不是死黑</h2>
+<p>
+紧接上一点:<strong>阴影从来不是纯黑</strong>。它被周围反弹回来的光(bounce light)和天光(ambient)染色——草地旁的阴影偏绿,蓝天下的阴影偏蓝,暖墙边的阴影带暖。
+特效也一样:你的特效暗部应该<strong>带一点环境色</strong>,而不是一抹纯黑。死黑会让特效"挖了个洞"、和场景脱节。
+</p>
+
+<h2>四、特效的光色外溢</h2>
+<p>这是把上面三点落到 VFX 的关键动作——让特效"属于"场景:</p>
+<ul>
+  <li><strong>染光 color spill</strong>:一团蓝色能量,应该在场景里<em>打出蓝光</em>——它脚下的地面、旁边的烟、附近角色的接触面,都该接收这层蓝色。否则蓝能量和场景"各过各的"。</li>
+  <li><strong>暗部补互补</strong>:特效的暗部别只压黑,掺一点<em>互补的暖色</em>(蓝特效暗部带点暖),制造冷暖层次,暗部立刻有"空气"。</li>
+  <li><strong>接触面最明显</strong>:特效与表面接触、最近的地方,染光最强;远处衰减(回扣 0005 平方反比)。</li>
+</ul>
+<div class="callout callout-vfx">
+  <span class="label">一句话判断</span>
+  看一个发光特效合不合场景,就看:<strong>它有没有把自己的颜色"漏"到周围去?</strong>蓝火却没在地上留一点蓝、暗部是纯黑——它就还"飘"在场景之上,没融进去。
+</div>
+
+<h2>五、接回 Niagara</h2>
+<ul>
+  <li><strong>光组件颜色 = 特效主色</strong>:Light Renderer / 光组件的颜色设成特效的主色(蓝能量给蓝光),让它向场景投出对的色光。</li>
+  <li><strong>给周围 emissive / decal 染特效色</strong>:接触地面用染了特效色的 decal(贴花)或 emissive,做出"光漏到地上"。</li>
+  <li><strong>烟雾 / 暗部 color 掺环境 / 互补色</strong>:烟和暗部的颜色别用纯黑/纯灰,掺入环境色或互补色温。</li>
+  <li><strong>Color-over-life 用不同色温</strong>:亮处与暗处、起手与消散,用不同色温(亮暖暗冷或反之),而不是同一个色相只改明度。</li>
+</ul>
+
+<h2>六、常见误区</h2>
+<ul>
+  <li><strong>暗部纯黑 / 纯灰</strong>:没有冷暖氛围,特效像挖了个洞,和场景脱节。</li>
+  <li><strong>发光特效不给环境染色</strong>:蓝火不在地上留蓝光,特效"飘"在场景上,不属于这里。</li>
+  <li><strong>亮暗同色温</strong>:亮面暗面一个色相只改明度,画面"平"、没有冷暖张力。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz8"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light》— James Gurney</a>
+  —— "暖光冷影 / 冷光暖影""阴影被环境色填充""光给物体染色"这一整套色彩关系,这本书是被引用最多的总纲。<br>
+  想看作者持续更新的延伸:<a href="https://jamesgurney.com" target="_blank">Gurney Journey 博客</a>(光色案例分析,常年更新)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我看你的蓝火/红魔法有没有给场景染对光、暗部是不是死黑了、或者在 Niagara 里怎么用 decal + 光组件做"染光"——把图或工程描述发我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>0009 色彩三要素 HSV(模块 C 开始)</strong>——把 hue / saturation / value 三个旋钮彻底分开,这是进入"色彩"模块的地基。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/light-tools.js"></script>
+<script>
+wireColorTemp({
+  sliderId:"tempSlider", sphereId:"tempSphere", groundId:"tempGround",
+  lightLabelId:"litLabel", shadowLabelId:"shadowLabel"
+});
+renderQuiz("quiz8", [
+  {
+    q: "经典的「暖光冷影」关系,指的是?",
+    options: ["主光暖,阴影就偏冷", "主光暖,阴影也偏暖", "主光暖,阴影变纯黑"],
+    correct: 0,
+    why: "阴影被相反色温的环境/天光填充,所以暖主光配冷影、冷主光配暖影,形成冷暖张力。"
+  },
+  {
+    q: "阴影里为什么「不是纯黑」?",
+    options: ["被反弹光与天光染了色", "因为它其实没有光", "因为相机自动提亮"],
+    correct: 0,
+    why: "阴影被周围 bounce light 和 ambient 天光填充并染色,所以带环境色而非死黑。"
+  },
+  {
+    q: "一团蓝色能量要「属于场景」,最关键的一步是?",
+    options: ["在周围表面染出蓝光", "把蓝色调得更饱和", "把它整体调得更亮"],
+    correct: 0,
+    why: "发光特效该把自己的色光漏到地面/烟/接触面。没有染光,它就飘在场景之上。"
+  },
+  {
+    q: "给特效暗部「掺一点互补的暖色」(蓝特效暗部带暖)的好处是?",
+    options: ["制造冷暖层次、暗部有空气", "让暗部变得更纯黑", "提高整体饱和度"],
+    correct: 0,
+    why: "暗部补互补色温,亮暗之间有冷暖关系,层次更丰富,不再是一团死黑。"
+  },
+  {
+    q: "「亮面暗面同一个色相、只改明度」会导致?",
+    options: ["画面平、没有冷暖张力", "冷暖关系更强烈", "投影更清晰"],
+    correct: 0,
+    why: "缺了冷暖差,只剩明度差,画面显得平。引入色温差才有层次和氛围。"
+  },
+  {
+    q: "在 Niagara 里让发光特效「向场景投出对的色光」,最直接的做法是?",
+    options: ["光组件颜色设成特效主色", "把 Sprite 数量加倍", "调高材质粗糙度"],
+    correct: 0,
+    why: "Light Renderer / 光组件颜色 = 特效主色,蓝能量投蓝光;再配染色 decal 做接触染光。"
+  }
+]);
+</script>
+
+</body>
+</html>

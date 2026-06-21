@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 课 · 光从哪来:方向、衰减、自发光</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .ls-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .ls-stage { position: relative; width: 100%; height: 220px; border-radius: 8px; overflow: hidden; background: radial-gradient(circle at 50% 120%, #2a2d36 0%, #16181d 70%); display: flex; align-items: center; justify-content: center; }
+  .ls-orb { width: 64px; height: 64px; border-radius: 50%; }
+  .ls-readout { font-family: "SF Mono", Consolas, monospace; font-size: 0.95rem; }
+  .ls-readout b { color: var(--accent); }
+  .ls-slider { width: 100%; }
+  .ls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: center; margin: 0.6rem 0; }
+  @media (max-width: 540px){ .ls-row { grid-template-columns: 1fr; } }
+  .ls-sphere { width: 130px; height: 130px; border-radius: 50%; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+  .ls-label { font-size: 0.85rem; color: var(--muted); }
+  .ls-tag { display:inline-block; font-size:0.72rem; letter-spacing:0.06em; padding:0.1rem 0.5rem; border-radius:999px; border:1px solid var(--rule); margin-right:0.3rem; }
+  .ls-tag.emit { background:#fff3d6; color:#9a5a14; border-color:#e7c98a; }
+  .ls-tag.lit { background:#e7eef2; color:#2b6d8a; border-color:#9fc4d2; }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">特效美术基础 for VFX · 第 5 课</div>
+<h1>光从哪来:方向、衰减、自发光</h1>
+<p class="subtitle">明度(value)讲完了"亮暗的结构";这一课开始讲"亮暗从哪来"——光有来源、有方向,而且会随距离飞快地变暗。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能区分特效里的<strong>自发光(emissive)</strong>和<strong>受光(lit)</strong>两类物体,并理解光为什么随距离按<strong>平方反比(inverse-square)</strong>衰减——这正是 0001 那个 radial 渐变核心"为什么中间白、边缘暗"的物理原因。
+</div>
+
+<h2>一、光的三件事:来源、方向、强度与衰减</h2>
+<p>
+你画面里每一块亮、每一道暗,背后都对应着光的三个属性。把它们拆开,你才知道一个特效"该亮哪、暗哪":
+</p>
+<ul>
+  <li><strong>光源类型 light type</strong>:是一个点(point,如火球、灯泡,向四面八方发光)、一束方向光(directional,如太阳,平行光),还是一片面光(area)。点光最常对应特效。</li>
+  <li><strong>方向 direction</strong>:光从哪个方位打过来,决定物体哪面亮、哪面暗、影子往哪投。</li>
+  <li><strong>强度与衰减 intensity & falloff</strong>:光源有多强,以及离开光源后亮度怎么掉下去。这一项是新手最常忽略、却最影响"可信度"的。</li>
+</ul>
+
+<h2>二、平方反比:距离翻倍,亮度只剩 1/4</h2>
+<p>
+真实世界里,点光源的亮度随距离 <em>d</em> 按 <strong>1 / d²</strong> 衰减——这叫<strong>平方反比定律 inverse-square law</strong>。
+原因很直观:光从一个点向外扩散,同样多的光铺到的球面面积是 4πd²,距离翻倍,面积变 4 倍,单位面积上的光就只剩 <strong>1/4</strong>。
+</p>
+<p>拖动下面的距离滑块,看亮度怎么掉:</p>
+
+<div class="ls-panel">
+  <div class="ls-stage">
+    <div class="ls-orb" id="isOrb"></div>
+  </div>
+  <div class="ls-row">
+    <div>
+      <label class="ls-label" for="isSlider">距离 distance(相对光源)</label>
+      <input class="ls-slider" type="range" id="isSlider" min="100" max="400" value="100">
+    </div>
+    <div class="ls-readout">
+      距离 d = <b id="isDist">1.00</b><br>
+      相对亮度 = 1 / d² = <b id="isBright">1.00</b>
+    </div>
+  </div>
+</div>
+<p class="scene-caption">d=1 时亮度 1.00;d=2 时只剩 0.25;d=3 时只剩约 0.11。亮度掉得比你直觉快得多——这就是为什么发光核心一点点向外就迅速变暗。</p>
+
+<div class="callout callout-vfx">
+  <span class="label">接回 0001</span>
+  你在 0001 见的那个 <code>radial-gradient(circle, 白 0% → 橙 → 透明)</code>,本质就是在<strong>手画一条衰减曲线</strong>:中心是光源(最亮),向外按近似平方反比掉到 0。一个 falloff 调得"太线性"的渐变会显得平、像贴纸;掉得像 1/d² 才有"光在发"的感觉。
+</div>
+
+<h2>三、自发光 emissive vs 受光 lit</h2>
+<p>特效里的物体,按"和光的关系"分两大类,做法完全不同:</p>
+<div class="ls-panel">
+  <p><span class="ls-tag emit">EMISSIVE</span><strong>自发光 / 发光体</strong>:它<em>自己就是光源</em>。火球、能量、激光、魔法核心——它不靠场景灯,反而向外发光。材质上靠 Emissive(自发光)通道,值常 >1(HDR)以触发 bloom。</p>
+  <p><span class="ls-tag lit">LIT</span><strong>受光体</strong>:它<em>不发光,靠场景光读出明暗</em>。烟、尘、碎片、火花溅起的灰——它们的体积感完全来自"被光照到哪面亮、背光面暗"。材质上要接收光照(lit / 半透明受光)。</p>
+</div>
+<p>
+关键认知:<strong>一个完整特效往往两类并存</strong>。火球本体是 emissive,但它喷出的烟和扬起的尘是 lit——后者必须被火球这个光源照亮,才会和火"属于同一个事件"。把烟也做成自发光,它就会从场景里"飘"出来,假。
+</p>
+
+<h2>四、发光体要真的"照亮"周围</h2>
+<p>
+这是新手与高手最明显的分水岭:<strong>可信的能量会在环境里投光</strong>。一个真实的火球,会把下方地面染暖、给旁边角色的脸打上一层暖光、把附近的烟照亮一侧。如果你的发光特效<em>只有自己亮、周围纹丝不动</em>,它看起来就像贴在屏幕上的一张发光贴纸,而不是"场景里真的有个光源"。
+</p>
+<p>下面这个球演示"光的方向"——把它想成一个被你的特效照到的受光物体(角色、碎片、地面凸起)。拖动滑块改变光来的方位,看明暗面怎么转:</p>
+
+<div class="ls-panel">
+  <div class="ls-stage" style="background:radial-gradient(circle at 50% 120%,#2c2f38,#15171c);">
+    <div class="ls-sphere" id="dirSphere"></div>
+  </div>
+  <div class="ls-row">
+    <div>
+      <label class="ls-label" for="dirSlider">光来的方位角 azimuth</label>
+      <input class="ls-slider" type="range" id="dirSlider" min="0" max="360" value="135">
+    </div>
+    <div class="ls-readout">光向 = <b id="dirAngle">135°</b></div>
+  </div>
+</div>
+<p class="scene-caption">光朝向哪面,哪面就亮、对面就暗。你的发光特效就该这样去"塑造"周围每个受光物体——而不是让它们保持原样。</p>
+
+<h2>五、接回 Niagara</h2>
+<p>把上面的原理对应到你天天点的面板:</p>
+<ul>
+  <li><strong>Niagara Light Renderer</strong>:给粒子挂一个真实光源,让发光粒子<em>真的照亮场景</em>(地面、角色、烟)。这是消除"贴纸感"的第一杠杆。强度别只靠肉眼,记住衰减很陡,半径要给够。</li>
+  <li><strong>Emissive 强度 = 光强</strong>:自发光值越高越亮,>1 进入 HDR 触发 bloom(下节 0007 细讲)。</li>
+  <li><strong>用 gradient 做 falloff</strong>:Sprite 的径向渐变 / 颜色曲线就是你的衰减曲线,往 1/d² 的"陡降"方向调,而不是平缓的线性。</li>
+  <li><strong>烟雾粒子要正确受光</strong>:用 lit translucency(受光半透明)或六向贴图(six-way lighting),让烟有受光的明暗面,而不是一团均匀自发光。这样烟才有<strong>体积</strong>。</li>
+</ul>
+
+<h2>六、常见误区</h2>
+<ul>
+  <li><strong>发光体不照环境(贴纸感)</strong>:火球很亮,但地面/角色/烟一点没被它染亮 → 像贴上去的。补一个 Light Renderer 或给周围 emissive/decal 染光。</li>
+  <li><strong>受光烟雾自发光过头</strong>:把本该 lit 的烟做成强自发光,它变成一团均匀发亮的"亮团",<em>失去体积和明暗面</em>。烟该靠被照亮来读体积。</li>
+  <li><strong>衰减太线性</strong>:falloff 调得太平,光"铺"得太远太均匀,没有"从一个点爆发"的能量感。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz5"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Light-Visual-Artists-Second-Understanding/dp/1786274515" target="_blank">《Light for Visual Artists》— Richard Yot</a>
+  —— 数字艺术家写的"光的理论",对方向、强度、衰减、光源类型讲得既科学又好懂,是从"光的物理"过渡到数字/实时媒介最好的桥。<br>
+  想再补一本经典:<a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light》— James Gurney</a>(光如何表现、随光变化的总纲)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我用你自己的一个火球/能量特效来分析"它有没有照亮周围"、想看 Niagara Light Renderer 的具体参数思路、或者想搞清"六向光照到底解决什么问题"——直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>0006 形体的受光语言</strong>——一个受光的球(或一团烟)靠 highlight / 明暗交界线 / 反光 / 投影这一套固定分区被你读出体积,我们逐区拆开看。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/light-tools.js"></script>
+<script>
+wireInverseSquare({ sliderId:"isSlider", orbId:"isOrb", distLabelId:"isDist", brightLabelId:"isBright" });
+wireLightDirection({ sliderId:"dirSlider", sphereId:"dirSphere", angleLabelId:"dirAngle" });
+renderQuiz("quiz5", [
+  {
+    q: "点光源的亮度随距离怎么变化(平方反比)?",
+    options: ["距离翻倍,亮度变 1/4", "距离翻倍,亮度变 1/2", "距离翻倍,亮度也翻倍"],
+    correct: 0,
+    why: "亮度 = 1/d²。距离 ×2,亮度 ×(1/4);距离 ×3,亮度 ×(1/9)。掉得比直觉快。"
+  },
+  {
+    q: "下面哪一类特效物体属于「受光 lit」,要靠场景光读明暗?",
+    options: ["飘散的烟与扬尘", "炽热的能量核心", "纯发光的激光束"],
+    correct: 0,
+    why: "烟、尘、碎片不发光,靠被照亮的明暗面读体积,属于受光体;能量/激光是自发光。"
+  },
+  {
+    q: "一个火球看起来像「贴在屏幕上的贴纸」,最可能缺了什么?",
+    options: ["它没有照亮周围环境", "它的粒子数量不够多", "它的颜色饱和度太低"],
+    correct: 0,
+    why: "可信的发光体会给地面/角色/烟投光。只有自己亮、周围不变,就显得是贴上去的。"
+  },
+  {
+    q: "把本该受光的烟雾做成「强自发光的均匀亮团」,后果是?",
+    options: ["失去明暗面与体积感", "体积感反而更强了", "投影会变得更清晰"],
+    correct: 0,
+    why: "烟靠被照亮的明暗读体积。均匀自发光抹平了明暗差,烟就变成没有体积的亮团。"
+  },
+  {
+    q: "0001 里那个「中心白、向外迅速变暗到透明」的 radial 渐变,本质在画什么?",
+    options: ["一条光的衰减曲线", "一条颜色的色相环", "一条饱和度的曲线"],
+    correct: 0,
+    why: "径向渐变就是在手画 falloff:中心是光源最亮,向外按近似平方反比掉到 0。"
+  },
+  {
+    q: "在 Niagara 里,想让发光粒子真的「照亮场景里的地面和角色」,最直接的工具是?",
+    options: ["Niagara Light Renderer", "把 Sprite 数量翻倍", "提高材质的粗糙度"],
+    correct: 0,
+    why: "Light Renderer 给粒子挂真实光源,向场景投光,从根上消除贴纸感。"
+  }
+]);
+</script>
+
+</body>
+</html>

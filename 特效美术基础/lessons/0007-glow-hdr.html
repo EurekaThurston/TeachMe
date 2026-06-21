@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 课 · 辉光、HDR 与 additive</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .ls-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .ls-stage { position: relative; width: 100%; height: 220px; border-radius: 8px; overflow: hidden; display:flex; align-items:center; justify-content:center; background: radial-gradient(circle at 50% 120%, #2a2d36, #15171c); }
+  .ls-orb { width: 70px; height: 70px; border-radius: 50%; }
+  .ls-readout { font-family: "SF Mono", Consolas, monospace; font-size: 0.95rem; }
+  .ls-readout b { color: var(--accent); }
+  .ls-slider { width: 100%; }
+  .ls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: center; margin: 0.6rem 0; }
+  @media (max-width: 540px){ .ls-row { grid-template-columns: 1fr; } }
+  .ls-label { font-size: 0.85rem; color: var(--muted); }
+  .heat-strip { display:flex; height:2.2rem; border-radius:4px; overflow:hidden; margin:1rem 0; border:1px solid var(--rule); }
+  .heat-strip > span { flex:1; display:flex; align-items:center; justify-content:center; font-size:0.7rem; color:rgba(255,255,255,0.85); }
+  .blend-fx { position:absolute; width:130px; height:130px; border-radius:50%; left:50%; top:50%; transform:translate(-50%,-50%); filter: blur(0.5px); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">特效美术基础 for VFX · 第 7 课</div>
+<h1>辉光、HDR 与 additive</h1>
+<p class="subtitle">为什么最热的火焰核心是「白」的而不是红的?为什么能量特效叠在亮背景上就消失了?这一课讲清发光的物理与两种混合的取舍。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能解释<strong>高能量为什么读作「白热」</strong>(value clipping 向白溢出),理解 <strong>HDR(值 &gt;1)+ bloom</strong> 如何制造发光,并知道 <strong>additive(叠加)</strong>何时用、何时会害你(亮背景前消失、无暗部无实体)。
+</div>
+
+<h2>一、为什么核心是白的</h2>
+<p>
+火、能量、爆炸的核心,温度/能量最高的地方,在画面里几乎总是<strong>白</strong>的,外围才显出橙红。原因是:
+能量越高 → 明度 value 越高 → 一旦超出屏幕能显示的最高亮度,颜色就<strong>向白溢出</strong>,这叫 <strong>value clipping(明度截断)</strong>。
+最热处所有通道都顶满 = 白;离核心远一点、能量低一点,才"显"出它本来的色相。
+</p>
+<p>这和真实的<strong>黑体辐射 blackbody</strong>色温梯度一致——温度从低到高:</p>
+<div class="heat-strip" aria-hidden="true">
+  <span style="background:#3a0d05">暗红</span>
+  <span style="background:#8a1f06">红</span>
+  <span style="background:#d24a10">橙</span>
+  <span style="background:#f59a20">黄</span>
+  <span style="background:#ffe39a;color:#7a5a10">近白</span>
+  <span style="background:#fffef5;color:#888">白热</span>
+</div>
+<p class="scene-caption">暗红 → 橙 → 黄 → 白。核心白热 white-hot,向外按色温降到橙红。这条梯度就是火/能量"热感"的来源。</p>
+
+<h2>二、HDR 与 bloom</h2>
+<p>
+普通颜色的明度上限是 1.0(屏幕全白)。<strong>HDR(高动态范围)</strong>允许值 <strong>&gt;1.0</strong>——比如 emissive 强度 ×4。
+屏幕显示不出"比白还白",于是引擎的<strong>后期 bloom</strong> 把这部分超额的光<em>溢出到周围像素</em>,形成光晕。这就是"发光"在屏幕上的实现:<strong>bloom = value 溢出到周围</strong>。
+</p>
+<p>拖动 HDR 强度,看核心怎么从饱和橙红 → 向白去饱和,同时 bloom 怎么变大:</p>
+
+<div class="ls-panel">
+  <div class="ls-stage">
+    <div class="ls-orb" id="hdrOrb"></div>
+  </div>
+  <div class="ls-row">
+    <div>
+      <label class="ls-label" for="hdrSlider">Emissive / HDR 强度</label>
+      <input class="ls-slider" type="range" id="hdrSlider" min="100" max="600" value="160">
+    </div>
+    <div class="ls-readout">强度 = <b id="hdrInt">×1.6</b><br><span id="hdrSat" style="color:var(--muted)">核心向白去饱和中</span></div>
+  </div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">回扣 0003 · 焦点</span>
+  bloom 要<strong>适度</strong>。值给太高、阈值放太低 → 全屏泛白、整个画面被洗白,焦点丢失(就是 0003 讲的"明度层次塌掉")。bloom 是给<em>该亮的核心</em>用的,不是给全屏用的。控制 bloom 阈值,让只有真正超亮的部分才溢出。
+</div>
+
+<h2>三、additive vs alpha blend:两种混合</h2>
+<p>这是特效师每天都在选的开关,理解它能省你无数次"为什么看不见":</p>
+<div class="ls-panel">
+  <p><strong>Additive(叠加)</strong>:把特效的颜色<em>加</em>到背景上。只会让画面<strong>更亮、永不变暗</strong>。天生适合光、火、能量——因为光本来就是"加"上去的。代价:它<strong>没有暗部、没有实体感</strong>,而且在亮背景前会<strong>消失</strong>(背景已经很亮,再加一点点看不出)。</p>
+  <p><strong>Alpha blend(普通半透明)</strong>:特效按透明度<em>盖</em>在背景上,可以有暗部、有实体遮挡感。适合烟、碎片、尘——这些是"挡住光"的实体,不是"发光"。</p>
+</div>
+<p>下面切换 混合模式 与 背景明暗。注意:<strong>additive + 亮背景</strong>时,火球几乎消失:</p>
+
+<div class="ls-panel">
+  <div class="ls-stage" id="blendScene">
+    <div class="blend-fx" id="blendFx"></div>
+  </div>
+  <div class="ls-row">
+    <div>
+      <button class="btn" id="blendBtn">切换混合模式</button>
+      <div class="ls-readout" style="margin-top:0.4rem;">当前:<b id="blendLabel">Additive(叠加 / screen)</b></div>
+    </div>
+    <div>
+      <button class="btn" id="bgBtn">切换背景明暗</button>
+      <div class="ls-readout" style="margin-top:0.4rem;">背景:<b id="bgLabel">暗背景</b></div>
+    </div>
+  </div>
+</div>
+<p class="scene-caption">试试 <strong>Additive + 亮背景</strong>:火球淡到几乎看不见 → 回扣 0001 的明度教训,additive 特效在亮背景前是高风险。这时该换 alpha、或给它压暗边。</p>
+
+<h2>四、颜色随强度变(Color-over-life)</h2>
+<p>
+真实的火/能量,<strong>强处趋白、弱处显橙红</strong>。所以你的颜色不该是一个固定色,而是随强度/寿命变化的一条梯度:核心白 → 中段黄橙 → 边缘暗红 → 透明。
+这条梯度同时承担了"热感"和"明度衰减"两件事——它就是上面那条黑体色温条。
+</p>
+
+<h2>五、接回 Niagara</h2>
+<ul>
+  <li><strong>材质 Emissive × (&gt;1) HDR 强度</strong>:自发光通道乘一个 &gt;1 的强度,配合后期 <strong>Bloom</strong> 才"发光"。强度推动 value clipping,核心自然趋白。</li>
+  <li><strong>additive 材质做能量光</strong>:激光、闪光、能量罩用叠加,只加光。但记得它在亮场景会消失,做之前先想背景。</li>
+  <li><strong>alpha / translucent 做烟</strong>:烟、尘、碎片用半透明,有暗部和实体遮挡。</li>
+  <li><strong>颜色梯度给热感</strong>:Color-over-life 用"白→黄→橙→暗红"的梯度,核心向白。</li>
+  <li><strong>控制 bloom 阈值</strong>:别让 bloom 阈值太低导致全屏泛白;只让真正超亮的核心溢出。</li>
+</ul>
+
+<h2>六、常见误区</h2>
+<ul>
+  <li><strong>additive 特效在亮背景前看不见</strong>:最常见的坑,回扣 0001。亮背景下改用 alpha 或加暗边。</li>
+  <li><strong>全屏 bloom</strong>:bloom 阈值太低/强度太高,画面被洗白,焦点全丢。</li>
+  <li><strong>核心不够白</strong>:核心还停在饱和橙红,没顶到白 → 读不出"高温/高能",显得"温"。</li>
+  <li><strong>纯饱和色核心</strong>:把核心做成纯饱和的红或蓝,而不向白去饱和 → 像染色玻璃,不像在"发热发光"。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz7"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light》— James Gurney</a>
+  —— 其中讲 luminance(发光感)、为什么强光向白去饱和、辉光怎么"溢出",是这套现象的美术原理来源。<br>
+  想找特效向的免费讲座:<a href="https://realtimevfx.com/t/useful-free-gdc-talks/219" target="_blank">RealtimeVFX · 免费 GDC 讲座索引</a>(里面有讲 HDR / bloom / 混合模式的实战分享)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我看你的能量特效"在亮场景里是不是会消失"、想搞清 Niagara 里 additive 和 translucent 材质各自该配什么参数、或者 bloom 阈值怎么调才不洗白——直接问我或发图。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>0008 光的颜色:暖光冷影</strong>——光是有颜色的(色温),暖光配冷影、冷光配暖影,你的特效该给它照到的表面染上自己的光色。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/light-tools.js"></script>
+<script>
+wireHdrGlow({ sliderId:"hdrSlider", orbId:"hdrOrb", intLabelId:"hdrInt", satLabelId:"hdrSat" });
+wireBlendBackground({
+  blendBtnId:"blendBtn", bgBtnId:"bgBtn",
+  sceneId:"blendScene", fxId:"blendFx",
+  blendLabelId:"blendLabel", bgLabelId:"bgLabel"
+});
+renderQuiz("quiz7", [
+  {
+    q: "火/能量最热的核心,在画面里通常读作「白」的,根本原因是?",
+    options: ["明度超出可显范围向白溢出", "白色比红色更饱和", "白色的色相更暖"],
+    correct: 0,
+    why: "高能量=高 value,顶到屏幕白上限后向白溢出(value clipping),所以核心白、外围才显色。"
+  },
+  {
+    q: "屏幕上的「发光 / bloom」本质是什么?",
+    options: ["值 >1 的光溢出到周围像素", "把饱和度调到最高", "把边缘描一圈黑边"],
+    correct: 0,
+    why: "HDR 值 >1 超出可显范围,后期 bloom 把这部分溢出到周围形成光晕,这就是发光。"
+  },
+  {
+    q: "additive(叠加)混合的特点是?",
+    options: ["只会更亮、没有暗部", "可以表现实体遮挡", "在亮背景前更明显"],
+    correct: 0,
+    why: "叠加只把光加上去,永不变暗、无暗部无实体;而且在亮背景前会被淹没消失。"
+  },
+  {
+    q: "一个 additive 能量特效在很亮的背景前「看不见了」,该怎么救?",
+    options: ["改用 alpha 或给它压暗边", "把它做得更 additive", "把强度无限调高"],
+    correct: 0,
+    why: "亮背景已经很亮,additive 加不出对比。改 alpha 带暗部,或压暗边制造明度差。"
+  },
+  {
+    q: "下面哪种特效最适合用 alpha / translucent(而非 additive)?",
+    options: ["有实体感的烟与碎片", "纯发光的激光束", "闪光与能量罩"],
+    correct: 0,
+    why: "烟、碎片是「挡光的实体」,需要暗部和遮挡感,用半透明;发光物才用叠加。"
+  },
+  {
+    q: "把火焰核心做成「纯饱和的红」而不向白去饱和,问题是?",
+    options: ["读不出高温、像染色玻璃", "会显得太亮太白", "会失去所有 bloom"],
+    correct: 0,
+    why: "高温该向白溢出。停在纯饱和红=能量不够高的感觉,像染色玻璃,不像在发热发光。"
+  }
+]);
+</script>
+
+</body>
+</html>

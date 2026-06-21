@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 11 课 · 冷暖 Temperature:暖前进,冷后退</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .temp-bar { height: 2.6rem; border-radius: 5px; margin: 1.1rem 0 0.3rem; border: 1px solid var(--rule);
+    background: linear-gradient(90deg,#e23a1f 0%,#ef7a16 16%,#f4c12a 30%,#7fbf3f 44%,#36b3a6 58%,#2f7fd6 74%,#5a52c8 88%,#9a3fb0 100%); }
+  .temp-bar-cap { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); }
+  .warm-lab { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .warm-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+  .warm-cell { aspect-ratio: 4/3; border-radius: 7px; border: 1px solid var(--rule); cursor: pointer; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 0.4rem; transition: transform 0.1s; }
+  .warm-cell:hover { transform: translateY(-2px); }
+  .warm-cell span { font-size: 0.78rem; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); font-weight: 600; }
+  .warm-correct { outline: 3px solid var(--good); outline-offset: 2px; }
+  .warmth-fb { margin-top: 0.8rem; font-size: 0.92rem; min-height: 1.2em; }
+  .warmth-fb.correct { color: var(--good); }
+  .warmth-fb.wrong { color: var(--bad); }
+  .warm-q { text-align: center; font-weight: 600; margin: 0 0 0.7rem; }
+  .depth-scene { position: relative; width: 100%; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; border: 1px solid var(--rule); box-shadow: 0 2px 10px var(--shadow); margin: 0.4rem 0;
+    background: radial-gradient(120% 90% at 50% 18%, #244a6e 0%, #1b3650 55%, #142840 100%); }
+  .depth-scene .layer { position: absolute; border-radius: 50%; transition: filter 0.35s, background 0.35s; }
+  .depth-bg { width: 46%; aspect-ratio: 1; left: 8%; top: 14%; background: radial-gradient(circle,#3a6f9e 0%,#2c5680 60%,rgba(44,86,128,0) 78%); }
+  .depth-mid { width: 40%; aspect-ratio: 1; right: 10%; top: 30%; background: radial-gradient(circle,#4d86b0 0%,#3a6f9e 60%,rgba(58,111,158,0) 80%); }
+  .depth-hero { width: 34%; aspect-ratio: 1; left: 34%; top: 42%; background: radial-gradient(circle,#ffe7a8 0%,#ff9b2e 45%,rgba(255,155,46,0) 76%); }
+  /* 全平:把暖主体也压成冷,纵深消失 */
+  .depth-scene.is-flat .depth-hero { background: radial-gradient(circle,#7fb6d6 0%,#4d86b0 50%,rgba(77,134,176,0) 78%); filter: none; }
+  .depth-scene.is-flat .depth-bg,
+  .depth-scene.is-flat .depth-mid { filter: saturate(1.05); }
+  .depth-cap { font-size: 0.82rem; color: var(--muted); text-align: center; margin: 0.3rem 0 1rem; }
+  .attr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; margin: 1.1rem 0; }
+  .attr-box { border-radius: 7px; padding: 0.8rem 0.9rem; color: #fff; font-size: 0.9rem; text-shadow: 0 1px 2px rgba(0,0,0,0.4); }
+  .attr-warm { background: linear-gradient(135deg,#e8431c,#f4a017); }
+  .attr-cool { background: linear-gradient(135deg,#2f7fd6,#5a52c8); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 11 课</div>
+<h1>冷暖 Temperature:暖前进,冷后退</h1>
+<p class="subtitle">颜色除了「是什么色」(hue),还分冷暖。而冷暖是<strong>相对</strong>的——高手在同一个 hue 里玩冷暖,用它造空间、焦点和「属性感」。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能判断两个相近颜色谁更<strong>暖</strong>、谁更<strong>冷</strong>(冷暖是相对的),并会用「<strong>暖色前进、冷色后退</strong>」给特效造纵深、做焦点、定属性——而不只按 hue 想颜色。
+</div>
+
+<h2>冷暖光谱</h2>
+<p>
+把色环摊平,大致一头暖一头冷:<strong>暖色——红、橙、黄</strong>(火、阳光、能量);<strong>冷色——蓝、青、紫</strong>(冰、水、夜、魔法)。<strong>绿与紫居中</strong>,可暖可冷,看它偏哪边(偏黄的绿暖、偏蓝的绿冷)。
+</p>
+<div class="temp-bar" aria-hidden="true"></div>
+<div class="temp-bar-cap"><span>← 暖(红橙黄)</span><span>居中(绿 / 紫)</span><span>冷(青蓝紫)→</span></div>
+
+<h2>冷暖是相对的(这一点最关键)</h2>
+<p>
+新手以为「红=暖、蓝=冷」就完了。但真正有用的是:<strong>同一个 hue 内部,也分偏暖版和偏冷版。</strong>
+</p>
+<ul>
+  <li>红有<strong>偏橙的红</strong>(暖)和<strong>偏紫的红</strong>(冷);</li>
+  <li>蓝有<strong>偏青的蓝</strong>(相对暖)和<strong>偏紫的蓝</strong>(相对冷);</li>
+  <li>黄有偏橙的暖黄和偏绿的冷黄……</li>
+</ul>
+<p>
+高手就在<strong>同一 hue 内</strong>玩这点点冷暖差,做出微妙的层次。所以判断冷暖永远是<strong>「比出来的」</strong>——A 比 B 暖,而不是 A 绝对暖。下面练这个判断。
+</p>
+
+<h2>动手 ①:哪个更暖?</h2>
+<p>每组两个相近的颜色,<strong>点你认为更暖的那一块</strong>,立刻给反馈。冷暖是相对的——别找「绝对暖色」,找<strong>这一对里更靠橙红一侧</strong>的那个。</p>
+
+<div class="warm-lab">
+  <p class="warm-q">第 1 组 · 两块红,哪块更暖?</p>
+  <div class="warm-pair">
+    <div class="warm-cell" id="w1L"><span>A</span></div>
+    <div class="warm-cell" id="w1R"><span>B</span></div>
+  </div>
+  <div class="warmth-fb" id="w1fb"></div>
+</div>
+
+<div class="warm-lab">
+  <p class="warm-q">第 2 组 · 两块蓝,哪块更暖?</p>
+  <div class="warm-pair">
+    <div class="warm-cell" id="w2L"><span>A</span></div>
+    <div class="warm-cell" id="w2R"><span>B</span></div>
+  </div>
+  <div class="warmth-fb" id="w2fb"></div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">练到的手感</span>
+  两块都「是红」或都「是蓝」,你依然分得出谁更暖——因为冷暖藏在 hue 的<strong>偏向</strong>里。这种「同 hue 内的冷暖微差」,正是让特效从「平」变「有层次」的高级杠杆。
+</div>
+
+<h2>动手 ②:冷暖造空间</h2>
+<p>
+最有用的物理直觉:<strong>暖色前进(往眼睛凑),冷色后退(往远处退)。</strong> 所以<strong>主体暖、背景冷</strong>,纵深一下就拉开了;焦点用冷暖反差,比单纯加亮更省。点按钮把暖主体也「冷化」成全平——看纵深怎么塌下去。
+</p>
+
+<div class="depth-scene" id="depthScene">
+  <div class="layer depth-bg"></div>
+  <div class="layer depth-mid"></div>
+  <div class="layer depth-hero"></div>
+</div>
+<p class="depth-cap">暖核 + 冷环境:主体往前跳、背景往后退,有纵深。切「全平」后主体变冷,塌成一片。</p>
+
+<div class="toggle-row">
+  <button id="depthBtn" class="btn" data-on="↩ 回到 暖前冷后" data-off="◐ 切成全平(主体冷化)">◐ 切成全平(主体冷化)</button>
+  <span class="scene-caption" style="margin:0;">← 来回点,看纵深出现 / 消失</span>
+</div>
+
+<h2>冷暖造情绪与「属性感」</h2>
+<p>
+特效的「属性感」很大一部分来自冷暖,这是观众的本能联想:
+</p>
+<div class="attr-grid">
+  <div class="attr-box attr-warm"><strong>暖</strong> · 能量、危险、火、爆炸、阳光、愤怒、生命</div>
+  <div class="attr-box attr-cool"><strong>冷</strong> · 魔法、冰、水、科技、夜、毒、死亡、平静</div>
+</div>
+<p>
+所以一个火球必须暖、一道冰枪必须冷,这是直觉。但更进一步:<strong>在一个特效内部加冷暖反差,层次立刻出来。</strong>
+</p>
+
+<h2>接回 Niagara</h2>
+<ul>
+  <li><strong>火暖、冰冷是入门;高手在一个特效里加冷暖反差。</strong> 暖核 + 冷烟、冷光剑身 + 暖火星、暖爆心 + 冷冲击波——同一效果里冷暖并存,层次和体积感远胜单一冷暖。</li>
+  <li><strong>背景冷、技能暖,让技能跳出来。</strong> 回扣焦点:游戏场景多偏冷(夜、洞穴、科技蓝),给主动技能一点暖,它自然前进、抓眼。反之亦然——冷场里别再做一个同样冷的技能。</li>
+  <li><strong>冷暖能替代一部分明度对比做焦点。</strong> 当明度不方便再拉(已经很亮 / 受 HDR 限制),用冷暖反差继续制造焦点,是省下来的第二条对比通道。</li>
+  <li>调 <code>Color</code> 时,除了想 hue/sat/value,再多问一句:「这块在这一坨里是偏暖还是偏冷?要不要给它一点相反的冷暖?」</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>只按 hue 想颜色,不按冷暖想。</strong> 「换成蓝」太粗;「换成偏青还是偏紫的蓝」才是控制层次的精度。</li>
+  <li><strong>特效内部冷暖单一。</strong> 整团一个冷暖,效果「平」、没体积。给核心 / 边缘 / 烟做一点冷暖分工。</li>
+  <li><strong>忽略冷暖能做焦点。</strong> 焦点不只靠加亮加饱和,冷暖反差是第三条路,且常更省、更高级。</li>
+  <li><strong>把主体和背景做成同一冷暖。</strong> 冷场配冷技能、暖场配暖技能,主体退到背景里,纵深和焦点都丢了。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz11"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light》— James Gurney</a>
+  —— 关于 <strong>temperature(冷暖)</strong> 讲得最实用的一本:冷暖如何随光变化、如何用暖前冷后造空间与大气、为什么冷暖是相对的。本课的「暖前进冷后退」就出自这套观察。<br>
+  想补冷暖在色彩体系里的位置:<a href="https://www.goodreads.com/book/show/8384010" target="_blank">Itten《The Art of Color》</a>(七种对比里的「冷暖对比」)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我拿你一个特效,标出哪儿该暖、哪儿该冷来加层次?或者想搞清楚「同一 hue 里怎么调出偏暖 / 偏冷版」「冷暖反差和明度对比怎么配合做焦点」?直接在对话里问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>饱和度作为工具</strong>——饱和不是越高越好。学会用低饱和大面积衬托、高饱和小面积点睛,让画面既不脏也不吵。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/color-tools.js"></script>
+<script>
+// 第 1 组:两块红 —— 偏橙红(更暖)vs 偏紫红(更冷)
+wireWarmthSort({ leftId: "w1L", rightId: "w1R", fbId: "w1fb",
+  hexA: "#e0451f", hueA: 12, hexB: "#d12b66", hueB: 338 });
+// 第 2 组:两块蓝 —— 偏青蓝(相对暖)vs 偏紫蓝(相对冷)
+wireWarmthSort({ leftId: "w2L", rightId: "w2R", fbId: "w2fb",
+  hexA: "#2f86c0", hueA: 202, hexB: "#3f4fc0", hueB: 232 });
+wireDepthToggle("depthBtn", "depthScene");
+renderQuiz("quiz11", [
+  {
+    q: "下面哪一组都属于「暖色」?",
+    options: ["红、橙、黄", "蓝、青、紫", "青、蓝、绿"],
+    correct: 0,
+    why: "暖=红橙黄(火 / 阳光 / 能量);冷=蓝青紫(冰 / 水 / 魔法);绿与紫居中可偏。"
+  },
+  {
+    q: "关于冷暖,下面哪句最准确?",
+    options: ["冷暖是相对的,同一 hue 也分偏暖偏冷", "每个 hue 的冷暖是固定不变的", "只有红和蓝才谈得上冷暖"],
+    correct: 0,
+    why: "冷暖是比出来的:同一个红有偏橙的暖版和偏紫的冷版。高手在同一 hue 内玩冷暖造层次。"
+  },
+  {
+    q: "想用冷暖给特效拉开纵深,正确做法是?",
+    options: ["主体暖、背景冷", "主体冷、背景暖", "主体背景同一冷暖"],
+    correct: 0,
+    why: "暖色前进、冷色后退。主体暖 + 背景冷,主体往前跳、背景往后退,纵深就拉开了。"
+  },
+  {
+    q: "一个偏冷蓝的场景里,想让主动技能跳出来,最省的做法?",
+    options: ["给技能加一点暖", "把技能也做成冷蓝", "只把技能整体调暗"],
+    correct: 0,
+    why: "背景冷、技能暖,暖色前进自然抓眼。冷场再配冷技能会退进背景里。"
+  },
+  {
+    q: "玩家看到一个特效就觉得是「火 / 能量」,主要因为它?",
+    options: ["是暖色调", "粒子数量多", "明度很高"],
+    correct: 0,
+    why: "特效的「属性感」很大来自冷暖联想:暖=火 / 能量 / 危险,冷=冰 / 魔法 / 科技。"
+  },
+  {
+    q: "一个特效整团只用单一冷暖,常见的问题是?",
+    options: ["显得平、没层次体积", "可读性自动变差", "渲染开销明显变大"],
+    correct: 0,
+    why: "内部缺冷暖反差就「平」。给核心 / 烟 / 边缘做冷暖分工(暖核冷烟等),层次与体积感立刻出来。"
+  }
+]);
+</script>
+
+</body>
+</html>

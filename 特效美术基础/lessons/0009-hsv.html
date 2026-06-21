@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 9 课 · 色彩三要素 HSV:把一个颜色拆成三个旋钮</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .hsv-lab { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .hsv-dials { display: grid; grid-template-columns: auto 1fr auto; gap: 0.55rem 0.8rem; align-items: center; }
+  .hsv-dials label { font-weight: 600; font-size: 0.95rem; }
+  .hsv-dials input[type=range] { width: 100%; }
+  .hsv-dials .readout { font-family: "SF Mono","Cascadia Code",Consolas,monospace; font-size: 0.85rem; color: var(--muted); min-width: 3.2em; text-align: right; }
+  .hsv-preview { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin-top: 1.1rem; }
+  .hsv-preview .cell { text-align: center; }
+  .hsv-block { width: 100%; aspect-ratio: 16/10; border-radius: 7px; border: 1px solid var(--rule); }
+  .hsv-tag { font-size: 0.8rem; color: var(--muted); margin: 0.35rem 0 0; }
+  .hsv-num { font-family: "SF Mono","Cascadia Code",Consolas,monospace; }
+  .lum-big { font-size: 1.5rem; font-weight: 600; color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 9 课</div>
+<h1>色彩三要素 HSV:把一个颜色拆成三个旋钮</h1>
+<p class="subtitle">老手看颜色不是看「这是什么色」,而是同时拧三个旋钮——色相、饱和度、明度。而其中,<strong>明度仍然为王</strong>。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能把任何一个颜色在脑里拆成 <strong>Hue(色相)+ Saturation(饱和度)+ Value(明度)</strong> 三个独立旋钮,并且明白:改 hue / sat <strong>不改可读性</strong>,只有改 value 才改——所以「看不清」永远先动 value,不是动 saturation。
+</div>
+
+<h2>三个独立的旋钮</h2>
+<p>第 1 课我们只盯住 value。现在补齐另外两个。任何一块颜色都能拆成三件互不相干的事:</p>
+<ul>
+  <li><strong>Hue 色相</strong>——它是「什么颜色」:红、橙、黄、绿、青、蓝、紫。在色环上转一圈,用角度 0–360° 表示。</li>
+  <li><strong>Saturation 饱和度</strong>——它有多「纯 / 鲜」:从灰扑扑(0)到最浓最艳(100%)。降饱和就是往里掺灰。</li>
+  <li><strong>Value 明度</strong>——它有多「亮 / 暗」:从纯黑(0)到最亮(100%)。这就是第 1 课那条黑白灰。</li>
+</ul>
+<p>
+关键是<strong>「分别看」</strong>:看到一块颜色,不要笼统说「偏暗的脏蓝」,而要拆成「hue 蓝偏青、sat 中、value 低」。能分别拧这三个旋钮,是色彩这一整个模块的核心功——后面讲配色、冷暖、饱和度作工具,全建立在这上面。
+</p>
+
+<h2>为什么明度仍然为王</h2>
+<p>
+三个旋钮地位不平等。<strong>判断一张图,永远先看 value。</strong> 因为眼睛分辨形体、读出「谁在前、谁是焦点、边界在哪」,靠的是<strong>明度差</strong>(第 1 课定律)。hue 和 sat 负责「好不好看、什么情绪、什么属性」,但它们<strong>不负责读不读得清</strong>。
+</p>
+<div class="callout callout-key">
+  <span class="label">分工</span>
+  <strong>Value 管「读得清」</strong>(结构、可读性、焦点);<strong>Hue + Saturation 管「好看 / 情绪 / 属性」</strong>(美感、冷暖、能量感)。两件事别混。一个特效可以色彩很美却读不清,也可以颜色很素却读得清——决定后者的永远是 value。
+</div>
+
+<h2>动手:三个旋钮 + 去色证明</h2>
+<p>
+下面是真·三旋钮。拖 <strong>H / S / V</strong>,左边是颜色,右边是它的<strong>去色(灰度)预览</strong>——右边那块灰的深浅,就是这个颜色的真实 value(用第 1 课的 <code>relativeLuminance()</code> 算出来,显示成 0–100 的数字)。
+</p>
+<p>
+现在做个实验:把 <strong>V 固定不动</strong>,只<strong>猛拉 S</strong> 从 0 到 100。看右边的灰度块和那个 value 数字——<strong>几乎不动</strong>。这就证明了:<em>饱和度救不了可读性</em>。再反过来只拉 V,看灰度块立刻跟着亮 / 暗。
+</p>
+
+<div class="hsv-lab">
+  <div class="hsv-dials">
+    <label for="dialH">Hue 色相</label>
+    <input type="range" id="dialH" min="0" max="360" value="32">
+    <span class="readout" id="outH">32°</span>
+
+    <label for="dialS">Sat 饱和</label>
+    <input type="range" id="dialS" min="0" max="100" value="90">
+    <span class="readout" id="outS">90%</span>
+
+    <label for="dialV">Value 明度</label>
+    <input type="range" id="dialV" min="0" max="100" value="100">
+    <span class="readout" id="outV">100%</span>
+  </div>
+
+  <div class="hsv-preview">
+    <div class="cell">
+      <div class="hsv-block" id="hsvSwatch"></div>
+      <p class="hsv-tag">彩色 · <span class="hsv-num" id="outHex">#ffffff</span></p>
+    </div>
+    <div class="cell">
+      <div class="hsv-block" id="hsvGray"></div>
+      <p class="hsv-tag">去色看 value · <span class="lum-big" id="outLum">100</span>/100</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">你应该看到</span>
+  拉 S 时右边灰度块和 value 数字几乎纹丝不动——颜色从灰到艳,<strong>明度结构没变,可读性没变</strong>。只有拉 V 时灰度块才真的变深变浅。记住这个手感:下次想让特效更跳,先问「我该动哪个旋钮」。
+</div>
+
+<h2>高饱和 ≠ 亮:新人最常踩的混淆</h2>
+<p>
+这是第 1 课易错点的根:很多人把「不够亮」误诊成「不够饱和」,于是猛加 saturation——结果颜色更艳了,却<strong>还是看不清</strong>。因为饱和和明度是两个旋钮,加错了旋钮当然没用。
+</p>
+<p>
+更反直觉的是:<strong>纯色的固有明度天差地别</strong>。同样拉到 100% 饱和、100% value,<strong>纯黄</strong>本身就很亮(value 高),而<strong>纯蓝</strong>本身就很暗(value 低)。你可以在上面那个 demo 里验证:把 S 和 V 都拉满,只转 H——右边灰度块会跟着 hue 一起变深变浅,黄那一段最亮,蓝紫那一段最暗。
+</p>
+<div class="callout callout-key">
+  <span class="label">一句话</span>
+  「这块纯蓝很饱和」和「这块纯蓝很暗」<strong>同时成立、毫不矛盾</strong>。饱和说的是纯不纯,明度说的是亮不亮。把纯色当亮色用(比如指望纯蓝核心很显眼),会翻车。
+</div>
+
+<h2>Chroma 与色彩的「视觉重量」</h2>
+<p>
+Munsell 色彩系统把三要素叫 <strong>hue / value / chroma</strong>(chroma 近似饱和度,指色彩的「纯度 / 强度」)。高 chroma 的纯色有<strong>视觉重量</strong>——它会「喊」,会抢注意力。
+</p>
+<p>
+所以纯色不能乱铺:<strong>满屏都是高饱和纯色,它们会互相打架</strong>,谁都想当主角,结果谁都不突出,画面又吵又累。高手的做法是<strong>大面积压低饱和、把高 chroma 留给小面积的关键点</strong>——这正是后面 0012(饱和度作工具)、0013(主色+点缀)要展开的。这里先建立直觉:<em>纯色是稀缺资源,不是默认值</em>。
+</p>
+
+<h2>接回 Niagara</h2>
+<p>
+Niagara 里 <code>Color</code> 是 <strong>RGB(线性)</strong>,但你应该<strong>在脑里换成 HSV 三旋钮来调</strong>,而不是瞎拖 RGB 滑块。具体:
+</p>
+<ul>
+  <li><strong>HDR 强度 / Emissive 主要动的是 value。</strong> 把颜色的 RGB 整体乘以一个 &gt;1 的强度,本质是抬 value(同时多少抬一点视觉饱和的「发光感」),所以「想更读得清」第一杠杆永远是它,不是 saturation。</li>
+  <li><strong>想换情绪 / 属性但保持读感,动 hue。</strong> 火从橙改成蓝白(冰火),只要 value 不变,可读性就不变——这是 hue / value 分工的实用价值。</li>
+  <li><strong>想更「实 / 厚」或更「梦幻 / 淡」,动 saturation</strong>,但记住它不改可读性。别再用加饱和来救「看不清」。</li>
+  <li>调色时养成习惯:先定 value(读得清),再定 hue(什么属性),最后用 saturation 微调质感。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>用饱和度救可读性。</strong> 「看不清 → 加饱和」是错诊。饱和度不进入明度结构,加再多也跳不出背景。先动 value。</li>
+  <li><strong>把纯色当亮色用。</strong> 指望一个 100% 饱和的纯蓝 / 纯紫核心很显眼——它很「艳」但很「暗」,在亮背景前照样溶掉。</li>
+  <li><strong>不分别看,只说「这是个脏紫」。</strong> 拆不出 hue/sat/value,就没法精确地改;说得清三个旋钮各在哪,才改得准。</li>
+  <li><strong>到处堆高 chroma 纯色。</strong> 纯色互相打架,画面吵且没焦点。纯色留给小面积关键处。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz9"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light》— James Gurney</a>
+  —— 现代讲光与色最被引用的一本,书中借 <strong>Munsell</strong> 系统讲 hue / value / chroma 三要素与「色相固有明度」(为什么纯黄亮、纯蓝暗),正是本课的根。<br>
+  想要短视频补「色彩基本功」:<a href="https://www.ctrlpaint.com/library" target="_blank">Ctrl+Paint 免费基础库</a>(找 color / value 几节,各约 5 分钟)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我拿你某个特效的 <code>Color</code> 值,当场拆成 hue/sat/value 三旋钮讲一遍?或者想搞清楚「线性 vs sRGB 对 value 的影响」「HDR 强度到底动了哪个旋钮」?直接在对话里问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>色相环与配色关系</strong>——互补、邻近、三角……和谐不是堆色,而是「有序的关系 + 克制的色数」。我们会做一个能点的色环。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/value-tools.js"></script>
+<script src="../assets/color-tools.js"></script>
+<script>
+wireHsvDials({
+  hId: "dialH", sId: "dialS", vId: "dialV",
+  swatchId: "hsvSwatch", grayId: "hsvGray",
+  hOutId: "outH", sOutId: "outS", vOutId: "outV",
+  lumOutId: "outLum", hexOutId: "outHex"
+});
+renderQuiz("quiz9", [
+  {
+    q: "一个颜色拆成的三个独立旋钮,分别是?",
+    options: ["色相、饱和度、明度", "红色、绿色、蓝色通道", "亮度、对比、锐度"],
+    correct: 0,
+    why: "HSV 三要素:Hue 色相(什么色)、Saturation 饱和(纯不纯)、Value 明度(亮不亮),互相独立。"
+  },
+  {
+    q: "判断一张特效图「读不读得清」,最先该看哪个旋钮?",
+    options: ["Value 明度旋钮", "Saturation 饱和旋钮", "Hue 色相旋钮"],
+    correct: 0,
+    why: "眼睛靠明度差分辨形体。value 管可读性;hue 与 sat 只管美感与情绪,不进入可读性。"
+  },
+  {
+    q: "猛拉一个颜色的 Saturation 而 Value 不动,它的去色灰度会?",
+    options: ["几乎不变,可读性不变", "明显变亮,更跳出来", "明显变暗,溶进背景"],
+    correct: 0,
+    why: "饱和度不进入明度结构。只拉 S、不动 V,灰度几乎纹丝不动——所以饱和度救不了可读性。"
+  },
+  {
+    q: "关于一块 100% 饱和的纯蓝,下面哪句对?",
+    options: ["很饱和,但本身偏暗", "很饱和,所以一定亮", "很暗,所以一定不饱和"],
+    correct: 0,
+    why: "饱和与明度是两个旋钮。纯蓝固有明度低,「很饱和」与「很暗」同时成立、毫不矛盾。"
+  },
+  {
+    q: "美术总监说技能「在战斗里看不清」,第一杠杆应当是?",
+    options: ["抬高核心的 value / 强度", "把颜色调得更饱和些", "把色相换成更鲜的色"],
+    correct: 0,
+    why: "可读性=明度差。先抬 value(HDR 强度 / 更亮核心)拉开与背景的差,加饱和或换色都不解决。"
+  },
+  {
+    q: "为什么大面积铺满高饱和纯色通常是坏主意?",
+    options: ["纯色视觉重量大、会互相打架", "纯色会自动降低画面明度", "纯色让引擎渲染明显变慢"],
+    correct: 0,
+    why: "高 chroma 纯色有视觉重量、都在「喊」,满屏纯色互相争夺注意力,画面吵且无焦点。纯色应留给小面积关键处。"
+  }
+]);
+</script>
+
+</body>
+</html>

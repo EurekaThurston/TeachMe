@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 课 · 明度的时间维度:冲击力来自峰值</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  /* 课内独有样式:时间轴 scrubber 演示。不改 styles.css。 */
+  .tl-wrap { border: 1px solid var(--rule); border-radius: 8px; padding: 1rem; background: var(--panel); margin: 1.2rem 0; }
+  .tl-stage { position: relative; width: 100%; aspect-ratio: 16/9; border-radius: 6px; overflow: hidden;
+    background: radial-gradient(circle at 50% 55%, #20242d 0%, #14161d 100%); border: 1px solid var(--rule); }
+  .tl-orb { position: absolute; left: 50%; top: 50%; width: 30%; aspect-ratio: 1;
+    transform: translate(-50%,-50%); border-radius: 50%;
+    background: radial-gradient(circle, #fffdf0 0%, #ffd24a 42%, rgba(255,150,40,0) 74%); }
+  .tl-graph { display: flex; gap: 1rem; align-items: flex-start; margin-top: 1rem; flex-wrap: wrap; }
+  .tl-graph svg { background: #fbfaf6; border: 1px solid var(--rule); border-radius: 6px; width: 320px; max-width: 100%; height: auto; }
+  .tl-controls { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.9rem; flex-wrap: wrap; }
+  .tl-controls input[type=range] { flex: 1; min-width: 160px; }
+  .tl-controls .val { font-family: "SF Mono", Consolas, monospace; font-size: 0.9rem; background: #f1ede4; padding: 0.1em 0.5em; border-radius: 3px; min-width: 2.6em; text-align: center; }
+  .tl-label { font-size: 0.86rem; color: var(--muted); }
+  .tl-mini { font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 4 课</div>
+<h1>明度的时间维度:冲击力来自峰值</h1>
+<p class="subtitle">特效是动画。它的明度随生命周期变化——而<strong>冲击力</strong>,来自那条曲线在命中瞬间的<strong>又亮又短的峰值</strong>。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能把一个特效的<strong>明度想成一条时间曲线(value-over-life)</strong>,并知道冲击力来自<strong>快起慢落(snap)</strong>:在命中瞬间冲到又亮又短的<strong>峰值</strong>,再衰减。整条曲线拉满 = 没有峰值 = 没有冲击。
+</div>
+
+<h2>特效有生命周期</h2>
+<p>前三课都在看「静止一帧」。但特效是<strong>动画</strong>,它有一条时间线,借的是经典动画原理:</p>
+<ul>
+  <li><strong>anticipation 蓄力</strong> —— 爆发前的预兆:微微聚光、收缩、压暗。给眼睛一个「要来了」的提示。</li>
+  <li><strong>impact / peak 爆发峰值</strong> —— 命中那一下,明度冲到最高、反差最强。这是整个特效的<strong>高潮帧</strong>。</li>
+  <li><strong>dissipation 消散</strong> —— 峰值后衰减:变暗、扩散、淡出。</li>
+</ul>
+<p>配合 <strong>timing(节奏)</strong>、<strong>anticipation(预备)</strong>、<strong>ease(缓动)</strong> 这些动画原理,一个特效才有「劲」,而不是平平地亮起又灭掉。</p>
+
+<h2>明度时间曲线:峰值就是冲击力</h2>
+<p>把特效的<strong>明度(value)</strong>沿生命周期 0→1 画出来,就是一条曲线。冲击力几乎全压在这条曲线的形状上:</p>
+<ul>
+  <li><strong>峰值帧 value 最高、对比最强</strong> = 冲击力来源。那一瞬最亮、与背景反差最大,玩家就「感到一下」。</li>
+  <li><strong>attack 要快</strong>:几帧内冲到峰值,越快越「脆」。</li>
+  <li><strong>decay 可慢</strong>:峰值后衰减可以拖长一点,余韵。</li>
+  <li>这条「<strong>快起慢落</strong>」就是所谓的 <strong>snap</strong>——干脆、有打击感。</li>
+</ul>
+
+<div class="callout callout-key">
+  <span class="label">海报帧 hero frame</span>
+  特效<strong>每一帧都该读得清</strong>(回头看第 2、3 课:每帧都有可读的剪影和明度层次)。但其中<strong>峰值帧是「海报帧」</strong>——如果只能定格一张拿去当海报,就是它:最亮、反差最大、信息最全。设计特效时,先想清楚你的海报帧长什么样。
+</div>
+
+<h2>节奏与留白:让峰值凸显</h2>
+<p>
+冲击力是<strong>相对</strong>的。如果画面<strong>持续高亮、毫无间隙</strong>,眼睛会疲劳,而且没有暗作对照,峰值再亮也凸显不出来——一切都糊在亮里。所以要有<strong>亮—暗的节奏</strong>:峰值前后留出较暗的段落,让那一下 impact 从暗里炸出来,才有反差、才有「打击」。
+</p>
+
+<h2>动手:拖动生命周期,感受峰值</h2>
+<p>
+滑块代表特效的生命 <strong>0 → 1</strong>。拖动它,中间的光球会按<strong>快起慢落</strong>曲线改变亮度和大小;右边 SVG 画出这条 value 曲线,蓝线是<strong>当前时刻(playhead)</strong>。
+注意:曲线<strong>很快</strong>冲到顶(attack 短),然后<strong>慢慢</strong>落下(decay 长)。点<strong>播放</strong>自动跑一遍,体会那一下「snap」。
+</p>
+
+<div class="tl-wrap">
+  <div class="tl-stage">
+    <div class="tl-orb" id="tlOrb"></div>
+  </div>
+  <div class="tl-graph">
+    <svg id="tlSvg" viewBox="0 0 320 120" aria-label="明度随生命周期变化的曲线"></svg>
+    <div>
+      <p class="tl-mini" style="margin:.2rem 0;"><strong>横轴</strong>:生命 0→1</p>
+      <p class="tl-mini" style="margin:.2rem 0;"><strong>纵轴</strong>:明度 value</p>
+      <p class="tl-mini" style="margin:.2rem 0;">橙线 = value 曲线</p>
+      <p class="tl-mini" style="margin:.2rem 0;">蓝线 = 当前时刻</p>
+      <p class="tl-mini" style="margin:.5rem 0 0;">当前 value:<span class="val" id="tlReadout">0</span> / 100</p>
+    </div>
+  </div>
+  <div class="tl-controls">
+    <button id="tlPlay" class="btn">▶ 播放一遍</button>
+    <span class="tl-label">生命</span>
+    <input type="range" id="tlSlider" min="0" max="100" step="1" value="12">
+    <span class="val" id="tlVal">0.12</span>
+  </div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">应该感到什么</span>
+  从 0 拖向峰值时,光球<strong>很快</strong>窜到白热、最大——这是 attack。过峰值后<strong>慢慢</strong>暗下、淡出——这是 decay。这条「快起慢落」让人读到一个明确的<strong>命中瞬间</strong>。试想把曲线改成一条匀速上升的<strong>直线</strong>:没有那个尖,就没有「一下」的打击感——这正是下面要讲的误区。
+</div>
+
+<h2>接回 Niagara</h2>
+<p>这条 value-over-life 曲线,在 Niagara 里就是各种 <strong>curve-over-life</strong>:</p>
+<ul>
+  <li><strong>Emissive / Scale / Color 用 curve 做「快起慢落」。</strong> 让 emissive 强度、缩放在头几帧冲到顶,再缓缓回落——而不是线性渐变。</li>
+  <li><strong>Color curve 的 intensity 控 value 峰值。</strong> 颜色曲线里那个 HDR 强度峰,就是你这一帧的明度最高点。</li>
+  <li><strong>别整条曲线拉满。</strong> 如果 emissive 从头到尾都顶在最高,就<strong>没有峰值</strong>——全程一样亮 = 没有冲击。要让它有起伏。</li>
+  <li><strong>次要元素错峰出现。</strong> 拖尾、二次爆、环境光别和主峰<strong>同时</strong>抢亮;让它们稍微<strong>晚一点、低一点</strong>出现,主峰那一下才独占焦点。</li>
+  <li>呼应第 3 课:峰值帧那一刻,也要是全画面<strong>最大明度反差</strong>所在。</li>
+</ul>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>线性渐变,没有 snap。</strong> emissive / scale 用一条匀速直线起落,缺那个尖锐的峰——看着「软」、没打击感。要 attack 快、decay 慢。</li>
+  <li><strong>峰值不够亮、不够短。</strong> 峰值若不比周围明显高出一截,或亮得太久,就读不出「命中那一下」。峰要<strong>高</strong>且<strong>短</strong>。</li>
+  <li><strong>decay 拖太长。</strong> 余韵过头,亮光迟迟不散,后面的攻击又叠上来,画面糊成持续的一片亮,峰值彼此吃掉。</li>
+  <li><strong>全程高亮无留白。</strong> 没有暗的间隙作对照,峰值凸显不出来,眼睛也累。要有亮—暗节奏。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz4"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=-L2JvngkkWw" target="_blank">GDC · Visual Effects Bootcamp: Artistic Principles of VFX</a>
+  —— 暴雪/Riot 一线讲座,其中 <strong>timing</strong> 段落把动画的节奏、anticipation、峰值落到特效制作。本课的「明度时间曲线 / snap」正对应这一段。<br>
+  想补动画节奏与缓动的基本功:<a href="https://www.ctrlpaint.com/library" target="_blank">Ctrl+Paint 免费基础库</a>。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——想让我把某个具体特效(命中、爆炸、buff)的 value 曲线拆给你看、想要 Niagara 里 curve-over-life 的具体调法、或者想搞清「时间峰值」怎么和前三课的剪影/明度层次合起来用,直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>模块 A(明度)到此告一段落。下一课预告:<strong>光从哪来:方向、衰减、自发光</strong>——进入模块 B(光影)。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/vx-tools.js"></script>
+<script>
+// 联动 slider 数值显示(秒表小数)
+(function () {
+  const slider = document.getElementById("tlSlider");
+  const val = document.getElementById("tlVal");
+  function show() { val.textContent = (parseInt(slider.value, 10) / 100).toFixed(2); }
+  slider.addEventListener("input", show);
+  // 播放时 slider.value 被脚本改写,这里也跟着刷新
+  const obs = setInterval(show, 60);
+  show();
+})();
+
+wireValueTimeline({
+  sliderId: "tlSlider",
+  orbId: "tlOrb",
+  svgId: "tlSvg",
+  playBtnId: "tlPlay",
+  readoutId: "tlReadout",
+  attack: 0.12,
+  decay: 2.4,
+  durationMs: 2600
+});
+
+renderQuiz("quiz4", [
+  {
+    q: "一个特效的「冲击力」主要来自它的明度时间曲线的哪个特征?",
+    options: ["又亮又短的峰值", "整条曲线都拉满", "一条匀速的直线"],
+    correct: 0,
+    why: "冲击力来自命中瞬间又亮又短的峰值:那一帧 value 最高、反差最强,玩家才感到「一下」。"
+  },
+  {
+    q: "所谓「snap(快起慢落)」描述的是?",
+    options: ["attack 快、decay 慢", "attack 慢、decay 快", "attack 与 decay 一样"],
+    correct: 0,
+    why: "snap = 几帧内冲到峰值(attack 快),峰后再缓缓衰减(decay 慢),干脆有打击感。"
+  },
+  {
+    q: "特效生命周期的三段,顺序是?",
+    options: ["蓄力 → 峰值 → 消散", "峰值 → 蓄力 → 消散", "消散 → 峰值 → 蓄力"],
+    correct: 0,
+    why: "anticipation 蓄力 → impact 峰值爆发 → dissipation 消散。借动画原理给特效以节奏。"
+  },
+  {
+    q: "如果把 Niagara 里 emissive 强度整条曲线从头到尾拉满,会?",
+    options: ["没有峰值、失去冲击", "峰值更亮更突出", "decay 自动变得更慢"],
+    correct: 0,
+    why: "全程一样亮就没有峰值,也就没有「命中那一下」的对比;曲线要有起伏才有冲击。"
+  },
+  {
+    q: "为了让峰值那一下更凸显,画面节奏上应当?",
+    options: ["留出亮暗节奏与较暗间隙", "保持全程持续高亮", "把每一帧都加到最亮"],
+    correct: 0,
+    why: "冲击是相对的:有较暗的段落作对照,峰值才从暗里炸出来。全程高亮会疲劳且抹平峰值。"
+  },
+  {
+    q: "多个特效先后出现时,次要元素(拖尾、二次爆)该怎样安排时间?",
+    options: ["错峰、稍晚稍低出现", "和主峰同时一起最亮", "全部提前到主峰之前"],
+    correct: 0,
+    why: "让次要元素错峰、晚一点低一点出现,主峰那一下才独占焦点,避免同时抢亮把峰值吃掉。"
+  }
+]);
+</script>
+
+</body>
+</html>

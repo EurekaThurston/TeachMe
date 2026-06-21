@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 课 · 形体的受光语言</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .ls-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; box-shadow: 0 1px 3px var(--shadow); }
+  .form-wrap { display: grid; grid-template-columns: 260px 1fr; gap: 1.1rem; align-items: center; }
+  @media (max-width: 560px){ .form-wrap { grid-template-columns: 1fr; } }
+  .form-svg { width: 100%; height: auto; background: radial-gradient(circle at 50% 120%, #2a2d36, #15171c); border-radius: 8px; }
+  .zone { cursor: pointer; transition: opacity 0.15s; }
+  .zone:focus { outline: none; }
+  .zone-active { stroke: #ffd24a; stroke-width: 2.2; }
+  .form-info { min-height: 5.5rem; }
+  .form-info h4 { margin: 0 0 0.3rem; color: var(--accent); font-size: 1.05rem; }
+  .form-info p { margin: 0; font-size: 0.95rem; }
+  .form-hint { font-size: 0.82rem; color: var(--muted); margin-top: 0.4rem; }
+  .ls-readout { font-family: "SF Mono", Consolas, monospace; font-size: 0.95rem; }
+  .ls-readout b { color: var(--accent); }
+  .ls-slider { width: 100%; }
+  .ls-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: center; margin: 0.6rem 0; }
+  @media (max-width: 540px){ .ls-row { grid-template-columns: 1fr; } }
+  .ls-stage { position: relative; width: 100%; height: 180px; border-radius: 8px; overflow: hidden; background: radial-gradient(circle at 50% 120%, #2a2d36, #15171c); display:flex; align-items:center; justify-content:center; }
+  .ls-blob { width: 120px; height: 120px; border-radius: 50%; }
+  .ls-label { font-size: 0.85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">特效美术基础 for VFX · 第 6 课</div>
+<h1>形体的受光语言</h1>
+<p class="subtitle">同一个球,为什么你一眼就知道它是圆的?因为光在它表面铺出了一套固定的"分区"。读懂这套语言,你就能让烟、云、流体真正有体积。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能在一个受光形体上认出并命名各个受光分区——尤其是<strong>明暗交界线 terminator</strong>(体积感的关键)——并知道<strong>核心阴影不是死黑</strong>,里面还藏着<strong>反光 reflected light</strong>。
+</div>
+
+<h2>一、球体受光分区:逐个认</h2>
+<p>
+把光打在一个球上,从最亮到最暗,会依次出现这几块。<strong>把鼠标移到下图(或点/键盘聚焦)每个区域</strong>,右侧会显示它的名字和作用:
+</p>
+
+<div class="ls-panel">
+  <div class="form-wrap">
+    <svg id="formSvg" class="form-svg" viewBox="0 0 200 200" role="img" aria-label="受光球体分区图">
+      <defs>
+        <radialGradient id="sphereGrad" cx="38%" cy="32%" r="75%">
+          <stop offset="0%" stop-color="#fdfcf6"/>
+          <stop offset="12%" stop-color="#e7e0d0"/>
+          <stop offset="34%" stop-color="#b3ac9e"/>
+          <stop offset="55%" stop-color="#6f6a61"/>
+          <stop offset="72%" stop-color="#3a3733"/>
+          <stop offset="86%" stop-color="#211f1d"/>
+          <stop offset="100%" stop-color="#2c2925"/>
+        </radialGradient>
+        <radialGradient id="castGrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="rgba(0,0,0,0.55)"/>
+          <stop offset="70%" stop-color="rgba(0,0,0,0.3)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+        </radialGradient>
+      </defs>
+      <!-- cast shadow on ground -->
+      <ellipse class="zone" data-zone="cast" cx="120" cy="176" rx="56" ry="14" fill="url(#castGrad)"/>
+      <!-- occlusion / contact -->
+      <ellipse class="zone" data-zone="occlusion" cx="100" cy="168" rx="26" ry="7" fill="rgba(0,0,0,0.55)"/>
+      <!-- the sphere body -->
+      <circle cx="100" cy="92" r="74" fill="url(#sphereGrad)"/>
+      <!-- highlight -->
+      <ellipse class="zone" data-zone="highlight" cx="74" cy="62" rx="14" ry="11" fill="#ffffff" opacity="0.92"/>
+      <!-- center light -->
+      <circle class="zone" data-zone="center" cx="84" cy="74" r="20" fill="#eee7d6" opacity="0.0"/>
+      <!-- halftone -->
+      <circle class="zone" data-zone="halftone" cx="108" cy="96" r="20" fill="#b3ac9e" opacity="0.0"/>
+      <!-- terminator (the band) -->
+      <path class="zone" data-zone="terminator" d="M150 70 A74 74 0 0 1 96 165 L120 120 A40 40 0 0 0 138 86 Z" fill="#3a3733" opacity="0.0"/>
+      <!-- reflected light -->
+      <path class="zone" data-zone="reflected" d="M150 70 A74 74 0 0 1 150 150 A60 60 0 0 0 150 70 Z" fill="#4a5560" opacity="0.0"/>
+    </svg>
+    <div>
+      <div class="form-info">
+        <h4 id="zoneTitle">把鼠标移到球上</h4>
+        <p id="zoneBody">从高光到反光,逐块 hover 看每个分区的名字和作用。</p>
+      </div>
+      <p class="form-hint">提示:最该盯住的是<strong>明暗交界线 terminator</strong>——它是亮区和暗区的转折带,体积感主要由它撑起来。</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">两个最关键的点</span>
+  ① <strong>明暗交界线 terminator</strong> 是"球有体积"的证据——它越柔和、过渡越连续,球越圆。一团烟若没有 terminator,就读不出体积。<br>
+  ② <strong>核心阴影 core shadow 不是死黑</strong>。暗面里还有从地面/环境弹回来的<strong>反光 reflected light</strong>,把最暗处稍稍托起。死黑一团会让形体"塌"掉、失去厚度。
+</div>
+
+<h2>二、边缘 edges:硬边 vs 软边</h2>
+<p>
+形体的"质感"很大程度由<strong>边缘的软硬</strong>决定。<strong>硬边 hard edge</strong>=明暗转折很快(锐利、有棱角、像被切过);<strong>软边 soft edge</strong>=明暗渐变铺得很开(柔和、蓬松、像球面或雾)。
+拖动滑块,看同一个 blob 在硬↔软之间变:
+</p>
+
+<div class="ls-panel">
+  <div class="ls-stage">
+    <div class="ls-blob" id="edgeBlob"></div>
+  </div>
+  <div class="ls-row">
+    <div>
+      <label class="ls-label" for="edgeSlider">边缘:硬 ← → 软</label>
+      <input class="ls-slider" type="range" id="edgeSlider" min="0" max="100" value="20">
+    </div>
+    <div class="ls-readout"><b id="edgeLabel">硬边</b></div>
+  </div>
+</div>
+<p class="scene-caption">特效里软硬<strong>混用</strong>才高级:硬边给"锐利 / 能量 / 切割感",软边给"柔软 / 烟雾 / 体积"。全软=没形,全硬=假。</p>
+
+<h2>三、特效中的形体光</h2>
+<p>烟、云、流体这些"软"东西,照样靠上面这套分区被你读出体积。具体到特效:</p>
+<ul>
+  <li><strong>烟有明暗面</strong>:一团好烟,迎光面亮、背光面暗、中间有 terminator。均匀灰的烟=没体积。</li>
+  <li><strong>rim light / back light(边缘光 / 逆光)</strong>:给烟一圈亮边,把它从暗背景里"切"出来——这是让烟在暗场景里读得清的利器,回扣 0001 的明度分离。</li>
+  <li><strong>translucency(透光)</strong>:薄烟、薄云会透光,被光从背后打亮,呈半透明的暖芯——这让它"薄"得可信。</li>
+</ul>
+
+<h2>四、接回 Niagara</h2>
+<ul>
+  <li><strong>体积烟用六向光照(6-way lighting)</strong>:让烟的贴图从 6 个方向接收方向光,自动形成迎光/背光的明暗面和 terminator——这是 Niagara 里给烟"体积"的标准做法。</li>
+  <li><strong>rim 用 fresnel / back-lit</strong>:材质里用 Fresnel(菲涅尔,边缘增亮)或逆光项给烟一圈亮边,从暗背景分离。</li>
+  <li><strong>薄片用 subsurface(次表面/透光)</strong>:薄烟、薄火给一点透光感,模拟光穿过。</li>
+  <li><strong>别用均匀自发光团</strong>:把烟做成一团均匀 emissive,就<em>没有 terminator = 没有体积</em>。要让它受光。</li>
+</ul>
+
+<h2>五、常见误区</h2>
+<ul>
+  <li><strong>烟成均匀灰团</strong>:没有迎光/背光的明暗差,读不出体积,像一坨棉花贴片。</li>
+  <li><strong>全软边</strong>:整个特效都是糊的渐变,没有任何锐利转折 → 没"形"、没重点。</li>
+  <li><strong>全硬边</strong>:所有边都是刀切的硬转折 → 假、像剪纸,失去烟/流体该有的柔。</li>
+  <li><strong>核心阴影死黑</strong>:暗面一抹纯黑、没有反光 → 形体塌陷、没厚度。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz6"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.amazon.com/Color-Light-Realist-Painter-Gurney/dp/0740797719" target="_blank">《Color and Light》— James Gurney</a>
+  —— 受光形体的分区(highlight / terminator / reflected light / cast shadow)和"核心阴影不是死黑"在书里讲得最清楚,配大量写生图。<br>
+  想看短视频补 edges:<a href="https://www.ctrlpaint.com/library" target="_blank">Ctrl+Paint 免费基础库</a>(找 edges 一节,讲硬边/软边的取舍)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我拿你的一团烟/爆炸截图,圈出它的 terminator 在哪、哪里该加 rim、为什么读不出体积——把图发我。也可以问我"六向光照"在 Niagara 里到底怎么接收方向光。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>0007 辉光、HDR 与 additive</strong>——为什么能量核心是"白"的、HDR 值 >1 怎么触发 bloom、additive 叠加为什么在亮背景前会消失。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/light-tools.js"></script>
+<script>
+wireFormHotspots({
+  svgId: "formSvg",
+  infoTitleId: "zoneTitle",
+  infoBodyId: "zoneBody",
+  zones: {
+    highlight:   { name: "高光 highlight", body: "光源在表面最直接的反射点,最亮。它的形状/锐利度透露表面光不光滑——硬高光=光滑,柔高光=粗糙。" },
+    center:      { name: "亮面 center light", body: "正对光的大片明亮区域,是形体「固有色 + 光」最真实的一块,读固有色就看这里。" },
+    halftone:    { name: "灰面 halftone", body: "亮面向暗面过渡的中间调,光斜擦过表面。它承担大量塑形信息,是亮到暗的桥。" },
+    terminator:  { name: "明暗交界线 terminator", body: "亮区和暗区的转折带——体积感的关键。它越柔和连续,形体越圆;一团烟没有它就读不出体积。" },
+    reflected:   { name: "反光 reflected light", body: "暗面里从地面/环境弹回的微光,把核心阴影稍稍托起。有它,形体才有厚度——核心阴影不该死黑。" },
+    cast:        { name: "投影 cast shadow", body: "形体挡光,在别处投下的影子。靠近物体处实、边硬,远处虚、边软。它把物体「钉」在地面上。" },
+    occlusion:   { name: "接触阴影 occlusion", body: "物体与地面接触处那道最深、最窄的暗——环境光被挡住。它是「落地」最强的信号,缺了就像飘着。" }
+  }
+});
+wireEdgeHardness({ sliderId:"edgeSlider", blobId:"edgeBlob", labelId:"edgeLabel" });
+renderQuiz("quiz6", [
+  {
+    q: "受光形体上,撑起「体积感」最关键的一块是?",
+    options: ["明暗交界线 terminator", "投在地面的 cast shadow", "最亮那点 highlight"],
+    correct: 0,
+    why: "terminator 是亮暗转折带,它柔和连续=形体圆。一团烟没有 terminator 就读不出体积。"
+  },
+  {
+    q: "关于「核心阴影 core shadow」,正确的说法是?",
+    options: ["里面还有反光、不是死黑", "它应该是纯黑没细节", "它一定比投影更亮"],
+    correct: 0,
+    why: "暗面里有从环境弹回的 reflected light 把最暗处托起。死黑会让形体塌陷、失去厚度。"
+  },
+  {
+    q: "硬边 hard edge 在特效里最适合表达什么?",
+    options: ["锐利的能量与切割感", "蓬松柔软的烟雾感", "薄云的透光半透明"],
+    correct: 0,
+    why: "硬边=转折快,适合锐利/能量;软边=渐变铺开,适合烟雾/柔软。两者混用最高级。"
+  },
+  {
+    q: "想让一团烟在很暗的背景里读得清、和背景分开,最有效的是?",
+    options: ["给它一圈 rim / back light", "把整团烟调成均匀亮", "把它整体调得更饱和"],
+    correct: 0,
+    why: "边缘光/逆光给烟一圈亮边,把它从暗背景「切」出来,回扣明度分离原理。"
+  },
+  {
+    q: "在 Niagara 里给体积烟形成迎光/背光的明暗面,标准做法是?",
+    options: ["用六向光照 6-way lighting", "把烟做成均匀自发光团", "只调高 Sprite 数量"],
+    correct: 0,
+    why: "六向光照让烟从 6 个方向接收方向光,自动产生明暗面和 terminator,这才有体积。"
+  },
+  {
+    q: "一个特效「全是软边、糊成一片」,最直接的问题是?",
+    options: ["没有形、没有重点", "太锐利显得假", "投影会消失"],
+    correct: 0,
+    why: "全软边缺少任何锐利转折,读不出形体和焦点;需要混入一些硬边来立住结构。"
+  }
+]);
+</script>
+
+</body>
+</html>
