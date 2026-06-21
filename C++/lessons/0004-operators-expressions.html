@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 课 · 运算符与表达式</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 4 课</div>
+<h1>运算符与表达式</h1>
+<p class="subtitle">代码里 99% 的"在算什么",都藏在一行行表达式里。读懂运算符,你就读懂了计算本身。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  读懂代码里的<strong>算术、比较、逻辑与三元表达式</strong>,并避开两个经典陷阱:<strong>整数除法</strong>(<code>5 / 2</code> 居然等于 <code>2</code>)和 <strong><code>=</code> 与 <code>==</code> 混淆</strong>。看到一行 <code>a * b + c > 0 ? x : y</code> 你能不慌、能拆。
+</div>
+
+<h2>热身 · 回忆上一课(别翻笔记)</h2>
+<p>先凭记忆答一题,把第 3 课的核心捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>算术运算符:和你想的几乎一样,除了一个坑</h2>
+<p>
+五个基本算术运算符你早就认识:<code>+</code> 加、<code>-</code> 减、<code>*</code> 乘、<code>/</code> 除,外加一个 <code>%</code> 取模(求余数)。
+它们组合出来的东西叫<strong>表达式(expression)</strong>——一段"能算出一个值"的代码。
+</p>
+
+<pre><code><span class="t-type">int</span>   total   = count * 4 + 1;     <span class="t-cmt">// 先算乘 count*4,再加 1</span>
+<span class="t-type">float</span> area    = width * height;     <span class="t-cmt">// 两个 float 相乘,结果还是 float</span>
+<span class="t-type">int</span>   leftover = 17 % 5;            <span class="t-cmt">// 取模:17 除以 5 余 2 → leftover = 2</span></code></pre>
+
+<p>
+<code>%</code>(取模 / modulo)对你这种做索引数学的人特别有用:它给你"除法剩下的余数"。
+比如在一圈点上循环取色、做棋盘格、每 N 个做一次事——全靠它。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>i % count</code> 就是 VEX 里你天天写的"循环取点":当 <code>i</code> 一路涨上去,<code>i % count</code> 会在 <code>0, 1, 2, …, count-1, 0, 1, 2, …</code> 之间<strong>周而复始</strong>。想象一个 ramp 永远不出界、自动 wrap——那正是取模在干的事。
+</div>
+
+<h2>整数除法陷阱:本课最值钱的一节</h2>
+<p>
+这是 C++(以及 VEX、HLSL、几乎所有类 C 语言)里<strong>最常坑到 TA</strong> 的一个点。规则只有一句话,但后果很大:
+</p>
+
+<div class="callout callout-key">
+  <span class="label">记住这条</span>
+  当 <code>/</code> 两边<strong>都是整数 int</strong> 时,做的是<strong>整数除法</strong>——结果会把小数部分<strong>直接丢掉(向零截断)</strong>,而不是四舍五入。
+</div>
+
+<pre><code><span class="t-num">5</span> / <span class="t-num">2</span>      <span class="t-cmt">// == 2   (不是 2.5!小数 .5 被直接砍掉)</span>
+<span class="t-num">7</span> / <span class="t-num">2</span>      <span class="t-cmt">// == 3   (3.5 截断成 3,不是四舍五入的 4)</span>
+<span class="t-num">1</span> / <span class="t-num">2</span>      <span class="t-cmt">// == 0   (0.5 截断成 0 —— 很多人第一次被这个坑)</span>
+
+<span class="t-num">5.0</span> / <span class="t-num">2</span>    <span class="t-cmt">// == 2.5 (只要有一边是 float,就走浮点除法,小数保留)</span>
+<span class="t-num">5</span> / <span class="t-num">2.0</span>    <span class="t-cmt">// == 2.5 (同上,2.0 让整个表达式变成浮点)</span></code></pre>
+
+<p>
+为什么是这样?因为 <code>int / int</code> 的结果类型还是 <code>int</code>,而 <code>int</code> 装不下小数,只能截断。
+要拿到 <code>2.5</code>,你得让<strong>至少一边是浮点数</strong>:把字面量写成 <code>5.0</code>,或者把某个变量转成 float。
+（<a href="https://www.learncpp.com/cpp-tutorial/arithmetic-operators/" target="_blank">LearnCpp 6.2</a> 把这条讲得很细。)
+</p>
+
+<pre><code><span class="t-type">int</span>   a = 5, b = 2;
+<span class="t-type">float</span> bad  = a / b;              <span class="t-cmt">// 先算 5/2=2(整数除法!),再存进 float → 2.0,坑!</span>
+<span class="t-type">float</span> good = (<span class="t-type">float</span>)a / b;       <span class="t-cmt">// 先把 a 变成 5.0,再除 → 2.5,对了</span></code></pre>
+
+<p>
+注意 <code>bad</code> 那行:就算你把结果存进 <code>float</code>,也<strong>救不回来</strong>——因为截断发生在<em>除法那一刻</em>,等存进 <code>float</code> 时小数早没了。
+读代码时看到 <code>int / int</code>,你应该条件反射地警觉:"这里会不会丢小数?"
+</p>
+
+<h2>复合赋值与自增自减:同一件事的简写</h2>
+<p>
+你会大量看到 <code>+=</code> 这类<strong>复合赋值(compound assignment)</strong>。它们只是简写,等号右边那串先算完,再写回左边的变量:
+</p>
+
+<pre><code>x += 3;     <span class="t-cmt">// 等同于 x = x + 3;</span>
+x -= 1;     <span class="t-cmt">// 等同于 x = x - 1;</span>
+x *= 2;     <span class="t-cmt">// 等同于 x = x * 2;   (翻倍)</span>
+x /= 4;     <span class="t-cmt">// 等同于 x = x / 4;</span></code></pre>
+
+<p>
+还有更短的:<code>++</code>(自增,加 1)和 <code>--</code>(自减,减 1)。
+</p>
+
+<pre><code>i++;     <span class="t-cmt">// 等同于 i += 1;  即 i = i + 1;</span>
+i--;     <span class="t-cmt">// 等同于 i -= 1;</span></code></pre>
+
+<p>
+<code>++</code> 可以写在变量<strong>前面</strong>(<code>++i</code>,前缀)或<strong>后面</strong>(<code>i++</code>,后缀)。
+单独成一行时,两者效果一模一样,都是把 <code>i</code> 加 1。差别只在它们<em>当作一个值被用到时</em>:
+</p>
+<ul>
+  <li><strong>前缀 <code>++i</code></strong>:先加 1,再把<em>加完</em>的值拿去用。</li>
+  <li><strong>后缀 <code>i++</code></strong>:先把<em>原来</em>的值拿去用,之后才加 1。</li>
+</ul>
+<pre><code><span class="t-type">int</span> i = 5;
+<span class="t-type">int</span> a = ++i;   <span class="t-cmt">// 先加 → i 变 6,a 拿到 6</span>
+<span class="t-type">int</span> j = 5;
+<span class="t-type">int</span> b = j++;   <span class="t-cmt">// 先用 → b 拿到 5,之后 j 才变 6</span></code></pre>
+<p>
+读代码阶段你<strong>不必</strong>纠结这个微妙差别——绝大多数你看到的 <code>i++</code> 都是循环里单独一句,就理解成"<code>i</code> 加 1"即可。知道有前后缀之分、别被它吓到,就够了。
+</p>
+
+<h2>比较与逻辑:把多个条件拼起来</h2>
+<p>
+比较运算符你在第 2 课见过,这里快速回顾,它们算出来的结果是 <code>bool</code>(<code>true</code>/<code>false</code>):
+</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;"><th style="padding:0.35rem 0;">写法</th><th>意思</th></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>a &lt; b</code> / <code>a &gt; b</code></td><td>小于 / 大于</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>a &lt;= b</code> / <code>a &gt;= b</code></td><td>小于等于 / 大于等于</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>a == b</code></td><td>相等(<strong>两个</strong>等号!)</td></tr>
+  <tr><td style="padding:0.35rem 0;"><code>a != b</code></td><td>不相等</td></tr>
+</table>
+
+<p>
+要把多个条件组合起来,用<strong>逻辑运算符</strong>:
+</p>
+<ul>
+  <li><code>&amp;&amp;</code>(逻辑<strong>与</strong> / and):<em>两边都真</em>才真。</li>
+  <li><code>||</code>(逻辑<strong>或</strong> / or):<em>有一边真</em>就真。</li>
+  <li><code>!</code>(逻辑<strong>非</strong> / not):把真假<em>翻过来</em>。</li>
+</ul>
+
+<pre><code><span class="t-kw">if</span> (age &gt;= 18 &amp;&amp; hasLicense)        <span class="t-cmt">// 成年「并且」有执照,两者都要满足</span>
+<span class="t-kw">if</span> (isHidden || opacity == 0)       <span class="t-cmt">// 被隐藏「或者」透明度为 0,任一即可</span>
+<span class="t-kw">if</span> (!isVisible)                     <span class="t-cmt">// 「不」可见(等同于 isVisible == false)</span></code></pre>
+
+<p>
+一个值得知道的细节叫<strong>短路求值(short-circuit)</strong>:对于 <code>&amp;&amp;</code>,如果左边已经是 <code>false</code>,右边<em>根本不会算</em>(反正结果注定是 false);对于 <code>||</code>,左边已经 <code>true</code> 时右边也跳过。这常被用来"先检查安全、再访问":
+</p>
+<pre><code><span class="t-kw">if</span> (ptr != <span class="t-kw">nullptr</span> &amp;&amp; ptr-&gt;count &gt; 0)   <span class="t-cmt">// 左边为假就短路,不会去碰右边的 ptr->count</span></code></pre>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  逻辑运算符就是你在 Houdini 里<strong>组合开关条件</strong>的方式:<code>&amp;&amp;</code> 像把两个 Group 取交集(都得在),<code>||</code> 像取并集(在任一即可),<code>!</code> 像 Group 的 <em>invert</em>(反选)。一个 <code>if (A &amp;&amp; B || C)</code> 就是一条 group 表达式。
+</div>
+
+<h2>三元运算符:一个迷你 if,真实代码里满地都是</h2>
+<p>
+这个你<strong>一定</strong>会反复遇到,所以单独讲。三元运算符(ternary / conditional operator)写法是:
+</p>
+<pre><code>条件 ? 真时的值 : 假时的值</code></pre>
+<p>
+它整体<em>算出一个值</em>——条件为真就取 <code>?</code> 后面那个,为假就取 <code>:</code> 后面那个。等价于一个超浓缩的 if/else:
+</p>
+<pre><code><span class="t-type">int</span> bigger = (a &gt; b) ? a : b;     <span class="t-cmt">// a 大就取 a,否则取 b —— 等于求两者最大值</span>
+
+<span class="t-cmt">// 完全等价于下面这段,只是它压成了一行:</span>
+<span class="t-type">int</span> bigger;
+<span class="t-kw">if</span> (a &gt; b) bigger = a;
+<span class="t-kw">else</span>      bigger = b;</code></pre>
+
+<p>
+如果你写过 VEX,这眼熟得很——VEX 里的 <code>?:</code> 是同一个东西。
+（<a href="https://www.learncpp.com/cpp-tutorial/the-conditional-operator/" target="_blank">LearnCpp 6.6</a> 专讲它。）读代码时,把 <code>cond ? x : y</code> 在心里读成"如果 cond,就 x,否则 y"即可。
+</p>
+
+<h3>你会在真实代码里看到</h3>
+<p>
+下面这段是 HDK / 渲染器风格里很典型的写法:遍历点、按属性算个混合权重、再用三元决定走哪条分支。逐行的注释就是你"读代码"该有的内心独白:
+</p>
+<pre><code><span class="t-cmt">// HDK 风格:遍历几何体的所有点,按高度做颜色混合</span>
+<span class="t-kw">for</span> (GA_Index i = 0; i &lt; numPoints; ++i)
+{
+    <span class="t-type">float</span> h   = heightAttr.get(i);
+    <span class="t-type">float</span> t   = (h - minH) / (maxH - minH);     <span class="t-cmt">// 归一化到 0..1(注意:这些都是 float,安全)</span>
+    <span class="t-type">float</span> mix = t &lt; 0.5f ? t * 2.0f : 1.0f;       <span class="t-cmt">// 三元:低于一半就线性拉伸,否则封顶到 1</span>
+
+    <span class="t-type">int</span> swatch = i % numColors;                 <span class="t-cmt">// 取模:在调色板里循环取色,永不越界</span>
+    colorAttr.set(i, palette[swatch] * mix);
+}</code></pre>
+<p>
+看懂这一段,你就具备读真实 HDK / Unreal 代码的基本功了:它无非是<strong>算术 + 取模 + 三元 + 比较</strong>的组合。每个零件你现在都认识。
+</p>
+
+<h2>够用的运算符优先级</h2>
+<p>
+"先算谁"基本和小学数学一致,记住两条就够读代码:
+</p>
+<ul>
+  <li><strong>乘除模 <code>* / %</code> 先于 加减 <code>+ -</code></strong>(和数学一样)。</li>
+  <li><strong>算术 先于 比较 <code>&lt; &gt; == </code>,比较 又先于 逻辑 <code>&amp;&amp; ||</code></strong>。</li>
+</ul>
+<pre><code>a + b * 2 &gt; 10 &amp;&amp; flag
+
+<span class="t-cmt">// 拆开实际是这样优先:</span>
+((a + (b * 2)) &gt; 10) &amp;&amp; flag
+<span class="t-cmt">//      ①乘    ②加  ③比较     ④逻辑与(最后)</span></code></pre>
+<p>
+不确定时,作者通常会加<strong>括号</strong>讲清楚——你读到括号,就照括号里先算。你<strong>不需要</strong>背完整的优先级大表,只要知道"乘除先、比较中、逻辑后",剩下交给括号。
+</p>
+
+<h2>读代码易错点</h2>
+<ul>
+  <li>
+    <strong><code>=</code> 不是 <code>==</code>。</strong> 单个 <code>=</code> 是<em>赋值</em>(把右边塞进左边),两个 <code>==</code> 才是<em>比较是否相等</em>。
+    <code>if (x = 5)</code> 不会"判断 x 是不是 5",而是<em>把 5 赋给 x</em> 然后判断 5(非零)为真——这是经典 bug,读代码时务必看清几个等号。
+  </li>
+  <li>
+    <strong>整数除法丢小数。</strong> 见到 <code>int / int</code> 先警觉:<code>1 / 2</code> 是 <code>0</code> 不是 <code>0.5</code>。要小数就让一边是 float。
+  </li>
+  <li>
+    <strong>浮点相等不可靠。</strong> <code>float</code> 有微小精度误差,<code>0.1 + 0.2 == 0.3</code> 可能是 <code>false</code>。所以代码里很少直接 <code>==</code> 比两个算出来的 float,常见的是比"差的绝对值是否够小"。看到 <code>fabs(a - b) &lt; 0.0001</code> 这种写法,就是在做"近似相等"。
+  </li>
+  <li>
+    <strong>整数会溢出(概念先眼熟)。</strong> <code>int</code> 能表示的范围有限,数算得太大会"绕回"成负数或乱值。日常读代码不必深究,但看到大数累加时心里有个数。
+  </li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题在脑子里把表达式"算一遍"再答。答完马上告诉你对错和原因。</p>
+<div class="quiz" id="quiz4"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/arithmetic-operators/" target="_blank">LearnCpp · 6.2 — Arithmetic operators</a>
+  —— 权威免费教程里讲算术运算符的一章,把<strong>整数除法 vs 浮点除法</strong>、取模 <code>%</code> 和复合赋值讲得很透。本课的核心陷阱都来自它。三元运算符可续读 <a href="https://www.learncpp.com/cpp-tutorial/the-conditional-operator/" target="_blank">6.6 — The conditional operator</a>。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:为什么 <code>5/2</code> 偏偏等于 2?<code>(float)a</code> 那个括号转换到底干了啥?短路求值还有什么实战用法?三元能不能嵌套?——直接在对话里问我,卡住是正常的,问出来就通了。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0003-variables-types-assignment.html">第 3 课 · 变量、类型与赋值</a></p>
+  <p>下一课预告:<a href="0005-loops.html">第 5 课 · 循环</a>——代码怎么用 <code>for</code> / <code>while</code> 把同一段逻辑跑成千上万遍(遍历每个点、每个像素的根本)。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 3 课:<code>int frame = 12;</code> 这一行里,单个 <code>=</code> 起的作用是?",
+    options: ["比较是否相等数值", "把右边赋给左边盒", "把左右两边作交换"],
+    correct: 1,
+    why: "单个 = 是赋值:把右边的 12 存进左边名叫 frame 的变量盒子。比较相等要用两个等号 ==。"
+  }
+]);
+
+renderQuiz("quiz4", [
+  {
+    q: "在 C++ 里,<code>7 / 2</code> 算出来等于多少?",
+    options: ["等于结果三点五", "等于结果是三整", "等于结果四整数"],
+    correct: 1,
+    why: "两边都是 int 走整数除法,3.5 的小数被直接截断(不是四舍五入),结果是 3。"
+  },
+  {
+    q: "想让 <code>5 / 2</code> 算出 <code>2.5</code>,正确做法是?",
+    options: ["写成 5.0 除 2", "写成 5 除 2 整", "写成两个整相除"],
+    correct: 0,
+    why: "只要有一边是浮点(如 5.0),整个除法就走浮点除法、保留小数,得到 2.5。"
+  },
+  {
+    q: "<code>13 % 5</code>(取模 / 求余数)等于多少?",
+    options: ["余数结果是二", "余数结果是三", "余数结果是八"],
+    correct: 1,
+    why: "13 除以 5 商 2 余 3,% 取的就是余数 3。它常用于在 count 个元素里循环取索引。"
+  },
+  {
+    q: "<code>int r = (a > b) ? a : b;</code> 这个三元表达式在求什么?",
+    options: ["求两者里的较大", "求两者里的较小", "求两者之间的差"],
+    correct: 0,
+    why: "条件 a>b 为真取 a、为假取 b,等价于一个迷你 if/else,结果就是 a 和 b 中较大的那个。"
+  },
+  {
+    q: "对于 <code>if (isReady && canRun)</code>,它在什么时候为真?",
+    options: ["任一条件为真即可", "两个条件都得为真", "两个条件都为假时"],
+    correct: 1,
+    why: "&& 是逻辑与:左右两边都必须为 true 整体才为 true。只要有一个为假,结果就是假。"
+  },
+  {
+    q: "下面哪一行是经典的 <code>=</code> 与 <code>==</code> 混淆 bug?",
+    options: ["写作 if (x == 5)", "写作 if (x != 5)", "写作 if (x = 5)"],
+    correct: 2,
+    why: "if (x = 5) 用了单个 =,它把 5 赋给 x 再判断非零为真,而非比较。比较相等必须写 ==。"
+  }
+]);
+</script>
+
+</body>
+</html>

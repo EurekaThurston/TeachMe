@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 10 课 · std::string 与常见标准库类型</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 10 课</div>
+<h1>std::string 与常见标准库类型</h1>
+<p class="subtitle">代码里的文字、和"名字 → 数据"的查表,在 C++ 里长什么样。这正是 DCC 属性系统的内核。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  读懂代码里的<strong>文本</strong>(<code>std::string</code>)和常见<strong>容器</strong>(<code>std::pair</code> / <code>std::map</code>),并理解 <code>std::</code> 前缀就是在说"这东西<strong>来自标准库</strong>"。
+</div>
+
+<h2>热身 · 回忆第 9 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次 <code>std::vector</code> 的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>std:: 是什么:一个"标准库工具架"</h2>
+<p>
+你已经在第 9 课见过 <code>std::vector</code> 了。每次看到 <code>std::</code> 这个前缀,先在心里翻译成一句话:<strong>"这是 C++ <em>标准库</em>(Standard Library)提供的现成工具。"</strong>
+<code>std</code> 念作 "standard"。冒号那两个点 <code>::</code> 叫<strong>作用域解析(scope resolution)</strong>,意思是"<code>vector</code> 这个名字属于 <code>std</code> 这个<strong>命名空间(namespace)</strong>"。
+</p>
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  把 <code>std::</code> 想成 Houdini 里的 <strong>节点分类前缀</strong>——就像 <code>sop/</code>、<code>vop/</code> 告诉你这个节点属于哪个上下文。<code>std::</code> 是一整面<strong>"标准库工具架"</strong>:<code>std::string</code>(文字)、<code>std::vector</code>(数组)、<code>std::map</code>(查表)都摆在这面架子上,前缀只是告诉你"去标准库那面架子上拿"。
+</div>
+<p>
+命名空间的完整机制留到<strong>第 14 课</strong>细讲,这里你只需要建立直觉:看到 <code>std::</code> 不要慌,它不是某个项目自己写的怪东西,而是<strong>全世界 C++ 都通用的标准件</strong>。
+</p>
+
+<h2>std::string:代码里的"文字"</h2>
+<p>
+<code>std::string</code> 就是一段<strong>文本</strong>——一串字符,比如 <code>"P"</code>、<code>"Cd"</code>、<code>"render_high.exr"</code>。在 VFX 里这太常见了:<strong>属性名</strong>(<code>"P"</code>、<code>"N"</code>、<code>"Cd"</code>)、文件路径、节点名、通道名,全是字符串。
+</p>
+<pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;string&gt;</span>   <span class="t-cmt">// 用 std::string 前要包含这个头文件</span>
+
+<span class="t-type">std::string</span> attrName = "Cd";        <span class="t-cmt">// 一个属性名</span>
+<span class="t-type">std::string</span> channel  = "diffuse";   <span class="t-cmt">// 一个通道名</span></code></pre>
+
+<h3>它比 C 的 char* 安全好用</h3>
+<p>
+你在老代码里还会撞见另一种写法:<code>char*</code>(或 <code>const char*</code>),这是 C 语言时代的字符串——本质是"一串字符的<strong>裸地址</strong>",长度要自己数到结尾的 <code>'\0'</code>,拼接、求长度都得手动且容易出错。<code>std::string</code> 把这些麻烦全包好了:<strong>它自己记得有多长、自己管理内存、能直接用 <code>+</code> 拼接</strong>。读现代 C++ 时,默认你看到的文本就是 <code>std::string</code>。
+</p>
+
+<h3>三个你一定会看到的操作</h3>
+<pre><code><span class="t-type">std::string</span> base = "render";
+<span class="t-type">std::string</span> ext  = ".exr";
+
+<span class="t-type">std::string</span> file = base + "_v01" + ext;  <span class="t-cmt">// + 拼接 → "render_v01.exr"</span>
+
+<span class="t-type">int</span> n = file.size();                       <span class="t-cmt">// .size() 给出字符个数(这里是 14)</span>
+
+<span class="t-kw">const</span> <span class="t-type">char</span>* raw = file.c_str();              <span class="t-cmt">// .c_str() 转回老式 C 字符串</span></code></pre>
+<ul>
+  <li><strong><code>+</code> 拼接</strong>:把两段文字接成一段,像把字符串"焊"在一起。</li>
+  <li><strong><code>.size()</code></strong>:返回里面有几个字符(也有等价的 <code>.length()</code>)。注意它是个<strong>成员函数</strong>,要带括号。</li>
+  <li><strong><code>.c_str()</code></strong>:把 <code>std::string</code> 交还成老式 <code>const char*</code>。<strong>为什么需要它?</strong> 很多老 C API(比如某些渲染器、文件库的接口)只认 <code>const char*</code>,这时就用 <code>.c_str()</code> 把现代字符串"翻译"给它们用。</li>
+</ul>
+
+<h2>std::pair:一对绑在一起的值</h2>
+<p>
+<code>std::pair&lt;A, B&gt;</code> 就是把<strong>两个值打包成一对</strong>。尖括号里的 <code>A</code>、<code>B</code> 是这一对里两个成员各自的类型(这种 <code>&lt;...&gt;</code> 模板写法你在 <code>std::vector&lt;float&gt;</code> 里已经见过)。取值用 <code>.first</code> 和 <code>.second</code>:
+</p>
+<pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;utility&gt;</span>
+
+<span class="t-type">std::pair</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">float</span>&gt; entry = {"density", 0.8f};
+
+<span class="t-type">std::string</span> name  = entry.first;    <span class="t-cmt">// "density" —— 第一个成员</span>
+<span class="t-type">float</span>       value = entry.second;   <span class="t-cmt">// 0.8     —— 第二个成员</span></code></pre>
+<p>
+把它想成一个只有两栏的小卡片:左边一个名字、右边一个值。记住 <code>.first</code> / <code>.second</code> 这两个名字,你下面读 <code>std::map</code> 的迭代时立刻用得上。
+</p>
+
+<h2>std::map:名字 → 数据 的查表</h2>
+<p>
+重头戏。<code>std::map&lt;Key, Value&gt;</code> 是一张<strong>查找表</strong>:给它一个<strong>键(Key)</strong>,它还你对应的<strong>值(Value)</strong>。这跟 DCC 里<strong>属性系统</strong>的样子一模一样——你拿属性名 <code>"P"</code> 去问,系统还你那份位置数据。
+</p>
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>std::map&lt;std::string, ...&gt;</code> 就是 Houdini 几何体上的<strong>属性字典</strong>:键是属性名字符串 <code>"P"</code> / <code>"N"</code> / <code>"Cd"</code>,值是那条属性的数据。你平时 <code>@Cd = ...</code> 背后,引擎就是在一张"名字 → 数据"的 map 上做查找。读到 <code>std::map&lt;std::string, T&gt;</code> 时,脑子里直接浮现"属性表"三个字。
+</div>
+
+<pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;map&gt;</span>
+<span class="t-kw">#include</span> <span class="t-cmt">&lt;string&gt;</span>
+
+<span class="t-type">std::map</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">int</span>&gt; attrSize;  <span class="t-cmt">// 属性名 → 每个属性占几个 float</span>
+
+attrSize["P"]  = 3;   <span class="t-cmt">// 位置是 3 个 float (x,y,z)</span>
+attrSize["N"]  = 3;   <span class="t-cmt">// 法线也是 3 个</span>
+attrSize["Cd"] = 3;   <span class="t-cmt">// 颜色 RGB,3 个</span>
+attrSize["uv"] = 2;   <span class="t-cmt">// UV,2 个</span>
+
+<span class="t-type">int</span> s = attrSize["P"];        <span class="t-cmt">// 用名字查:s == 3</span></code></pre>
+
+<h3>用 [] 取值,vs. 用 .find() 安全地问"在不在"</h3>
+<p>
+<code>m["P"]</code> 是最直观的取值方式:方括号里放<strong>键</strong>。但有个读代码必须知道的坑:<strong>如果这个键<em>不存在</em>,<code>[]</code> 会悄悄<em>新建</em>一条默认值的条目</strong>。想"只查询、不创建"时,代码会改用 <code>.find()</code>:
+</p>
+<pre><code><span class="t-kw">auto</span> it = attrSize.find("Cd");     <span class="t-cmt">// 去表里找 "Cd"</span>
+
+<span class="t-kw">if</span> (it != attrSize.end())          <span class="t-cmt">// .end() 表示"没找到"的边界标记</span>
+{
+    <span class="t-type">int</span> s = it-&gt;second;             <span class="t-cmt">// 找到了:it->second 就是对应的值 3</span>
+}
+<span class="t-kw">else</span>
+{
+    <span class="t-cmt">// 没有 "Cd" 这条属性</span>
+}</code></pre>
+<p>
+这里 <code>it</code> 指向表里的一个<strong>条目</strong>,而每个条目<em>本身就是一个 <code>std::pair</code></em>:<code>it-&gt;first</code> 是键(<code>"Cd"</code>),<code>it-&gt;second</code> 是值(<code>3</code>)。看,前面学的 <code>.first</code> / <code>.second</code> 在这儿接上了。(<code>it-&gt;second</code> 的箭头 <code>-&gt;</code> 留到后面讲指针时细说,现在只当它是"取这个条目的 second"。)
+</p>
+
+<h3>迭代:把整张表走一遍</h3>
+<pre><code><span class="t-kw">for</span> (<span class="t-kw">const</span> <span class="t-kw">auto</span>&amp; kv : attrSize)   <span class="t-cmt">// kv 依次是表里的每个 pair</span>
+{
+    <span class="t-type">std::string</span> name = kv.first;   <span class="t-cmt">// 键:属性名</span>
+    <span class="t-type">int</span>         size = kv.second;  <span class="t-cmt">// 值:占几个 float</span>
+}</code></pre>
+<p>这种 <code>for (... : 容器)</code> 的写法叫<strong>范围 for(range-based for)</strong>:不用管下标,直接"对容器里的每个元素轮一遍"。每轮拿到的 <code>kv</code> 又是个 <code>pair</code>,所以照样 <code>.first</code> / <code>.second</code>。</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>把今天三样东西拼起来,这就是一个"按属性名查数据"的函数——和你在引擎、插件代码里读到的形状几乎一致:</p>
+<pre><code><span class="t-kw">#include</span> <span class="t-cmt">&lt;string&gt;</span>
+<span class="t-kw">#include</span> <span class="t-cmt">&lt;map&gt;</span>
+<span class="t-kw">#include</span> <span class="t-cmt">&lt;vector&gt;</span>
+
+<span class="t-cmt">// 一张"属性名 → 这条属性所有点的值"的表</span>
+<span class="t-kw">using</span> AttributeTable = <span class="t-type">std::map</span>&lt;<span class="t-type">std::string</span>, <span class="t-type">std::vector</span>&lt;<span class="t-type">float</span>&gt;&gt;;
+
+<span class="t-cmt">// 给定属性名,取出那条属性的数据;没有就返回一个空 vector</span>
+<span class="t-type">std::vector</span>&lt;<span class="t-type">float</span>&gt; <span class="t-name">getAttribute</span>(<span class="t-kw">const</span> AttributeTable&amp; attrs, <span class="t-kw">const</span> <span class="t-type">std::string</span>&amp; name)
+{
+    <span class="t-kw">auto</span> it = attrs.find(name);        <span class="t-cmt">// 用名字去查表</span>
+    <span class="t-kw">if</span> (it != attrs.end())
+        <span class="t-kw">return</span> it-&gt;second;              <span class="t-cmt">// 找到 → 返回那份数据</span>
+
+    <span class="t-kw">return</span> {};                         <span class="t-cmt">// 没找到 → 返回空 vector</span>
+}</code></pre>
+<p>
+一眼读出它的"合同":喂进去一张<strong>属性表</strong>和一个<strong>属性名字符串</strong>,吐出来一个 <code>std::vector&lt;float&gt;</code>(那条属性的数值)。<code>using AttributeTable = ...</code> 只是给那个又长又啰嗦的 map 类型起了个<strong>别名</strong>,方便人读——真实代码很爱这么干。
+</p>
+<div class="callout callout-key">
+  <span class="label">头文件,先点一下</span>
+  用 <code>std::string</code> 要 <code>#include &lt;string&gt;</code>,用 <code>std::vector</code> 要 <code>&lt;vector&gt;</code>,用 <code>std::map</code> 要 <code>&lt;map&gt;</code>。<code>#include</code> 就是"把这个工具的说明书先搬进来"。它的细节(头文件到底是什么)留到<strong>第 13 课</strong>;现在你只要会<strong>认</strong>:文件顶部那几行 <code>#include &lt;...&gt;</code> 告诉你这段代码用到了哪些标准库工具。
+</div>
+
+<h2>读代码易错点</h2>
+<ul>
+  <li>
+    <strong><code>m["P"]</code> 不是"只读"——它在键不存在时会<em>偷偷新建</em>条目。</strong>
+    读到对一张 map 反复用 <code>[]</code> 的代码,要留神它可能正在<em>往表里加东西</em>,而不只是查询。想纯查询看 <code>.find()</code>。
+  </li>
+  <li>
+    <strong><code>.size()</code> / <code>.first</code> / <code>.second</code> 别和函数调用混淆。</strong>
+    <code>.size()</code> 带括号(是个成员函数);<code>.first</code> / <code>.second</code> <em>不带</em>括号(是成员变量,直接取)。多写或漏写括号都会读错。
+  </li>
+  <li>
+    <strong>看到 <code>.c_str()</code> 不是"在改字符串",而是"在<em>交给老 C API</em>"。</strong>
+    它把 <code>std::string</code> 转成 <code>const char*</code> 喂给只认老式字符串的接口,常出现在调用第三方库的那一行。
+  </li>
+  <li>
+    <strong><code>it != m.end()</code> 是"找到了吗"的标准判断。</strong>
+    <code>.end()</code> 是一个"过了末尾"的边界标记,<em>不是</em>最后一个元素。<code>find</code> 没找到时就返回 <code>.end()</code>,所以判 <code>!= end()</code> 等于在问"到底有没有这条"。
+  </li>
+  <li>
+    <strong>字符串的双引号 vs. 字符的单引号。</strong>
+    <code>"P"</code>(双引号)是一段 <code>std::string</code> 文本;<code>'P'</code>(单引号)是<em>单个</em> <code>char</code> 字符。两者不是一回事,看错了类型就会跟着读错。
+  </li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题在脑子里"跑"一遍今天的规则再答。答完会马上告诉你对错和原因。</p>
+<div class="quiz" id="quiz10"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-stdstring/" target="_blank">LearnCpp · 5.7 — Introduction to std::string</a>
+  —— 权威免费教程里专讲 <code>std::string</code> 的一节:讲清它在 <code>&lt;string&gt;</code> 头文件里、怎么定义、怎么用 <code>.length()</code> 求长度。看完你对本课的文本部分会更踏实。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:<code>std::map</code> 为什么键是有序的?<code>it-&gt;second</code> 那个箭头 <code>-&gt;</code> 到底怎么回事?<code>std::unordered_map</code> 和它差在哪?或者想要更多 Houdini 属性表的对照例子——直接在对话里问我,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0009-arrays-and-vector.html">第 9 课 · 数组与 std::vector</a></p>
+  <p>下一课预告:<a href="0011-structs-and-classes-reading.html">第 11 课 · struct 与 class 读法</a>——代码怎么把"位置 + 法线 + 颜色"打包成一个自定义类型,以及怎么读它的成员。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 9 课:<code>std::vector&lt;float&gt; v</code> 里,<strong>第一个</strong>元素的下标是?",
+    options: ["下标写成 v[1]", "下标写成 v[0]", "下标写成 v[2]"],
+    correct: 1,
+    why: "C++ 的下标从 0 开始,所以第一个元素是 v[0],第二个才是 v[1]。这就是第 9 课的 0-based 索引。"
+  }
+]);
+
+renderQuiz("quiz10", [
+  {
+    q: "看到代码里的 <code>std::map</code>,前缀 <code>std::</code> 是在告诉你什么?",
+    options: ["它出自项目作者", "它出自标准函数库", "它出自显卡驱动层"],
+    correct: 1,
+    why: "std:: 表示这个名字来自 C++ 标准库(Standard Library),是全世界通用的标准件,不是某个项目自己写的。"
+  },
+  {
+    q: "<code>std::string s = \"Cd\";</code> 之后,<code>s.size()</code> 返回多少?",
+    options: ["返回数字 1", "返回数字 2", "返回数字 3"],
+    correct: 1,
+    why: "\"Cd\" 里有 C 和 d 两个字符,.size() 给出字符个数,所以是 2。它是成员函数,要带括号。"
+  },
+  {
+    q: "<code>std::pair&lt;std::string, float&gt; p</code> 里,取<strong>第二个</strong>成员要写?",
+    options: ["写成 p.second", "写成 p.value0", "写成 p.right1"],
+    correct: 0,
+    why: "pair 的两个成员叫 .first 和 .second;第二个就是 p.second。它是成员变量,不带括号。"
+  },
+  {
+    q: "对一张已有的 <code>std::map</code> 写 <code>m[\"X\"]</code>,而 \"X\" <strong>不存在</strong>,会怎样?",
+    options: ["直接抛出运行错误", "悄悄新建该条目", "原样返回空指针"],
+    correct: 1,
+    why: "[] 在键不存在时会偷偷新建一条默认值的条目,而不是报错。想纯查询应改用 .find()。"
+  },
+  {
+    q: "<code>auto it = m.find(\"N\");</code> 之后,判断「找到了吗」该写哪个?",
+    options: ["写 it != m.end()", "写 it == m.size()", "写 it &gt;= m.first()"],
+    correct: 0,
+    why: "find 没找到会返回 m.end()(末尾边界标记),所以 it != m.end() 就表示「确实找到了这条」。"
+  },
+  {
+    q: "代码里出现 <code>name.c_str()</code>,最可能的<strong>用途</strong>是?",
+    options: ["把文本交给老 API", "把文本全部转大写", "把文本永久地删空"],
+    correct: 0,
+    why: ".c_str() 把 std::string 转成老式 const char*,用来喂给只认 C 字符串的旧接口,并不修改原字符串。"
+  }
+]);
+</script>
+
+</body>
+</html>

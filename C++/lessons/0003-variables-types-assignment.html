@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 课 · 变量、类型与赋值</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 3 课</div>
+<h1>变量、类型与赋值</h1>
+<p class="subtitle">函数体里那些不停冒出来的小盒子,是怎么被命名、被赋值、被反复用的。读真实代码绕不开这一关。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  读代码时,看到一行变量,你能立刻拆出三件事:它的<strong>类型</strong>、它的<strong>名字</strong>、它的<strong>初始值</strong>。并且你能分清 <code>=</code>(赋值)和上一课的 <code>==</code>(比较),还能说出为什么真实 HDK / 引擎代码里<strong>到处是 <code>const</code></strong>。
+</div>
+
+<h2>热身 · 回忆上一课(别翻笔记)</h2>
+<p>先凭记忆答一题,把第 2 课的关键点捞回来——主动回忆比重看一遍记得牢得多。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>一行变量,三个零件</h2>
+<p>
+一个变量就是一个<strong>带名字、带类型的盒子</strong>,里面装着一个值。这跟你天天打交道的<strong>属性 attribute</strong> 几乎是一回事:点上的 <code>@P</code> 是一个值、<code>@Cd</code> 是一个值、<code>@pscale</code> 是一个值——每个都有名字、有类型、有当前数值。C++ 的变量就是这个东西,只是类型要<em>明写</em>出来。
+</p>
+
+<pre><code><span class="t-type">int</span> <span class="t-name">pointCount</span> = <span class="t-num">5</span>;
+ │        │          │
+ │        │          └─ 初始值:盒子一开始装什么(这里是 5)
+ │        └─ 变量名:后面代码用这个名字找到这个盒子
+ └─ 类型:盒子只能装什么(这里是整数 int)</code></pre>
+
+<p>
+末尾那个分号 <code>;</code> 表示"这句话说完了"。读到 <code>类型 名字 = 值;</code> 这个形状,你就知道:<strong>代码在这里造了一个新盒子并塞了第一个值进去</strong>。这个动作叫<strong>声明并初始化(declaration + initialization)</strong>。再看几个真实形状:
+</p>
+
+<pre><code><span class="t-type">float</span>  <span class="t-name">radius</span>   = <span class="t-num">0.5f</span>;       <span class="t-cmt">// 带小数的数,0.5f 的 f 表示这是 float 字面量</span>
+<span class="t-type">double</span> <span class="t-name">mass</span>     = <span class="t-num">12.0</span>;       <span class="t-cmt">// 也是小数,但精度更高(下面讲)</span>
+<span class="t-type">bool</span>   <span class="t-name">isVisible</span> = <span class="t-kw">true</span>;       <span class="t-cmt">// 真 / 假,只有 true 和 false 两个值</span>
+<span class="t-type">char</span>   <span class="t-name">axis</span>     = <span class="t-num">'x'</span>;        <span class="t-cmt">// 单个字符,用单引号</span>
+<span class="t-type">int</span>    <span class="t-name">seed</span>;                    <span class="t-cmt">// 只声明、没给初始值 —— 盒子里是垃圾值,危险</span></code></pre>
+
+<p>注意最后一行:只写了 <code>类型 名字;</code> 没有 <code>= 值</code>。这叫<strong>未初始化变量</strong>,盒子里装的是内存里残留的随机垃圾。读代码时看到这种,要留个心:后面如果先<em>读</em>它再<em>赋值</em>,那很可能是个 bug。</p>
+
+<h2>基本类型:每个盒子能装什么</h2>
+<p>类型决定了盒子的"形状"——能装什么、占多少内存。VFX 里你早就在用这些概念了,只是叫法不同。</p>
+
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">类型</th><th>装什么</th><th>字面量长这样</th><th>VFX 里类似</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>int</code></td><td>整数,无小数</td><td><code>5</code>、<code>-12</code>、<code>0</code></td><td>点编号 <code>@ptnum</code>、计数</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>float</code></td><td>小数(单精度)</td><td><code>0.5f</code>、<code>3.14f</code></td><td><code>@pscale</code>、坐标分量</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>double</code></td><td>小数(双精度,更准)</td><td><code>3.14</code>、<code>12.0</code></td><td>大场景累加、解算</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>bool</code></td><td>真 / 假</td><td><code>true</code>、<code>false</code></td><td>勾选框、可见性开关</td></tr>
+  <tr><td style="padding:0.4rem 0;"><code>char</code></td><td>单个字符</td><td><code>'a'</code>、<code>'x'</code></td><td>轴向标记、分组首字母</td></tr>
+</table>
+
+<p>
+顺带认一下<strong>字面量(literal)</strong>:它就是直接写死在代码里的那个值本身。<code>5</code> 是 int 字面量,<code>3.14</code> 是 double 字面量,<code>0.5f</code> 是 float 字面量(末尾的 <code>f</code> 是关键标记),<code>true</code> 是 bool 字面量,<code>'a'</code> 是单字符(单引号),<code>"text"</code> 是字符串(双引号,后面课再细讲)。读代码时,字面量是你能直接看到的"具体数",变量则是会变的"盒子"。
+</p>
+
+<h2><code>=</code> 是赋值,不是相等(承接第 2 课)</h2>
+<p>
+这是新手读代码最容易栽的地方,务必钉死。第 2 课里 <code>==</code>(两个等号)是<strong>提问</strong>:"这两个相等吗?"算出来是 <code>true</code> 或 <code>false</code>。而 <code>=</code>(一个等号)是<strong>命令</strong>:"把右边的值塞进左边的盒子。"
+</p>
+
+<pre><code><span class="t-type">int</span> <span class="t-name">x</span> = <span class="t-num">5</span>;        <span class="t-cmt">// 赋值:把 5 装进 x。这是一个动作</span>
+x = <span class="t-num">10</span>;           <span class="t-cmt">// 再赋值:现在 x 盒子里是 10,旧的 5 被覆盖了</span>
+
+<span class="t-kw">if</span> (x == <span class="t-num">10</span>)      <span class="t-cmt">// 比较:问 x 现在是不是等于 10 → 这里是 true</span>
+{
+    <span class="t-cmt">// ...</span>
+}</code></pre>
+
+<p>
+读代码时的判断诀窍:<strong>一个等号 <code>=</code> 出现在普通语句里 → 是在改盒子的值;两个等号 <code>==</code> 出现在 <code>if</code> / 条件里 → 是在问真假。</strong>看到 <code>x = 10;</code> 单独成行,它做的事是"覆盖",不是"判断"。
+</p>
+
+<h2>作用域 scope:盒子的活动范围就在 <code>{ }</code> 里</h2>
+<p>
+一个变量并不是造出来就永远存在。它的"生命"被一对花括号 <code>{ }</code> 框住——这叫<strong>作用域(scope)</strong>。变量在哪个 <code>{ }</code> 里声明,就只在那个 <code>{ }</code> 闭合之前有效;出了这对括号,这个名字就<em>不存在</em>了。
+</p>
+
+<pre><code><span class="t-type">float</span> <span class="t-name">computeArea</span>(<span class="t-type">float</span> r)
+{
+    <span class="t-type">float</span> <span class="t-name">pi</span> = <span class="t-num">3.14159f</span>;     <span class="t-cmt">// pi 在这个函数的 { } 里诞生</span>
+    <span class="t-type">float</span> <span class="t-name">area</span> = pi * r * r;  <span class="t-cmt">// 这里能用 pi,没问题</span>
+    <span class="t-kw">return</span> area;
+}                              <span class="t-cmt">// 函数的 } 一闭合,pi 和 area 都消失</span>
+<span class="t-cmt">// 在这一行写 pi 会报错:它已经不在作用域里了</span></code></pre>
+
+<p>
+为什么读代码时要在意作用域?因为<strong>同名变量在不同 <code>{ }</code> 里是不同的盒子</strong>。你在一个函数里看到的 <code>i</code>,跟另一个函数里的 <code>i</code> 毫无关系。搞清楚"这个名字属于哪个 <code>{ }</code>",你才不会把两段不相干的逻辑串在一起读。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  把一对 <code>{ }</code> 想成一个 <strong>Houdini 的 Subnetwork / Compile Block</strong>:你在里面 spare 出来的中间属性,出了这个网络就不可见了。变量作用域就是这个"局部可见"的边界——里面的盒子,外面够不着。
+</div>
+
+<h2><code>const</code>:只读盒子,真实代码里随处可见</h2>
+<p>
+<code>const</code> 是 "constant(常量)" 的缩写。在类型前面加上 <code>const</code>,意思是:<strong>这个盒子一旦装好值,就不准再改了。</strong>谁要是后面想给它重新赋值,编译器直接报错、拒绝编译。
+</p>
+
+<pre><code><span class="t-kw">const</span> <span class="t-type">float</span> <span class="t-name">gravity</span> = <span class="t-num">9.8f</span>;   <span class="t-cmt">// gravity 是只读的</span>
+gravity = <span class="t-num">10.0f</span>;                 <span class="t-cmt">// 编译错误!不能改一个 const 的值</span></code></pre>
+
+<p>
+为什么 HDK / 虚幻引擎 / 渲染器的代码里 <code>const</code> 多到像噪点一样?三个原因,读代码时都用得上:
+</p>
+<ul>
+  <li><strong>表达意图。</strong><code>const</code> 在喊话:"这个值只是拿来<em>读</em>的,我不会动它。"你读到它,就知道这个盒子在下文不会被偷偷改掉,可以放心。</li>
+  <li><strong>保护输入。</strong>函数参数常写成 <code>const</code>,表示"我只看你的数据,不会改你的"。</li>
+  <li><strong>性能。</strong>大块几何数据(几百万个点)按 <code>const</code> 引用传进函数,既避免拷贝、又承诺不改原件。这正是 HDK 里 <code>const GU_Detail *</code> 满天飞的原因。</li>
+</ul>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>const</code> 就像 Houdini 节点上的一个<strong>只读输入端口</strong>:数据从这个口<em>流进来</em>给你用,但你这个节点<strong>不能往回写、改不了上游</strong>。看到 <code>const</code>,就把它读成"只读输入,放心用,但别指望它变"。
+</div>
+
+<h2><code>auto</code>:让编译器替你填类型</h2>
+<p>
+有时你会看到 <code>auto</code> 顶在类型的位置上。它不是某种新类型,而是对编译器说:"<strong>右边是什么类型,这个盒子就是什么类型,你自己推。</strong>"
+</p>
+
+<pre><code><span class="t-kw">auto</span> <span class="t-name">count</span>  = <span class="t-num">5</span>;        <span class="t-cmt">// 右边是 int 字面量 → count 被推成 int</span>
+<span class="t-kw">auto</span> <span class="t-name">radius</span> = <span class="t-num">0.5f</span>;     <span class="t-cmt">// 右边是 float 字面量 → radius 被推成 float</span>
+<span class="t-kw">auto</span> <span class="t-name">ok</span>     = <span class="t-kw">true</span>;     <span class="t-cmt">// 右边是 bool → ok 被推成 bool</span></code></pre>
+
+<p>
+读代码时遇到 <code>auto</code>,别慌:<strong>把目光移到 <code>=</code> 右边</strong>,右边那个表达式的类型,就是这个变量的类型。在真实代码里 <code>auto</code> 常用来接那些类型名字又长又啰嗦的返回值(比如迭代器),省得人手抄一长串类型。
+</p>
+
+<h2>隐式转换 与 <code>float</code> vs <code>double</code> 的精度</h2>
+<p>
+当你把一个类型的值塞进另一个类型的盒子,C++ 会<strong>悄悄(隐式)帮你转换</strong>。最常见的是整数和小数之间:
+</p>
+
+<pre><code><span class="t-type">float</span> <span class="t-name">r</span> = <span class="t-num">5</span>;        <span class="t-cmt">// int 5 被隐式转成 float 5.0f,安全</span>
+<span class="t-type">int</span>   <span class="t-name">n</span> = <span class="t-num">5.9f</span>;     <span class="t-cmt">// float 5.9 被转成 int → 小数部分被砍掉,n 变成 5(不是四舍五入!)</span></code></pre>
+
+<p>
+读代码踩坑提醒:<strong>小数 → 整数会直接截断(truncate),不是四舍五入。</strong><code>5.9f</code> 进 int 盒子变 <code>5</code>,<code>-1.9f</code> 进 int 盒子变 <code>-1</code>。很多"为什么少了 1"的 bug 就藏在这种不起眼的转换里。
+</p>
+<p>
+再说 <code>float</code> 和 <code>double</code> 的区别:两个都装小数,但 <code>double</code> 用<strong>更多内存</strong>换来<strong>更高精度</strong>(更多有效位)。在 VFX 里这个权衡天天发生:Houdini 的点位置 <code>@P</code> 分量通常是 <strong>float</strong>(几百万个点,内存和带宽要省);而某些大坐标累加、或反复迭代的解算,会用 <strong>double</strong> 防止误差越滚越大。读代码时看到 <code>double</code>,常常是个信号:这里<em>在意精度</em>。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>float</code> vs <code>double</code> = <strong>精度 vs 内存</strong>的老权衡,跟你选纹理位深(8-bit 还是 16/32-bit EXR)是同一种取舍。点位置用 <code>float</code> 够用又省内存;大世界坐标或长链解算用 <code>double</code>,免得远处物体"抖动"——和远处几何因 float 精度不足而跳动是一个道理。
+</div>
+
+<h2>你会在真实代码里看到</h2>
+<p>下面是一段贴近 HDK 风格的代码(遍历几何上的点、读写一个 float 属性)。现在你应该能逐个认出每个变量的类型、初始值、作用域和 <code>const</code> 的用意:</p>
+
+<pre><code><span class="t-cmt">// gdp 是几何;只读传入,所以是 const(我们不改原始几何的拓扑)</span>
+<span class="t-kw">void</span> <span class="t-name">scalePscale</span>(<span class="t-kw">const</span> <span class="t-type">GU_Detail</span> *gdp, <span class="t-type">GA_RWHandleF</span> pscaleH, <span class="t-kw">const</span> <span class="t-type">float</span> factor)
+{
+    <span class="t-kw">for</span> (<span class="t-type">GA_Offset</span> <span class="t-name">ptoff</span> : gdp-&gt;getPointRange())
+    {
+        <span class="t-kw">const</span> <span class="t-type">float</span> <span class="t-name">old</span> = pscaleH.get(ptoff);  <span class="t-cmt">// 读出来就只读:old 不会再变</span>
+        <span class="t-type">float</span> <span class="t-name">scaled</span> = old * factor;        <span class="t-cmt">// 新盒子,装算好的结果</span>
+        pscaleH.set(ptoff, scaled);            <span class="t-cmt">// 写回属性</span>
+    }
+}</code></pre>
+
+<p>
+读法演示:<code>factor</code> 是 <code>const float</code> ——只读的小数输入(像只读端口)。<code>old</code> 是 <code>const float</code>,在循环每一圈里诞生、用完即弃,<strong>作用域只在循环的 <code>{ }</code> 内</strong>。<code>scaled</code> 是普通 <code>float</code>,因为它要被算出来后赋值。整段你不需要懂 <code>GA_RWHandleF</code> 具体是什么,光靠"类型 / 名字 / 初值 / const / 作用域"这五件事,就能读懂数据怎么流。
+</p>
+
+<h2>读代码易错点</h2>
+<ul>
+  <li><strong>把 <code>=</code> 看成"相等"。</strong>单独一行的 <code>a = b;</code> 是<em>赋值</em>(把 b 装进 a),不是在判断它们相等。判断相等是 <code>==</code>,且几乎只出现在 <code>if</code> / <code>while</code> 这类条件里。</li>
+  <li><strong>以为小数转整数会四舍五入。</strong>不会。<code>int n = 7.99f;</code> 得到的是 <code>7</code>,小数部分被<em>直接砍掉</em>。</li>
+  <li><strong>忽略 <code>const</code>。</strong><code>const</code> 不是装饰,它是承诺"此盒子下文不改"。读到它,你可以放心这个值不会被偷偷动;反过来,没有 <code>const</code> 的盒子才要警惕被改写。</li>
+  <li><strong>把不同作用域的同名变量当成同一个。</strong>两个函数里都有 <code>i</code>,它们是两个无关的盒子。先确认"这个名字属于哪对 <code>{ }</code>"。</li>
+  <li><strong>漏看 <code>0.5f</code> 末尾的 <code>f</code>。</strong>有 <code>f</code> 是 <code>float</code> 字面量,没有 <code>f</code> 的 <code>0.5</code> 是 <code>double</code> 字面量。在精度敏感的代码里,这个细节有时正是重点。</li>
+  <li><strong>遇到 <code>auto</code> 就以为"没类型"。</strong>它有类型,只是让你去 <code>=</code> 右边读出来。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题都用本课的拆解法:先找类型、名字、初值,再判断 <code>=</code> 还是 <code>==</code>、有没有 <code>const</code>、在哪个作用域。</p>
+<div class="quiz" id="quiz3"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/variable-assignment-and-initialization/" target="_blank">LearnCpp · 1.4 — Variable assignment and initialization</a>
+  —— 全网公认最好的免费 C++ 教程里,专讲"声明、初始化、赋值"的一节。它把 <code>=</code>(assignment)和初始化讲得最清楚,正好对应本课核心。想顺带把基本类型读全,接着看
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-fundamental-data-types/" target="_blank">4.1 — Introduction to fundamental data types</a>,
+  <code>const</code> 则在
+  <a href="https://www.learncpp.com/cpp-tutorial/constant-variables-named-constants/" target="_blank">5.1 — Constant variables (named constants)</a>。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——比如:<code>const float&amp;</code> 里那个 <code>&amp;</code> 到底是什么?为什么 HDK 里既有 <code>RWHandle</code> 又有 <code>ROHandle</code>?<code>float</code> 精度不够会怎样"抖动"?<code>auto</code> 推出来的到底是哪个类型?——直接在对话里问,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0002-tracing-the-function-body.html">第 2 课 · 追踪函数体里的数据流</a></p>
+  <p>下一课:<a href="0004-operators-expressions.html">第 4 课 · 运算符与表达式</a> —— 盒子有了,接下来看代码怎么<strong>用 <code>+ - * /</code> 和比较符把这些值算成新值</strong>。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 2 课:函数里一旦执行到 <code>return</code>,接下来会发生什么?",
+    options: ["函数立刻结束返回", "继续往下逐行跑", "回到开头重新跑"],
+    correct: 0,
+    why: "return 立刻把值吐出并结束函数,它后面的行不会再执行——这是逐行手跑代码时最容易栽的点。"
+  }
+]);
+
+renderQuiz("quiz3", [
+  {
+    q: "读这行:<code>float radius = 0.5f;</code>。这个变量的<strong>类型</strong>是什么?",
+    options: ["类型是 float", "类型是 0.5f", "类型是 radius"],
+    correct: 0,
+    why: "形状是「类型 名字 = 初值」:float 是类型,radius 是名字,0.5f 是初始值字面量。"
+  },
+  {
+    q: "代码里单独一行写着 <code>count = 10;</code>。这一行在<strong>做什么</strong>?",
+    options: ["判断两者相等", "把值赋给变量", "声明一个常量"],
+    correct: 1,
+    why: "一个等号 = 是赋值:把右边的 10 装进 count 盒子,覆盖旧值。判断相等要用两个等号 ==。"
+  },
+  {
+    q: "执行 <code>int n = 7.99f;</code> 之后,<code>n</code> 盒子里装的是?",
+    options: ["装的是 8", "装的是 7", "装的是 0"],
+    correct: 1,
+    why: "小数转整数是直接截断、不四舍五入:7.99 的小数部分被砍掉,n 得到 7。这是常见的少一坑。"
+  },
+  {
+    q: "一个变量声明成 <code>const</code> 之后,下面哪句话是<strong>对</strong>的?",
+    options: ["它的值不可再改", "它必须是整数", "它没有任何类型"],
+    correct: 0,
+    why: "const 表示只读:盒子装好值后就不准重新赋值,谁改谁报错。它和类型、整数与否都无关。"
+  },
+  {
+    q: "看到 <code>auto speed = 0.5f;</code>,<code>speed</code> 的<strong>实际类型</strong>是?",
+    options: ["实际类型是 int", "实际类型是 auto", "实际类型是 float"],
+    correct: 2,
+    why: "auto 让编译器看等号右边来推类型:右边 0.5f 是 float 字面量,所以 speed 被推成 float。"
+  },
+  {
+    q: "关于 <code>float</code> 与 <code>double</code>,下面哪句话<strong>最准确</strong>?",
+    options: ["double 精度更高些", "float 精度更高些", "两者完全等价的"],
+    correct: 0,
+    why: "double 用更多内存换更高精度;float 更省内存但精度低。点位置常用 float 省内存,精度敏感处用 double。"
+  }
+]);
+</script>
+
+</body>
+</html>

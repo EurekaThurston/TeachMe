@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 课 · 指针 pointers</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 7 课</div>
+<h1>指针 pointers —— 一个存"地址"的变量</h1>
+<p class="subtitle">这是整门课最硬的一堵墙。翻过去,你就能读懂 Houdini HDK、Unreal、各种渲染器里那些满屏的 <code>*</code> 和 <code>-&gt;</code>。慢慢来,这一课值得多花时间。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能读懂 <code>T*</code> 指针、<code>&amp;</code> 取地址、<code>*</code> 解引用、<code>nullptr</code>,说清<strong>指针和引用的区别</strong>,并且分得清读真实 DCC/HDK 代码绕不开的 <code>.</code> 与 <code>-&gt;</code>。读完这一课,你看真实 C++ 不会再被那一堆符号劝退。
+</div>
+
+<h2>热身 · 回忆第 6 课(别翻笔记)</h2>
+<p>上一课讲的是<strong>引用 references</strong> 和 <code>const&amp;</code>。先凭记忆答一题,把它捞回来——等下你会发现指针和引用是一对"近亲",先把引用想清楚,指针就好懂一半。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>先从一个你已经懂的画面出发</h2>
+<p>
+在 Houdini 里,一根<strong>连线</strong>从来不"装"数据。它只是告诉下游节点:"你要的几何在<em>那个</em> SOP 的输出口。"数据本体待在那个节点里,连线只是<strong>指向它的一根线</strong>。你顺着这根线,就能去拿、去改那份几何。
+</p>
+<p>
+<strong>指针(pointer)就是这根线。</strong> 一个普通变量 <code>float mass = 7.0;</code> 自己<em>装着</em>值 7.0;而一个指针变量不装值,它装的是"那个值在内存里的<strong>地址</strong>"——相当于一张写着门牌号的纸条。纸条本身不是房子,但顺着门牌号你能找到房子。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  普通变量 = <strong>节点里那份真正的几何数据</strong>。指针 = <strong>指向那份数据的一根连线</strong>(它只记着"数据在哪")。后面要讲的 <code>-&gt;</code>,就是"<strong>顺着这根连线钻进去,拿里面的东西</strong>"。
+</div>
+
+<h2>三个符号,一次说清:<code>T*</code> / <code>&amp;</code> / <code>*</code></h2>
+<p>指针其实只有三个动作,对应三个符号。我们一个一个拆。</p>
+
+<h3>① 声明一个指针:<code>T*</code></h3>
+<p>在类型后面加一个 <code>*</code>,就是"指向 T 的指针"。<code>int*</code> 读作"指向 int 的指针",<code>float*</code> 读作"指向 float 的指针"。</p>
+<pre><code><span class="t-type">int</span> count = <span class="t-num">42</span>;        <span class="t-cmt">// 普通变量:自己装着 42</span>
+<span class="t-type">int</span>* ptr;             <span class="t-cmt">// 一个指针:能装"某个 int 的地址",现在还没指向谁</span></code></pre>
+<p>注意:<code>int*</code> 整体是类型。<code>*</code> 贴在类型那边还是变量那边,在 C++ 里都合法(<code>int* ptr</code> 和 <code>int *ptr</code> 一样),读代码时把它看成"这是一个指针"就好。</p>
+
+<h3>② 取地址:<code>&amp;x</code></h3>
+<p>在一个变量<em>前面</em>放 <code>&amp;</code>,意思是"<strong>给我这个变量的地址</strong>"。这正好能喂给指针。</p>
+<pre><code><span class="t-type">int</span> count = <span class="t-num">42</span>;
+<span class="t-type">int</span>* ptr = &amp;count;     <span class="t-cmt">// ptr 现在指向 count(装着 count 的地址)</span></code></pre>
+
+<div class="callout callout-key">
+  <span class="label">最容易混的一点 —— 务必看懂</span>
+  <code>&amp;</code> 这个符号在<strong>两个位置</strong>意思完全不同,这是第 6 课和这一课最大的坑:<br>
+  ● 写在<strong>类型声明里</strong>,如 <code>int&amp; r = count;</code> —— 这里 <code>int&amp;</code> 是"<strong>引用类型</strong>"(上一课的内容),<code>r</code> 是 count 的别名。<br>
+  ● 写在<strong>表达式里、变量前面</strong>,如 <code>ptr = &amp;count;</code> —— 这里 <code>&amp;</code> 是"<strong>取地址运算符</strong>",意思是"拿 count 的地址"。<br>
+  判断诀窍:<code>&amp;</code> 紧跟在<strong>类型后面</strong>(<code>int&amp;</code>)→ 引用;<code>&amp;</code> 出现在<strong>等号右边、贴着一个变量名</strong>(<code>&amp;count</code>)→ 取地址。
+</div>
+
+<h3>③ 解引用:<code>*ptr</code></h3>
+<p>在一个<em>指针</em>前面放 <code>*</code>,意思是"<strong>顺着这个地址,去拿/改那里的值</strong>"。这叫<strong>解引用(dereference)</strong>。</p>
+<pre><code><span class="t-type">int</span> count = <span class="t-num">42</span>;
+<span class="t-type">int</span>* ptr = &amp;count;     <span class="t-cmt">// ptr 指向 count</span>
+
+<span class="t-type">int</span> x = *ptr;          <span class="t-cmt">// 解引用:顺着地址拿值 → x 变成 42</span>
+*ptr = <span class="t-num">100</span>;             <span class="t-cmt">// 解引用后赋值:改的是 count 本身 → count 现在是 100</span></code></pre>
+<p>
+留意:<code>*</code> 又是个"一符两义"的符号。在<strong>声明里</strong>(<code>int* ptr</code>)它表示"这是指针";在<strong>表达式里</strong>(<code>*ptr</code>)它表示"解引用、去拿值"。和 <code>&amp;</code> 一样,看它出现在<strong>类型旁边</strong>还是<strong>表达式里</strong>。
+</p>
+<p>
+把三件事连起来记:<code>&amp;</code> 把"值"变成"地址"(进),<code>*</code> 把"地址"变回"值"(出)。它俩是一对反操作。
+</p>
+
+<h2><code>nullptr</code>:一根没接到任何地方的线</h2>
+<p>
+一个指针可以"什么都不指"。这种空指针在现代 C++ 里写作 <code>nullptr</code>。它就像一根<strong>悬空、没插进任何端口的连线</strong>。</p>
+<pre><code><span class="t-type">int</span>* ptr = <span class="t-kw">nullptr</span>;    <span class="t-cmt">// 明确表示:现在什么都不指</span>
+
+<span class="t-kw">if</span> (ptr != <span class="t-kw">nullptr</span>)    <span class="t-cmt">// 读真实代码常见:先检查"线接上了吗"</span>
+{
+    *ptr = <span class="t-num">5</span>;            <span class="t-cmt">// 确认非空,才敢顺着它去改值</span>
+}</code></pre>
+<p>
+为什么要有空指针?因为很多 API 会用"返回 <code>nullptr</code>"来表示<strong>"没找到 / 失败了"</strong>。比如"按名字找一个节点",找不到就还你一个 <code>nullptr</code>。所以真实代码里到处是"<strong>先判空,再解引用</strong>"的套路——这点下面"易错点"会重点讲。
+</p>
+
+<h2>指针 vs 引用:这对近亲到底差在哪</h2>
+<p>第 6 课的引用和这一课的指针都能"指向别的变量、并改它"。但它俩有三条关键区别,读代码时要分得清:</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">问题</th><th>引用 <code>int&amp;</code></th><th>指针 <code>int*</code></th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;">能为空吗?</td><td>不能,必须绑定一个东西</td><td>能,可以是 <code>nullptr</code></td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;">能改指向吗?</td><td>不能,一旦绑定就锁死</td><td>能,随时换指别的变量</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;">取里面的值怎么写?</td><td>直接用名字,就像本体</td><td>要先 <code>*</code> 解引用</td></tr>
+</table>
+<p>
+一句话记住:<strong>引用是"焊死的别名"</strong>(必须接、不能换、用起来像本体);<strong>指针是"可插拔的线"</strong>(可以悬空、可以改插口、用前常要先解引用或判空)。正因为指针能为空、能改指向,API 设计者爱用它来表达"可有可无"和"动态查找"。
+</p>
+
+<h2>你会在真实代码里看到:HDK 的几何指针</h2>
+<p>
+下面这段是<strong>示意性</strong>的 Houdini HDK 风格代码(真实头文件更复杂,这里框出来只为让你认得这个<em>形状</em>)。一个 SOP 节点的核心函数,常常长这样:</p>
+<pre><code><span class="t-cmt">// 示意:一个 SOP 在 cook 时,Houdini 把"指向几何的指针"给你</span>
+<span class="t-type">GU_Detail</span>* <span class="t-name">buildGeometry</span>(<span class="t-type">GU_Detail</span>* gdp)
+{
+    <span class="t-kw">if</span> (gdp == <span class="t-kw">nullptr</span>)        <span class="t-cmt">// ① 先判空:线接上了吗</span>
+        <span class="t-kw">return</span> <span class="t-kw">nullptr</span>;
+
+    <span class="t-type">GA_Offset</span> pt = gdp-&gt;<span class="t-name">appendPoint</span>();   <span class="t-cmt">// ② 顺着指针调它的方法:加一个点</span>
+    gdp-&gt;<span class="t-name">setPos3</span>(pt, <span class="t-type">UT_Vector3</span>(<span class="t-num">0</span>, <span class="t-num">1</span>, <span class="t-num">0</span>));  <span class="t-cmt">// ③ 再顺着指针设这个点的位置</span>
+
+    <span class="t-kw">return</span> gdp;                  <span class="t-cmt">// ④ 把这根指向几何的线还回去</span>
+}</code></pre>
+<p>
+读法:<code>GU_Detail*</code> 就是"<strong>指向一份几何细节(点/面/属性)的指针</strong>"。Houdini 不会把整份几何<em>复制</em>给你(太大了),而是给你<strong>一根指向它的线</strong>,你顺着线就地操作。函数最后 <code>return gdp;</code> 又把这根线还回去。这就是为什么 HDK、Unreal、渲染器 API 满屏都是 <code>*</code>:<strong>大对象都用指针传来传去,只传地址、不搬数据</strong>。
+</p>
+
+<h2>关键招式:<code>.</code> 和 <code>-&gt;</code> 的区别(读 DCC 代码绕不开)</h2>
+<p>对象有成员(属性和方法)。怎么取成员,取决于你手里是<strong>对象本身</strong>还是<strong>指向对象的指针</strong>:</p>
+<pre><code><span class="t-type">GU_Detail</span>  geo;          <span class="t-cmt">// geo 是对象本体</span>
+<span class="t-type">GU_Detail</span>* gdp = &amp;geo;   <span class="t-cmt">// gdp 是指向它的指针</span>
+
+geo.<span class="t-name">appendPoint</span>();        <span class="t-cmt">// 对象/引用 → 用点  .</span>
+gdp-&gt;<span class="t-name">appendPoint</span>();        <span class="t-cmt">// 指针       → 用箭头 -&gt;</span>
+(*gdp).<span class="t-name">appendPoint</span>();     <span class="t-cmt">// 完全等价:先 * 解引用,再用点 .</span></code></pre>
+<p>
+<strong><code>p-&gt;member</code> 就是 <code>(*p).member</code> 的简写。</strong> 因为"先解引用再取成员"太常用,C++ 给了 <code>-&gt;</code> 这个快捷写法。所以记忆口诀很简单:<br>
+● 手里是<strong>对象或引用</strong>(没有 <code>*</code> 的那种)→ 用 <code>.</code><br>
+● 手里是<strong>指针</strong>(类型带 <code>*</code> 的那种)→ 用 <code>-&gt;</code>
+</p>
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>-&gt;</code> 这个箭头,就是"<strong>顺着连线钻进那个节点,去拿/调它里面的东西</strong>"。你手里只有一根线(指针),想用里面的功能,就得沿着箭头进去。手里直接就是节点本体(对象),那就用 <code>.</code> 当场取。
+</div>
+
+<h2>读代码易错点(这一节最值钱)</h2>
+<p><strong>① 对 <code>nullptr</code> 解引用 = 崩溃。</strong> 一根悬空的线,你非要顺着它去拿东西,程序当场炸(crash)。所以真实代码里 <code>if (p != nullptr)</code> / <code>if (p)</code> 这种判空随处可见——它不是啰嗦,是保命。读代码时看到判空,就知道"作者在防这根线没接上"。</p>
+<pre><code><span class="t-type">GU_Detail</span>* gdp = <span class="t-kw">nullptr</span>;
+gdp-&gt;<span class="t-name">appendPoint</span>();    <span class="t-cmt">// ✗ 危险!顺着一根空线去操作 → 崩溃</span></code></pre>
+
+<p><strong>② <code>&amp;</code> 的两副面孔,别认错。</strong> 同一个 <code>&amp;</code>,在 <code>int&amp; r</code>(类型旁)是"引用",在 <code>&amp;count</code>(变量前)是"取地址"。看位置,不看符号长相。</p>
+
+<p><strong>③ <code>*</code> 的两副面孔,也别认错。</strong> <code>int* p</code>(类型旁)是"这是指针";<code>*p</code>(表达式里)是"解引用拿值"。同样看位置。</p>
+
+<p><strong>④ 改指针 ≠ 改它指的值。</strong> <code>p = &amp;other;</code> 是"让线改插到 other 上";<code>*p = 5;</code> 才是"顺着线把那头的值改成 5"。少一个 <code>*</code>,意思天差地别。</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题在脑子里走一遍"这根线指向谁、我是在改线还是改值"。答完马上看对错和原因。</p>
+<div class="quiz" id="quiz7"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-pointers/" target="_blank">LearnCpp · 12.7 — Introduction to pointers</a>
+  —— 全网最好的免费 C++ 教程里专讲指针入门的一章。它和本课顺序几乎一致:先讲取地址 <code>&amp;</code> 和解引用 <code>*</code>,再讲指针变量、<code>nullptr</code>,并反复强调"<strong>永远先初始化指针、别解引用野指针/空指针</strong>"。看英文原版能把这一课钉牢。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 这一课是公认的难关,卡住非常正常。比如:为什么 <code>*</code> 和 <code>&amp;</code> 要一符多义?<code>gdp-&gt;foo()</code> 到底等于什么?为什么 HDK 全用指针不用引用?——直接在对话里问我,我给你画图、再举 Houdini 的例子拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0006-references.html">第 6 课 · 引用 references</a></p>
+  <p>下一课预告:<a href="0008-memory-lifetime.html">第 8 课 · 内存与生命周期</a>——一根指针指向的东西<strong>什么时候还在、什么时候没了</strong>(读真实代码里悬空指针 bug 的根源)。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 6 课:<code>void scale(float&amp; v)</code> 里的 <code>float&amp;</code> 表示参数 <code>v</code> 是一个……",
+    options: ["一份独立拷贝", "原变量的别名", "一个空的地址"],
+    correct: 1,
+    why: "类型后面的 & 表示引用,v 是传进来那个原变量的别名,函数里改 v 就是改外面的本体。"
+  }
+]);
+
+renderQuiz("quiz7", [
+  {
+    q: "<code>int n = 8; int* p = &amp;n;</code> —— 这里 <code>p</code> 里装的是什么?",
+    options: ["装着数值 8", "装着 n 地址", "装着空指针"],
+    correct: 1,
+    why: "&n 是取地址运算符,把 n 的内存地址给 p。p 装的是地址,不是值 8;值还在 n 里。"
+  },
+  {
+    q: "接上题,执行 <code>*p = 20;</code> 之后,<code>n</code> 的值变成?",
+    options: ["保持原样 8", "变成数 20", "变成空指针"],
+    correct: 1,
+    why: "*p 是解引用,顺着地址改那头的值。p 指向 n,所以等于把 n 改成 20。"
+  },
+  {
+    q: "<code>GU_Detail* gdp;</code> 想调它的方法,正确的取成员符号是?",
+    options: ["要用点号 .", "要用箭头 ->", "要用与号 &amp;"],
+    correct: 1,
+    why: "gdp 是指针(类型带 *),取成员要用箭头 ->;gdp->foo() 等价于 (*gdp).foo()。点 . 用于对象或引用本体。"
+  },
+  {
+    q: "关于 <code>nullptr</code>,下面哪句<strong>对</strong>?",
+    options: ["它指向数字零", "它什么都不指", "它必须解引用"],
+    correct: 1,
+    why: "nullptr 是空指针,表示什么都不指,像一根悬空的线。对它解引用会让程序崩溃,所以要先判空。"
+  },
+  {
+    q: "指针和引用,哪条区别<strong>正确</strong>?",
+    options: ["引用可换绑定", "指针可为空值", "引用可为空值"],
+    correct: 1,
+    why: "指针能是 nullptr、还能改指向;引用必须一开始就绑定、之后锁死、不能为空。这是两者最核心的差别。"
+  },
+  {
+    q: "代码里 <code>p = &amp;other;</code> 这一句,做的是哪件事?",
+    options: ["改它指的值", "让线改指向", "把线解引用"],
+    correct: 1,
+    why: "没有 * 解引用,只是把 other 的地址赋给 p,即让这根线改插到 other 上;要改值得写 *p = ...。"
+  }
+]);
+</script>
+
+</body>
+</html>

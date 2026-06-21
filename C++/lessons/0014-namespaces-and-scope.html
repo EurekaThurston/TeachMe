@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 14 课 · 命名空间与作用域解析 ::</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 14 课</div>
+<h1>命名空间与作用域解析 <code>::</code></h1>
+<p class="subtitle">真实代码里到处都是 <code>std::</code>、<code>A::B</code>、<code>::</code>。这一课让你一眼读懂它们指的是"去哪个范围里找这个名字"。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  看懂代码里随处可见的 <code>::</code> 和 <code>std::</code>/库前缀——理解命名空间就是<strong>"给名字分组、防止撞车"</strong>,并能读出 <code>A::B</code> 这种<strong>限定名(qualified name)</strong>到底指的是什么。
+</div>
+
+<h2>热身 · 回忆第 13 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次"头文件与编译单元"的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>从你已经懂的东西出发:节点路径</h2>
+<p>
+在 Houdini 里,你的网络是有<strong>层级</strong>的:<code>/obj/geo1/scatter1</code>。同一个名字 <code>scatter1</code> 在 <code>/obj/geo1</code> 里和在 <code>/obj/geo2</code> 里互不打架,因为<strong>路径前缀</strong>把它们分到了不同的"范围"里。斜杠 <code>/</code> 告诉你:沿着这条路径,去那个范围里找这个节点。
+</p>
+<p>
+C++ 的<strong>命名空间(namespace)</strong>就是这个思路:把一堆名字归到一个组里,避免不同库的同名冲突。而<strong>作用域解析运算符(scope resolution operator)</strong><code>::</code> 就像那个斜杠——它告诉编译器:<em>去左边那个范围里,找右边这个名字</em>。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  命名空间像 Houdini 的<strong>网络层级 / 节点路径</strong>(<code>/obj/geo1/...</code>);<code>::</code> 像路径里的<strong>分隔符</strong>,告诉你"去哪个范围里找这个名字"。而 <code>std::</code> 就像一个官方工具库统一贴的<strong>命名前缀</strong>——看到它,你就知道这个名字来自 C++ 标准库,而不是别人写的库。
+</div>
+
+<h2>命名空间是什么:防撞车的名字分组</h2>
+<p>
+假设两个库各自都写了一个叫 <code>length</code> 的函数。如果它们的名字都"裸"在外面,编译器就懵了:你说的 <code>length</code> 是哪一个?这叫<strong>命名冲突(naming collision)</strong>。命名空间的解法是:每个库把自己的名字塞进一个带名字的"盒子"里。
+</p>
+
+<pre><code><span class="t-kw">namespace</span> <span class="t-name">physics</span> {
+    <span class="t-type">float</span> <span class="t-name">length</span>(<span class="t-type">float</span> dx, <span class="t-type">float</span> dy);   <span class="t-cmt">// 这是 physics 盒子里的 length</span>
+}
+
+<span class="t-kw">namespace</span> <span class="t-name">geo</span> {
+    <span class="t-type">float</span> <span class="t-name">length</span>(<span class="t-type">int</span> curveId);          <span class="t-cmt">// 这是 geo 盒子里的 length,不冲突</span>
+}</code></pre>
+
+<p>
+现在两个 <code>length</code> 和平共处。调用时,你用 <code>::</code> 指明去哪个盒子里找:
+</p>
+
+<pre><code><span class="t-type">float</span> a = physics::<span class="t-name">length</span>(<span class="t-num">3.0f</span>, <span class="t-num">4.0f</span>);   <span class="t-cmt">// 去 physics 盒子里找 length</span>
+<span class="t-type">float</span> b = geo::<span class="t-name">length</span>(<span class="t-num">12</span>);             <span class="t-cmt">// 去 geo 盒子里找 length</span></code></pre>
+
+<p>
+<code>physics::length</code> 这种"前缀 + <code>::</code> + 名字"的整体写法,叫做<strong>限定名(qualified name)</strong>。读它的方法永远一样:<em>左边是范围,右边是要找的名字</em>。
+</p>
+
+<h2><code>::</code> 的几种读法(同一个动作,不同场景)</h2>
+<p>
+<code>::</code> 左边可以是好几种东西。别被吓到——它们的<strong>含义完全一致</strong>:"在左边这个范围里,找右边这个名字"。下面是你会反复遇到的四种:
+</p>
+
+<pre><code>std::<span class="t-name">vector</span>          <span class="t-cmt">// ① 命名空间::名字 —— 标准库 std 里的 vector</span>
+Camera::<span class="t-name">reset</span>      <span class="t-cmt">// ② 类名::成员 —— Camera 这个类的方法(承接第 11-12 课)</span>
+Mesh::<span class="t-name">Vertex</span>      <span class="t-cmt">// ③ 外层::内层 —— Mesh 里面嵌套定义的类型 Vertex</span>
+math::pi          <span class="t-cmt">// ④ 命名空间::常量 —— math 命名空间里的一个值</span></code></pre>
+
+<p><strong>① <code>std::vector</code></strong>——<code>std</code> 是 standard 的缩写,整个 C++ 标准库的名字都在这个命名空间里。看到 <code>std::</code> 开头,直接读作"标准库提供的……"。<code>std::vector</code> 是标准库的动态数组,<code>std::string</code> 是字符串,<code>std::cout</code> 是控制台输出。</p>
+
+<p><strong>② <code>Camera::reset</code></strong>——这里左边是一个<strong>类(class)</strong>,不是命名空间。它指 <code>Camera</code> 类的成员(常见于静态成员或在类外定义方法体时)。这正是第 11-12 课里"对象有自己的成员"那条线的延续:<code>::</code> 在这里说的是"<code>reset</code> 这个名字属于 <code>Camera</code> 这个类"。</p>
+
+<p><strong>③ <code>Mesh::Vertex</code></strong>——一个类型可以定义在另一个类型<em>内部</em>,这叫<strong>嵌套类型(nested type)</strong>。<code>Mesh::Vertex</code> 读作"<code>Mesh</code> 里面那个 <code>Vertex</code> 类型"。在真实代码里你会看到 <code>Mesh::Vertex v;</code> 这样声明一个变量。</p>
+
+<p><strong>④ <code>math::pi</code></strong>——命名空间里不只能放函数,也能放常量、类型。读法不变:<code>math</code> 范围里那个叫 <code>pi</code> 的东西。</p>
+
+<div class="callout callout-key">
+  <span class="label">读代码的万能口诀</span>
+  无论 <code>::</code> 左边是命名空间、类、还是外层类型,你都用<strong>同一句话</strong>去读它:"<strong>在左边这个范围里,找右边这个名字</strong>"。先别纠结左边到底是哪一种——能读出"它属于谁"就已经够你看懂代码了。
+</div>
+
+<h2><code>using namespace std;</code> 是什么</h2>
+<p>
+老写 <code>std::</code> 前缀有点啰嗦。<code>using namespace std;</code> 这行的意思是:<strong>把 <code>std</code> 命名空间里的名字引入当前范围</strong>,这样你就能直接写 <code>vector</code>、<code>cout</code>,省掉 <code>std::</code> 前缀。
+</p>
+
+<pre><code><span class="t-kw">using</span> <span class="t-kw">namespace</span> std;        <span class="t-cmt">// 把 std 里的名字"摊"到当前范围</span>
+
+vector&lt;<span class="t-type">float</span>&gt; weights;     <span class="t-cmt">// 现在不写 std:: 也能用了</span>
+cout &lt;&lt; weights.<span class="t-name">size</span>();   <span class="t-cmt">// cout 同理</span></code></pre>
+
+<p>
+为什么大型代码里<strong>通常不建议在头文件里这么写</strong>?因为头文件会被很多 <code>.cpp</code> 包含(回想第 13 课)。一旦头文件里写了 <code>using namespace std;</code>,它就把 <code>std</code> 的全部名字强行摊给<em>每一个</em>包含它的文件——这会悄悄把命名空间"防撞车"的好处给抵消掉,重新引入冲突风险。所以真实代码里你常看到:<code>.cpp</code> 内部偶尔用,头文件里几乎从不用,而是老老实实写全 <code>std::</code> 前缀。<strong>读代码时看到全写的 <code>std::</code>,别嫌啰嗦——那是负责任的写法。</strong>
+</p>
+
+<h2>HDK 里的 <code>UT_</code> / <code>GA_</code> 前缀:也是"分组防撞",但不一样</h2>
+<p>
+如果你读过 Houdini 的 C++ SDK(HDK),会看到满屏的 <code>UT_Vector3</code>、<code>GA_Offset</code>、<code>GU_Detail</code>、<code>GEO_Primitive</code>。这些 <code>UT_</code>/<code>GA_</code>/<code>GU_</code>/<code>GEO_</code> 前缀的<strong>作用</strong>和命名空间类似——都是为了"分组、防撞车",让你一眼看出这个名字属于哪个子系统(<code>UT_</code> = Utility,<code>GA_</code> = Geometry Attribute,等等)。
+</p>
+<p>
+但要明确区分:这些<strong>大多只是类名前缀,不是真正的命名空间</strong>。也就是说,<code>UT_Vector3</code> 是一整个类的名字(下划线只是名字的一部分),你<strong>不能</strong>写成 <code>UT::Vector3</code>。它跟 <code>std::vector</code> 那种真·命名空间在<em>形式</em>上不同:
+</p>
+
+<pre><code>UT_Vector3 v;          <span class="t-cmt">// UT_ 是名字前缀,整体是一个类名(没有 ::)</span>
+std::vector&lt;<span class="t-type">int</span>&gt; nums;   <span class="t-cmt">// std 是真正的命名空间,用 :: 进入</span></code></pre>
+
+<p>
+读 HDK 代码时记住这条区别:<strong>有 <code>::</code> 的才是命名空间或类作用域;只是个下划线前缀的,是命名约定。</strong>两者目的相同(防撞),形式不同。
+</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>把上面所有读法揉在一起,下面是一段贴近真实风格的片段——逐个限定名读过去:</p>
+
+<pre><code><span class="t-cmt">// 标准库容器,装一组采样点</span>
+std::vector&lt;UT_Vector3&gt; samples;
+
+<span class="t-cmt">// GA_ 前缀:几何属性句柄(HDK 命名约定,不是命名空间)</span>
+GA_Offset ptOff = detail-&gt;<span class="t-name">pointOffset</span>(<span class="t-num">0</span>);
+
+<span class="t-cmt">// 嵌套类型:Mesh 内部定义的 Vertex</span>
+Mesh::Vertex first = mesh.<span class="t-name">getVertex</span>(<span class="t-num">0</span>);
+
+<span class="t-cmt">// 命名空间里的常量 + 标准库数学函数</span>
+<span class="t-type">float</span> circ = <span class="t-num">2.0f</span> * math::pi * std::<span class="t-name">sqrt</span>(area);
+
+<span class="t-cmt">// 类的静态成员:Camera 这个类范围里的 reset</span>
+Camera::<span class="t-name">reset</span>();</code></pre>
+
+<p>
+读这一段,你不需要知道每个函数<em>怎么实现</em>。你只要能说出每个 <code>::</code> 左边是"哪个范围"、右边是"找什么名字",就已经读懂了它的结构。这就是本课的核心技能。
+</p>
+
+<h2>读代码易错点</h2>
+<p><strong>易错点 ① 把 <code>::</code> 当成 <code>.</code> 或 <code>-&gt;</code>。</strong> 它们看着都"连接两个名字",但意思完全不同:</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;"><th style="padding:0.35rem 0;">写法</th><th>在问什么</th></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>A::b</code></td><td>在 <strong>范围 A</strong> 里找名字 <code>b</code>(编译期的"去哪找")</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>obj.b</code></td><td>访问 <strong>某个对象</strong> <code>obj</code> 的成员 <code>b</code>(运行期的具体值)</td></tr>
+  <tr><td style="padding:0.35rem 0;"><code>ptr-&gt;b</code></td><td>访问 <strong>指针指向的对象</strong> 的成员 <code>b</code>(等价于 <code>(*ptr).b</code>)</td></tr>
+</table>
+<p>
+一句话:<code>::</code> 是"<strong>在哪个范围里找这个名字</strong>",不是"访问某个对象身上的东西"。<code>std::cout</code> 不是"对象 std 的成员 cout",而是"命名空间 std 里那个叫 cout 的东西"。
+</p>
+
+<p><strong>易错点 ② 漏掉前缀导致找不到名字。</strong> 如果你把 <code>std::sort</code> 写成裸的 <code>sort</code>,而当前范围又没有 <code>using namespace std;</code>,编译器会报错说找不到 <code>sort</code>。读别人代码时反过来想:如果一个名字没有任何前缀也能用,那它要么在当前命名空间里、要么前面有 <code>using</code> 把它引进来了——找一找上下文。</p>
+
+<p><strong>易错点 ③ 把 HDK 的下划线前缀误当成命名空间。</strong> 看到 <code>UT_Vector3</code> 别试图拆成 <code>UT::Vector3</code>——下划线是名字的一部分。只有真正带 <code>::</code> 的才是作用域。</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>读限定名,凭理解作答。每题答完会马上告诉你对错和原因。</p>
+<div class="quiz" id="quiz14"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/user-defined-namespaces-and-the-scope-resolution-operator/" target="_blank">LearnCpp · 7.2 — User-defined namespaces and the scope resolution operator</a>
+  —— 权威免费教程里专讲命名空间与 <code>::</code> 的一节:它把"<code>::</code> 让编译器去左操作数的作用域里找右操作数"讲得非常清楚。配套的 2.9 节 <em>Naming collisions and an introduction to namespaces</em> 讲"为什么需要命名空间",一起看更完整。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——<code>A::B::c</code> 这种连续好几层的怎么读?<code>::name</code>(左边空着)是什么意思?为什么 <code>std::vector&lt;int&gt;</code> 里还有尖括号?<code>using</code> 和 <code>using namespace</code> 区别在哪?——直接在对话里问我,卡住很正常,问出来就通了。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0013-headers-and-compilation.html">第 13 课 · 头文件与编译单元</a></p>
+  <p>下一课预告:<a href="0015-templates-for-readers.html">第 15 课 · 模板作为读者</a>——<code>std::vector&lt;float&gt;</code> 那对尖括号到底在说什么,带着"读者视角"看懂模板。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 13 课:一个名字<strong>声明在头文件、定义在 .cpp</strong>,如果忘了写定义,通常会在<strong>哪个阶段</strong>报错?",
+    options: ["在链接阶段报错出现", "在编译阶段报错出现", "在运行阶段报错出现"],
+    correct: 0,
+    why: "声明能让编译阶段通过(编译器只需知道签名);真正缺定义要到链接阶段把各文件拼起来时才暴露,这就是 linker error。"
+  }
+]);
+
+renderQuiz("quiz14", [
+  {
+    q: "<code>std::vector</code> 里的 <code>std</code> 指的是什么?",
+    options: ["一个普通对象的名字实例", "C 语言标准库的简称缩写", "C++ 标准库所在命名空间"],
+    correct: 2,
+    why: "std 是 C++ 标准库的命名空间;std::vector 读作'标准库里那个 vector'。它不是某个对象,而是一个范围。"
+  },
+  {
+    q: "作用域解析运算符 <code>::</code> 的作用,最准确的一句是?",
+    options: ["在左边范围里找右边名字", "把左边对象的成员值取出", "让左右两个变量相加起来"],
+    correct: 0,
+    why: ":: 告诉编译器去左操作数(命名空间/类)的作用域里查找右操作数这个名字;它不访问对象成员,也不做运算。"
+  },
+  {
+    q: "<code>Mesh::Vertex v;</code> 这行里,<code>Vertex</code> 最可能是什么?",
+    options: ["Mesh 对象里存的一个值", "Mesh 内部定义的嵌套类型", "Mesh 自己调用的某函数名"],
+    correct: 1,
+    why: "用在类型声明位置、且通过 类名:: 限定,Vertex 是定义在 Mesh 内部的嵌套类型;这里在用它声明变量 v。"
+  },
+  {
+    q: "关于 HDK 里的 <code>UT_Vector3</code>,下面哪句<strong>对</strong>?",
+    options: ["它可以改写成 UT::Vector3", "UT_ 是名字前缀非命名空间", "它是标准库提供的类模板"],
+    correct: 1,
+    why: "UT_ 只是类名前缀(下划线是名字一部分),不是命名空间,不能写成 UT::Vector3;它来自 HDK,不是标准库。"
+  },
+  {
+    q: "为什么<strong>头文件里</strong>通常不写 <code>using namespace std;</code>?",
+    options: ["头文件根本无法使用该语句", "它会拖慢整个程序运行速度", "它会把名字摊给所有包含者"],
+    correct: 2,
+    why: "头文件被许多 .cpp 包含,这句会把 std 全部名字强行引入每个包含者,重新带来命名冲突风险,抵消命名空间的好处。"
+  },
+  {
+    q: "下面哪一个<strong>不是</strong>在'某个范围里找名字',而是'访问对象的成员'?",
+    options: ["写成 std::cout 输出", "写成 camera.reset 调用", "写成 Camera::reset 调用"],
+    correct: 1,
+    why: "camera.reset 用的是点号,访问具体对象 camera 的成员;另外两个用 ::,是在命名空间/类这个范围里找名字。"
+  }
+]);
+</script>
+
+</body>
+</html>

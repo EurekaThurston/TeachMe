@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课 · 追踪函数体里的数据流</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 2 课</div>
+<h1>走进 <code>{ }</code>:追踪一个值怎么流过函数</h1>
+<p class="subtitle">上一课你读懂了"合同"。这一课你当一次 CPU,亲手跑一遍代码,算出它吐什么。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  给定具体输入,你能<strong>逐行用手"执行"</strong>一个带 <code>if</code> 的函数,准确说出它返回什么。这就是读代码时最核心的动作:<em>在脑子里跑一遍</em>。
+</div>
+
+<h2>热身 · 回忆上一课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次的东西捞回来——这种"主动回忆"比重看一遍记得牢得多。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>同一个 clamp,这次看里面</h2>
+<pre><code><span class="t-type">float</span> <span class="t-name">clamp</span>(<span class="t-type">float</span> value, <span class="t-type">float</span> minVal, <span class="t-type">float</span> maxVal)
+{
+    <span class="t-kw">if</span> (value &lt; minVal) <span class="t-kw">return</span> minVal;   <span class="t-cmt">// 太小 → 顶到下限</span>
+    <span class="t-kw">if</span> (value &gt; maxVal) <span class="t-kw">return</span> maxVal;   <span class="t-cmt">// 太大 → 压到上限</span>
+    <span class="t-kw">return</span> value;                         <span class="t-cmt">// 不大不小 → 原样放行</span>
+}</code></pre>
+
+<h2>三条你需要的规则</h2>
+
+<p><strong>① 从上往下,一行一行执行。</strong> 代码像一份从头读到尾的步骤清单。</p>
+
+<p><strong>② <code>if (条件)</code> 是一道闸门。</strong> 括号里的条件算出来要么<em>真</em>要么<em>假</em>。真 → 执行它后面那句;假 → 跳过那句,继续往下。比较符号:</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;"><th style="padding:0.35rem 0;">写法</th><th>意思</th></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>a &lt; b</code></td><td>a 小于 b 吗</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>a &gt; b</code></td><td>a 大于 b 吗</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.35rem 0;"><code>a == b</code></td><td>a 等于 b 吗(<strong>两个</strong>等号!)</td></tr>
+  <tr><td style="padding:0.35rem 0;"><code>a != b</code></td><td>a 不等于 b 吗</td></tr>
+</table>
+
+<p><strong>③ <code>return</code> 是立刻退出。</strong> 一旦执行到 <code>return</code>,函数当场把那个值吐出去、<em>结束</em>,后面的行根本不会再跑。这点最关键——很多人读错就是忘了 return 会"提前离场"。</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  把函数体想成 Houdini 的一串 <strong>Switch / 节点链</strong>:<code>if</code> 像一个根据条件决定走哪条线的开关,<code>return</code> 就是<strong>直接连到输出端口</strong>——数据一旦接到输出,后面的节点就不参与了。
+</div>
+
+<h2>跟我手跑一遍:<code>clamp(5.0, 0.0, 1.0)</code></h2>
+<p>把 <code>value=5.0</code>、<code>minVal=0.0</code>、<code>maxVal=1.0</code> 代进去,逐行执行:</p>
+<pre><code><span class="t-cmt">// value=5.0, minVal=0.0, maxVal=1.0</span>
+if (5.0 &lt; 0.0)  → 假   <span class="t-cmt">// 5 不小于 0,跳过这行</span>
+if (5.0 &gt; 1.0)  → 真   <span class="t-cmt">// 5 大于 1,执行 → return 1.0,结束!</span>
+<span class="t-cmt">// 第三行 return value 永远到不了</span></code></pre>
+<p>结果:<strong>返回 <code>1.0</code></strong>。5 被压到了上限。你刚刚就"读懂"了这段代码——不是猜,是跑出来的。</p>
+
+<h2>换你跑 · 立刻反馈</h2>
+<p>每题都用上面那三条规则,在脑子里跑一遍再答。</p>
+<div class="quiz" id="quiz2"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-if-statements/" target="_blank">LearnCpp · 4.10 — Introduction to if statements</a>
+  —— 权威教程里专讲 <code>if</code> 的一节,例子干净。看完你对"条件 → 真假 → 执行或跳过"会更踏实。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:为什么相等要写两个等号 <code>==</code>?如果两个 <code>if</code> 都成立会怎样?<code>else</code> 又是什么?——直接问,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0001-reading-a-function-signature.html">第 1 课 · 读懂函数签名</a></p>
+  <p>下一课预告:<strong>变量与赋值</strong>——代码怎么把算出来的中间结果"存"进一个盒子里反复用(读真实代码绕不开的一环)。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆:<code>float getMass(int objectId)</code> 这个函数<strong>返回</strong>什么类型?",
+    options: ["返回 int 型", "返回 float 型", "什么都不返回"],
+    correct: 1,
+    why: "签名最前面的 float 是返回类型;int 是参数 objectId 的类型。这就是上一课的'读合同'。"
+  }
+]);
+
+renderQuiz("quiz2", [
+  {
+    q: "<code>clamp(0.3, 0.0, 1.0)</code> 返回什么?(value=0.3 在 0 和 1 之间)",
+    options: ["返回 0.0", "返回 0.3", "返回 1.0"],
+    correct: 1,
+    why: "0.3<0.0 假,跳过;0.3>1.0 假,跳过;走到最后 return value,即 0.3 原样放行。"
+  },
+  {
+    q: "<code>clamp(-2.0, 0.0, 1.0)</code> 返回什么?",
+    options: ["返回 0.0", "返回 1.0", "返回 -2.0"],
+    correct: 0,
+    why: "第一行 -2.0<0.0 为真 → return minVal,即 0.0,函数当场结束。"
+  },
+  {
+    q: "关于 <code>return</code>,下面哪句<strong>对</strong>?",
+    options: ["返回后继续往下跑", "返回后函数就结束", "返回会循环再来"],
+    correct: 1,
+    why: "return 立刻把值吐出并结束函数,它后面的行不会执行——这是读代码最容易栽的点。"
+  },
+  {
+    q: "判断'a 是否等于 b',C++ 里正确写法是?",
+    options: ["写成 a = b", "写成 a == b", "写成 a => b"],
+    correct: 1,
+    why: "两个等号 == 才是'比较是否相等';单个 = 是'赋值'(下一课的内容),写错会改变行为。"
+  }
+]);
+</script>
+
+</body>
+</html>

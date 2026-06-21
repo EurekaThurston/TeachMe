@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 13 课 · 头文件与编译单元</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 13 课</div>
+<h1>头文件与编译单元 —— 代码是怎么拼起来的</h1>
+<p class="subtitle">前面你都在读单个函数、单个类。这一课往后退一步,看清整个项目:几十个 <code>.h</code> 和 <code>.cpp</code> 是怎么变成一个能跑的程序的。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  看懂一个真实 C++ 项目为什么分成 <code>.h</code> 和 <code>.cpp</code>、<code>#include</code> 在做什么,以及"<strong>编译</strong>"和"<strong>链接</strong>"两步分别在干嘛。这是你以后读懂任何<strong>构建报错</strong>的前提。
+</div>
+
+<h2>热身 · 回忆第 12 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次 class 深入的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>为什么代码要分成两种文件</h2>
+<p>
+你打开一个真实的 C++ 工程(比如 Houdini 的 HDK、某个渲染器的源码),会看到成对出现的文件:<code>Vector3.h</code> 和 <code>Vector3.cpp</code>、<code>Camera.h</code> 和 <code>Camera.cpp</code>……为什么不写在一个文件里?
+</p>
+<p>
+分工很简单,记住这一句:<strong><code>.h</code> 放声明(declaration),<code>.cpp</code> 放定义(definition)</strong>。
+</p>
+<ul>
+  <li><strong>声明 declaration</strong>:这个函数 / 类<em>长什么样</em>——名字、参数、返回类型。就是你第 1 课读的那个<strong>函数签名</strong>,只是末尾加个分号、没有 <code>{ }</code> 实现。</li>
+  <li><strong>定义 definition</strong>:具体<em>怎么实现</em>——花括号里那一堆真正干活的代码。</li>
+</ul>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>.h</code> 像一个节点 / HDA 的<strong>接口:参数面板(对外长什么样,有哪些输入输出端口)</strong>;<code>.cpp</code> 像它<strong>内部的实现网络</strong>。别人调用你的节点时,只需要看参数面板(<code>.h</code>),根本不用关心里面那张网怎么连(<code>.cpp</code>)。
+</div>
+
+<h2>一个贯穿全课的配对例子:Vector3</h2>
+<p>先看头文件。它只<strong>承诺</strong>有这些东西,但一行实现都没有:</p>
+
+<pre><code><span class="t-cmt">// ===== Vector3.h —— 声明(对外的接口) =====</span>
+<span class="t-kw">#pragma once</span>
+
+<span class="t-kw">struct</span> <span class="t-type">Vector3</span> {
+    <span class="t-type">float</span> x, y, z;
+
+    <span class="t-type">float</span> <span class="t-name">length</span>() <span class="t-kw">const</span>;          <span class="t-cmt">// 声明:有这个函数,但没写实现</span>
+    <span class="t-type">Vector3</span> <span class="t-name">normalized</span>() <span class="t-kw">const</span>;   <span class="t-cmt">// 声明:同上</span>
+};
+
+<span class="t-type">float</span> <span class="t-name">dot</span>(<span class="t-kw">const</span> <span class="t-type">Vector3</span>&amp; a, <span class="t-kw">const</span> <span class="t-type">Vector3</span>&amp; b);  <span class="t-cmt">// 声明,注意结尾的分号</span></code></pre>
+
+<p>
+注意:每行末尾是<strong>分号 <code>;</code></strong>,而不是 <code>{ }</code>。这就是"声明":只说签名,不说怎么做。现在看配对的源文件,它把实现补上:
+</p>
+
+<pre><code><span class="t-cmt">// ===== Vector3.cpp —— 定义(具体实现) =====</span>
+<span class="t-kw">#include</span> <span class="t-name">"Vector3.h"</span>   <span class="t-cmt">// 先把上面那份声明"贴"进来</span>
+<span class="t-kw">#include</span> &lt;cmath&gt;        <span class="t-cmt">// 标准库的 sqrt 在这里</span>
+
+<span class="t-type">float</span> <span class="t-type">Vector3</span>::<span class="t-name">length</span>() <span class="t-kw">const</span> {
+    <span class="t-kw">return</span> std::<span class="t-name">sqrt</span>(x*x + y*y + z*z);   <span class="t-cmt">// 真正干活的代码</span>
+}
+
+<span class="t-type">Vector3</span> <span class="t-type">Vector3</span>::<span class="t-name">normalized</span>() <span class="t-kw">const</span> {
+    <span class="t-type">float</span> len = <span class="t-name">length</span>();
+    <span class="t-kw">return</span> { x/len, y/len, z/len };
+}
+
+<span class="t-type">float</span> <span class="t-name">dot</span>(<span class="t-kw">const</span> <span class="t-type">Vector3</span>&amp; a, <span class="t-kw">const</span> <span class="t-type">Vector3</span>&amp; b) {
+    <span class="t-kw">return</span> a.x*b.x + a.y*b.y + a.z*b.z;
+}</code></pre>
+
+<p>
+那个 <code>Vector3::</code> 前缀(下一课 14 讲 <code>::</code>)意思是"这是属于 <code>Vector3</code> 的 <code>length</code>"。<code>.cpp</code> 里写实现时,必须告诉编译器它对应 <code>.h</code> 里的哪个声明。<strong>声明和定义必须一字不差地匹配</strong>(类型、参数都得对上),否则编译器认为你说的是两个不同的东西。
+</p>
+
+<h2><code>#include</code> 到底在做什么</h2>
+<p>
+<code>#include "Vector3.h"</code> 不是什么神秘的"导入"。它是一条<strong>预处理器(preprocessor)</strong>指令,字面意思就是:在<em>真正编译之前</em>,把 <code>Vector3.h</code> 这个文件的<strong>全部内容,原封不动地复制粘贴</strong>到这一行的位置。
+</p>
+<p>
+预处理器是编译之前的一道"文本替换"工序。以 <code>#</code> 开头的几句都归它管,先认识三个最常见的:
+</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">写法</th><th>它在编译前做的事</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>#include "x.h"</code></td><td>把 x.h 的内容整段贴到此处</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>#define PI 3.14</code></td><td>把后文出现的 PI 文本替换成 3.14</td></tr>
+  <tr><td style="padding:0.4rem 0;"><code>#pragma once</code></td><td>保证这个头文件只被贴进来一次(下文讲)</td></tr>
+</table>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>#include "Vector3.h"</code> 像在你的场景里<strong>引用进一个现成的 HDA 定义</strong>:你没有重写它的内部网络,只是把它的"接口契约"拉进来,这样你的代码就知道 <code>Vector3</code>、<code>dot()</code> 这些名字代表什么、能怎么用。
+</div>
+
+<h2>为什么需要 <code>#pragma once</code> / include guard</h2>
+<p>
+既然 <code>#include</code> 是"复制粘贴",就有个麻烦:如果 <code>A.h</code> 包含了 <code>Vector3.h</code>,你的 <code>main.cpp</code> 又同时包含了 <code>A.h</code> 和 <code>Vector3.h</code>,那 <code>Vector3</code> 的定义会被贴<strong>两遍</strong>。同一个 <code>struct Vector3</code> 出现两次,编译器会报"重复定义"。
+</p>
+<p>
+解决办法就是头文件第一行那句 <code>#pragma once</code>:它告诉预处理器"<strong>这个文件只贴一次,重复的 <code>#include</code> 直接忽略</strong>"。你也会看到老式写法,叫 <strong>include guard(包含保护)</strong>,效果一样:
+</p>
+
+<pre><code><span class="t-cmt">// 老式 include guard —— 和 #pragma once 等价</span>
+<span class="t-kw">#ifndef</span> VECTOR3_H      <span class="t-cmt">// 如果还没定义过 VECTOR3_H 这个标记……</span>
+<span class="t-kw">#define</span> VECTOR3_H      <span class="t-cmt">// ……就定义它(立个旗子)</span>
+
+<span class="t-kw">struct</span> <span class="t-type">Vector3</span> { <span class="t-type">float</span> x, y, z; };
+
+<span class="t-kw">#endif</span>                 <span class="t-cmt">// 第二次贴进来时旗子已立,整段被跳过</span></code></pre>
+
+<p>看到任意一个头文件顶上有 <code>#pragma once</code> 或这种 <code>#ifndef / #define / #endif</code> 包夹,你就知道:这是在<strong>防止重复包含</strong>,不是什么业务逻辑,扫一眼即可。</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>真实工程里 <code>.cpp</code> 顶部往往有一长串 <code>#include</code>。这是一段 HDK(Houdini Development Kit)风格的头部,扫一眼能认出层次就够了:</p>
+
+<pre><code><span class="t-cmt">// ===== SOP_MyDeform.cpp 的开头 =====</span>
+<span class="t-kw">#include</span> <span class="t-name">"SOP_MyDeform.h"</span>   <span class="t-cmt">// 1) 配对的自家头文件,通常放最前</span>
+
+<span class="t-kw">#include</span> &lt;SOP/SOP_Node.h&gt;     <span class="t-cmt">// 2) HDK 提供的节点基类</span>
+<span class="t-kw">#include</span> &lt;GEO/GEO_Point.h&gt;    <span class="t-cmt">//    几何点的接口</span>
+<span class="t-kw">#include</span> &lt;UT/UT_Vector3.h&gt;    <span class="t-cmt">//    Houdini 自己的向量类型</span>
+
+<span class="t-kw">#include</span> &lt;vector&gt;             <span class="t-cmt">// 3) C++ 标准库</span>
+<span class="t-kw">#include</span> &lt;cmath&gt;</code></pre>
+
+<p>
+两种括号的区别:<code>"双引号"</code> 一般是<strong>你自己项目里的</strong>头文件;<code>&lt;尖括号&gt;</code> 一般是<strong>库或系统</strong>提供的头文件(标准库、HDK 等)。读代码时,这串 <code>#include</code> 就是这个文件的"依赖清单"——它用到了哪些外部东西,一目了然。
+</p>
+
+<h2>关键:编译 → 链接,是两步</h2>
+<p>
+从"一堆 <code>.cpp</code>"到"一个能跑的程序",中间有两个独立阶段。搞清这两步,你才能看懂构建报错出在哪。
+</p>
+<p>
+<strong>① 编译(compile):每个 <code>.cpp</code> 单独处理。</strong> 编译器一次只看一个 <code>.cpp</code>(连同它 <code>#include</code> 进来的所有声明),把它翻译成一个<strong>目标文件(object file,<code>.o</code> 或 <code>.obj</code>)</strong>。一个 <code>.cpp</code> 加上它包含的头文件,合起来叫一个<strong>编译单元(translation unit)</strong>。这一步里,编译器只要看到<strong>声明</strong>就满意了——它知道 <code>dot()</code> 长什么样,就允许你调用,哪怕实现还在别的文件里。
+</p>
+<p>
+<strong>② 链接(link):把所有目标文件拼到一起。</strong> 编译完每个 <code>.cpp</code> 各得一个 <code>.o</code>。<strong>链接器(linker)</strong>负责把它们缝合成最终的可执行文件 / 库:谁调用了 <code>dot()</code>,就去所有 <code>.o</code> 里找到 <code>dot()</code> 的<strong>定义</strong>,把这根线接上。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <strong>编译</strong>像分别检查每一个节点内部接得通不通(单个节点自己的问题);<strong>链接</strong>像最后<strong>把所有节点连成一张能跑的大网</strong>——某个输入端口期待有人喂数据,链接器就负责找到那根输出线接上。少了哪根线,网就跑不起来。
+</div>
+
+<h2>读代码易错点:链接错误 ≠ 编译错误</h2>
+<p>这是本课最值钱的一节。两类报错出现在不同阶段,意味着完全不同的毛病:</p>
+
+<p><strong>编译错误(compiler error):语法 / 类型问题,出在单个文件内。</strong> 比如少了分号、类型对不上、用了没声明过的名字。报错会明确指到<strong>某个文件的某一行</strong>。</p>
+<pre><code><span class="t-cmt">// 典型编译错误长这样:</span>
+Vector3.cpp:7:12: error: 'sqrt' was not declared in this scope
+<span class="t-cmt">// → 在第 7 行,某个名字没声明(可能忘了 #include &lt;cmath&gt;)</span></code></pre>
+
+<p><strong>链接错误(linker error):声明了、却找不到定义。</strong> 编译每个文件都过了(因为声明都在),但链接器去拼的时候,发现某个函数<em>谁都没实现</em>。报错信息里通常没有具体行号,而是一串符号名:</p>
+<pre><code><span class="t-cmt">// 典型链接错误长这样(措辞按编译器不同):</span>
+undefined reference to `dot(Vector3 const&amp;, Vector3 const&amp;)'   <span class="t-cmt">// GCC/Clang</span>
+unresolved external symbol "float dot(...)"                    <span class="t-cmt">// MSVC</span>
+<span class="t-cmt">// → 声明有(.h 里写了),定义没有:可能 Vector3.cpp 没被加进构建</span></code></pre>
+
+<p>
+看到 <code>undefined reference</code> / <code>unresolved external</code> 这两个关键词,立刻反应:<strong>这是链接错误,不是语法错误</strong>。问题不在你正盯着的那行代码,而在"<strong>某个声明没有对应的定义被编译进来</strong>"——通常是某个 <code>.cpp</code> 漏加进了构建,或者库没链上。<strong>盯着 <code>.h</code> 改语法是没用的</strong>。
+</p>
+
+<h3>三个最常踩的坑</h3>
+<ul>
+  <li><strong>把链接错误当语法错误。</strong> 看到 <code>unresolved external</code> 就去检查分号、类型——白费力气。它说的是"定义没找到",该去查构建里有没有漏掉那个 <code>.cpp</code> 或库。</li>
+  <li><strong>改了 <code>.cpp</code> 没更新 <code>.h</code>(反之亦然)。</strong> 比如给 <code>dot</code> 加了第三个参数,只改了 <code>.cpp</code> 的定义,忘了改 <code>.h</code> 的声明。两边对不上,调用方按旧签名调用 → 链接时找不到匹配的新定义。改签名要<strong>两边一起改</strong>。</li>
+  <li><strong>循环包含(circular include)。</strong> <code>A.h</code> 包含 <code>B.h</code>,<code>B.h</code> 又包含 <code>A.h</code>,两个头文件互相等对方先定义,转不出来。常见解法是<strong>前向声明(forward declaration)</strong>。</li>
+</ul>
+
+<h2>前向声明,一句话先眼熟</h2>
+<p>
+如果某个文件只是<strong>用到某个类型的名字</strong>(比如声明一个 <code>Camera*</code> 指针、或一个返回 <code>Camera</code> 的函数),并不需要知道它内部长什么样,就可以只写一行"<strong>前向声明</strong>"告诉编译器"<em>有这么个类型,细节回头再说</em>":
+</p>
+<pre><code><span class="t-kw">struct</span> <span class="t-type">Camera</span>;   <span class="t-cmt">// 前向声明:只承诺"有 Camera 这个类型",不含成员</span>
+
+<span class="t-type">Vector3</span> <span class="t-name">worldToScreen</span>(<span class="t-kw">const</span> <span class="t-type">Camera</span>&amp; cam, <span class="t-kw">const</span> <span class="t-type">Vector3</span>&amp; p);  <span class="t-cmt">// 用得到名字就够了</span></code></pre>
+<p>这样就不必 <code>#include "Camera.h"</code>,既能打破循环包含,也能减少不必要的依赖。第 14 课会再细讲名字与作用域。</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题都对应上面一节,答完马上看对错和原因。</p>
+<div class="quiz" id="quiz13"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/header-files/" target="_blank">LearnCpp · 2.11 — Header files</a>
+  —— 权威免费教程里专讲头文件的一章:为什么把声明放进 <code>.h</code>、<code>#include</code> 怎么把它们传播到各个 <code>.cpp</code>。配套的 <a href="https://www.learncpp.com/cpp-tutorial/programs-with-multiple-code-files/" target="_blank">2.8 — Programs with multiple code files</a> 讲多文件编译,一并看更透。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:<code>#pragma once</code> 和 include guard 到底选哪个?为什么链接错误里那个函数名长得那么怪(name mangling)?循环包含具体怎么用前向声明拆?——直接在对话里问我,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0012-classes-in-depth.html">第 12 课 · class 深入</a></p>
+  <p>下一课预告:<a href="0014-namespaces-and-scope.html">第 14 课 · 命名空间与作用域解析 <code>::</code></a>——那个到处出现的 <code>std::</code>、<code>Vector3::</code> 双冒号到底在说什么。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 12 课:在派生类里写 <code>override</code> 这个关键字,主要作用是?",
+    options: ["告诉编译器这里在覆写虚函数", "新建一个完全无关的普通函数", "强制把该函数变成私有成员"],
+    correct: 0,
+    why: "override 标记这是在覆写基类的 virtual 函数;若签名对不上,编译器会直接报错提醒你。"
+  }
+]);
+
+renderQuiz("quiz13", [
+  {
+    q: "一个 <code>.h</code> 头文件里,通常主要放的是?",
+    options: ["函数与类的声明", "程序最终的可执行", "运行时的日志输出"],
+    correct: 0,
+    why: ".h 放声明(签名、类的样子);具体实现的定义一般写在配对的 .cpp 里。"
+  },
+  {
+    q: "<code>#include \"Vector3.h\"</code> 在编译前,实际上做了什么?",
+    options: ["把该头文件内容贴进来", "把整个程序立刻跑起来", "把这一行永久删除掉"],
+    correct: 0,
+    why: "#include 是预处理器指令,作用就是把那个头文件的全部内容原样复制到这一行位置。"
+  },
+  {
+    q: "头文件顶部的 <code>#pragma once</code> 是为了防止什么?",
+    options: ["同一头文件被重复包含", "函数被别的文件调用", "变量的数值发生改变"],
+    correct: 0,
+    why: "#include 是复制粘贴,同一头文件被贴多次会重复定义;#pragma once 保证只贴一次。"
+  },
+  {
+    q: "下面哪一项描述的是<strong>链接(link)</strong>这一步?",
+    options: ["把多个目标文件拼成程序", "把单个源文件查语法错", "把头文件里的注释删光"],
+    correct: 0,
+    why: "编译让每个 .cpp 各成一个目标文件;链接器再把它们缝合,接上每个调用对应的定义。"
+  },
+  {
+    q: "看到报错 <code>undefined reference to 'dot(...)'</code>,这最可能是?",
+    options: ["链接错误:声明有定义缺", "语法错误:某行少分号", "运行错误:数值算溢出"],
+    correct: 0,
+    why: "undefined reference / unresolved external 是链接错误:声明在,但没有任何 .cpp 提供其定义。"
+  },
+  {
+    q: "你给 <code>dot</code> 改了参数,却只动了 <code>.cpp</code> 没改 <code>.h</code>,最可能的后果是?",
+    options: ["两边对不上导致链接失败", "程序变得运行速度更快", "头文件会自动同步更新"],
+    correct: 0,
+    why: "声明与定义必须一字不差地匹配;只改一边,调用方按旧签名找不到新定义,链接就失败。"
+  }
+]);
+</script>
+
+</body>
+</html>

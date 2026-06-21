@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C++ for VFX TAs · 课程总览</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  /* page-specific: syllabus list layout (one-off, lives here not in shared sheet) */
+  .unit { margin: 2.2rem 0; }
+  .unit-title { color: var(--accent); font-weight: 600; font-size: 1.15rem; margin: 0 0 0.2rem; }
+  .unit-sub { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.8rem; font-style: italic; }
+  ol.lessons { list-style: none; padding: 0; margin: 0; counter-reset: none; }
+  ol.lessons li {
+    display: flex; align-items: baseline; gap: 0.7rem;
+    padding: 0.55rem 0.7rem; margin: 0.25rem 0;
+    border: 1px solid var(--rule); border-radius: 5px; background: #fff;
+  }
+  ol.lessons li .num {
+    font-family: "SF Mono", Consolas, monospace; font-size: 0.82rem;
+    color: var(--muted); min-width: 2.2rem;
+  }
+  ol.lessons li .ttl { font-weight: 600; }
+  ol.lessons li .desc { color: var(--muted); font-size: 0.88rem; }
+  .tag { font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase;
+         padding: 0.1rem 0.45rem; border-radius: 3px; font-weight: 700; white-space: nowrap; }
+  .tag-warm { background: #eef4fa; color: var(--vex); }
+  .tag-core { background: var(--accent-soft); color: var(--accent); }
+  .progress { font-size: 0.9rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 课程总览</div>
+<h1>从零基础到「读懂并改」真实 C++ 代码</h1>
+<p class="subtitle">一条 18 节的完整路线。每节短小、一个收获、紧扣使命。建议顺序学,但你也可以随时跳到任意一节。</p>
+
+<div class="callout callout-key">
+  <span class="label">目标(使命)</span>
+  能打开真实的 C++ 文件(HDK 插件、引擎模块、渲染器源码),<strong>逐行读懂</strong>它在做什么,并对它做<strong>安全的小修改、编译运行</strong>。详见 <a href="MISSION.md">MISSION.md</a>。
+</div>
+
+<p class="progress">进度:18 / 18 节已产出 ✓ &nbsp;·&nbsp; 资源:<a href="RESOURCES.md">RESOURCES.md</a> &nbsp;·&nbsp; 学习记录:<a href="learning-records/">learning-records/</a></p>
+
+<div class="unit">
+  <div class="unit-title">第一部分 · 读懂最小单元</div>
+  <div class="unit-sub">温和上手:一个函数怎么读、怎么在脑子里跑一遍。</div>
+  <ol class="lessons">
+    <li><span class="num">01</span><span><a class="ttl" href="lessons/0001-reading-a-function-signature.html">读懂函数签名</a> <span class="desc">— 返回类型 / 函数名 / 参数</span></span> <span class="tag tag-warm">上手</span></li>
+    <li><span class="num">02</span><span><a class="ttl" href="lessons/0002-tracing-the-function-body.html">追踪函数体里的数据流</a> <span class="desc">— if / 比较 / return 提前退出</span></span> <span class="tag tag-warm">上手</span></li>
+  </ol>
+</div>
+
+<div class="unit">
+  <div class="unit-title">第二部分 · 语言的零件</div>
+  <div class="unit-sub">变量、运算、循环——读任何代码都绕不开的基本构造。</div>
+  <ol class="lessons">
+    <li><span class="num">03</span><span><a class="ttl" href="lessons/0003-variables-types-assignment.html">变量、类型与赋值</a> <span class="desc">— 类型标签 / = vs == / const / float vs double</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">04</span><span><a class="ttl" href="lessons/0004-operators-expressions.html">运算符与表达式</a> <span class="desc">— 算术 / 逻辑 / 三元 / 整数除法陷阱</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">05</span><span><a class="ttl" href="lessons/0005-loops.html">循环 —— 逐点处理的引擎</a> <span class="desc">— for / while / range-based for</span></span> <span class="tag tag-core">深入</span></li>
+  </ol>
+</div>
+
+<div class="unit">
+  <div class="unit-title">第三部分 · 指针墙</div>
+  <div class="unit-sub">阅读真实 C++ 的最大门槛。攻下这三节,代码就不再劝退。</div>
+  <ol class="lessons">
+    <li><span class="num">06</span><span><a class="ttl" href="lessons/0006-references.html">引用 references</a> <span class="desc">— T& / const T& / 为什么到处是 const&</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">07</span><span><a class="ttl" href="lessons/0007-pointers.html">指针 pointers</a> <span class="desc">— T* / & 取地址 / * 解引用 / . vs -&gt;</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">08</span><span><a class="ttl" href="lessons/0008-memory-lifetime.html">内存与生命周期</a> <span class="desc">— 栈 vs 堆 / new·delete / 智能指针</span></span> <span class="tag tag-core">深入</span></li>
+  </ol>
+</div>
+
+<div class="unit">
+  <div class="unit-title">第四部分 · 聚合数据与标准库</div>
+  <div class="unit-sub">代码里成串、成包、成对象的数据长什么样。</div>
+  <ol class="lessons">
+    <li><span class="num">09</span><span><a class="ttl" href="lessons/0009-arrays-and-vector.html">数组与 std::vector</a> <span class="desc">— 点/属性数组的样子</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">10</span><span><a class="ttl" href="lessons/0010-std-string-and-stdlib.html">std::string 与常见标准库类型</a> <span class="desc">— string / pair / map</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">11</span><span><a class="ttl" href="lessons/0011-structs-and-classes-reading.html">struct 与 class 读法</a> <span class="desc">— 成员 / 方法 / . 访问 / public·private</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">12</span><span><a class="ttl" href="lessons/0012-classes-in-depth.html">class 深入</a> <span class="desc">— 构造·析构 / this / 继承 / virtual·override</span></span> <span class="tag tag-core">深入</span></li>
+  </ol>
+</div>
+
+<div class="unit">
+  <div class="unit-title">第五部分 · 让整个文件可读</div>
+  <div class="unit-sub">把零散语法拼成一个真实工程的那些"胶水"。</div>
+  <ol class="lessons">
+    <li><span class="num">13</span><span><a class="ttl" href="lessons/0013-headers-and-compilation.html">头文件与编译单元</a> <span class="desc">— .h vs .cpp / #include / 编译·链接</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">14</span><span><a class="ttl" href="lessons/0014-namespaces-and-scope.html">命名空间与作用域解析 ::</a> <span class="desc">— std:: / Class::method / 库前缀</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">15</span><span><a class="ttl" href="lessons/0015-templates-for-readers.html">模板作为读者 —— 别被 &lt;&gt; 吓到</a> <span class="desc">— std::vector&lt;float&gt; 怎么读</span></span> <span class="tag tag-core">深入</span></li>
+    <li><span class="num">16</span><span><a class="ttl" href="lessons/0016-enums-switch-flags.html">枚举、switch 与位标志</a> <span class="desc">— enum / switch / FLAG_A | FLAG_B</span></span> <span class="tag tag-core">深入</span></li>
+  </ol>
+</div>
+
+<div class="unit">
+  <div class="unit-title">第六部分 · 收成(把一切串起来)</div>
+  <div class="unit-sub">用真实 HDK 源码验收阅读力,再走通"改 → 编译 → 验证"的闭环。</div>
+  <ol class="lessons">
+    <li><span class="num">17</span><span><a class="ttl" href="lessons/0017-reading-a-real-hdk-sop.html">通读真实 HDK SOP 源码</a> <span class="desc">— 把第 1–16 课全用上</span></span> <span class="tag tag-core">压轴</span></li>
+    <li><span class="num">18</span><span><a class="ttl" href="lessons/0018-modify-and-build.html">改并编译</a> <span class="desc">— hcustom / 读懂报错 / 在 Houdini 验证</span></span> <span class="tag tag-core">压轴</span></li>
+  </ol>
+</div>
+
+<div class="callout callout-vex">
+  <span class="label">学完之后</span>
+  这条路线打通的是当前使命:<strong>读懂 + 小改 HDK 代码</strong>。再往后可以分支到 Unreal C++(引擎/Niagara)、或从零写一个完整 SOP。到时我们更新 <a href="MISSION.md">MISSION.md</a> 再排新路线。
+</div>
+
+<div class="ask-teacher">
+  <strong>我是你的老师。</strong> 任意一节看不懂、想要更多例子、或想调整顺序/深度,直接在对话里跟我说。卡住很正常,问出来就能解决。
+</div>
+
+<div class="lesson-footer">
+  <p>从 <a href="lessons/0001-reading-a-function-signature.html">第 1 课</a> 开始,或挑任意一节跳进去。</p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 17 课 · 通读一个真实 HDK SOP 源码</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 17 课</div>
+<h1>通读一个真实 HDK SOP 源码</h1>
+<p class="subtitle">毕业项目来了。前 16 课的每一块拼图,这一课全部拼上——读懂一份真正能编译进 Houdini 的 C++ 插件。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  把前 16 课串起来,<strong>自上而下读懂一个真实的 Houdini HDK SOP 插件源码</strong>,并能对里面的每一个语法构造说出:"这是第几课学的 X"。读完你不再是"看代码",而是<strong>认得出代码</strong>。
+</div>
+
+<h2>热身 · 回忆第 16 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上一课的 <code>enum</code> / <code>switch</code> 捞回来——它马上就会在真实代码里出现。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>我们要读的真实文件:SOP_Star</h2>
+<p>
+这是 SideFX 官方 HDK 自带的示例插件 <strong><code>SOP_Star</code></strong>:一个"生成器"SOP,在视口里画出一颗星星。你给它"分段数"和"内/外半径",它就摆出对应数量的点,连成一个多边形。<sup><a href="#src">[1]</a></sup>
+为了教学,我把它<em>轻微精简</em>了(去掉了部分错误处理和注释),但所有 API 都是<strong>真实存在</strong>的,没有一个是我编的。
+</p>
+<p>
+它分成两个文件,这是 C++ 的常规拆法(<a href="0013-headers-and-compilation.html">第 13 课</a>的"头文件 / 源文件"):
+头文件 <code>.h</code> 声明这个类长什么样,源文件 <code>.C</code> 写出每个方法具体怎么做。先把<strong>整体</strong>过一遍,后面再逐块放大。
+</p>
+
+<h3>头文件 SOP_Star.h(精简)</h3>
+<pre><code><span class="t-cmt">// SOP_Star.h —— 声明这个插件类</span>
+<span class="t-kw">#include</span> &lt;SOP/SOP_Node.h&gt;
+<span class="t-kw">#include</span> &lt;UT/UT_StringHolder.h&gt;
+
+<span class="t-kw">namespace</span> <span class="t-name">HDK_Sample</span> {
+
+<span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>
+{
+<span class="t-kw">public</span>:
+    <span class="t-kw">static</span> <span class="t-type">OP_Node</span> *<span class="t-name">myConstructor</span>(<span class="t-type">OP_Network</span> *net,
+                                  <span class="t-kw">const</span> <span class="t-type">char</span> *name,
+                                  <span class="t-type">OP_Operator</span> *op);
+
+    <span class="t-kw">static</span> <span class="t-kw">const</span> <span class="t-type">UT_StringHolder</span> theSOPTypeName;
+
+<span class="t-kw">protected</span>:
+    <span class="t-type">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op);
+    <span class="t-kw">virtual</span> ~<span class="t-type">SOP_Star</span>();
+
+    <span class="t-kw">virtual</span> <span class="t-type">OP_ERROR</span> <span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context) <span class="t-kw">override</span>;
+};
+
+} <span class="t-cmt">// namespace HDK_Sample</span></code></pre>
+
+<h3>源文件 SOP_Star.C(精简)</h3>
+<pre><code><span class="t-cmt">// SOP_Star.C —— 实现每个方法</span>
+<span class="t-kw">#include</span> <span class="t-name">"SOP_Star.h"</span>
+<span class="t-kw">#include</span> &lt;GU/GU_Detail.h&gt;
+<span class="t-kw">#include</span> &lt;OP/OP_Operator.h&gt;
+<span class="t-kw">#include</span> &lt;OP/OP_OperatorTable.h&gt;
+<span class="t-kw">#include</span> &lt;UT/UT_Interrupt.h&gt;
+<span class="t-kw">#include</span> &lt;SYS/SYS_Math.h&gt;
+
+<span class="t-kw">using namespace</span> <span class="t-name">HDK_Sample</span>;
+
+<span class="t-kw">const</span> <span class="t-type">UT_StringHolder</span> SOP_Star::theSOPTypeName(<span class="t-name">"hdk_star"</span>);
+
+<span class="t-cmt">// Houdini 启动时调用这个,把插件登记进节点表</span>
+<span class="t-kw">void</span> <span class="t-name">newSopOperator</span>(<span class="t-type">OP_OperatorTable</span> *table)
+{
+    table-&gt;<span class="t-name">addOperator</span>(<span class="t-kw">new</span> <span class="t-type">OP_Operator</span>(
+        SOP_Star::theSOPTypeName,   <span class="t-cmt">// 内部类型名</span>
+        <span class="t-name">"Star"</span>,                     <span class="t-cmt">// 菜单里显示的名字</span>
+        SOP_Star::myConstructor,    <span class="t-cmt">// 怎么造一个出来</span>
+        SOP_Star::buildTemplates(), <span class="t-cmt">// 它有哪些参数</span>
+        <span class="t-num">0</span>, <span class="t-num">0</span>,                       <span class="t-cmt">// 最少/最多输入数</span>
+        <span class="t-kw">nullptr</span>,
+        <span class="t-name">OP_FLAG_GENERATOR</span>));        <span class="t-cmt">// 标志:这是个生成器</span>
+}
+
+<span class="t-cmt">// 工厂方法:造一个 SOP_Star 实例</span>
+<span class="t-type">OP_Node</span> *
+SOP_Star::<span class="t-name">myConstructor</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
+{
+    <span class="t-kw">return</span> <span class="t-kw">new</span> <span class="t-type">SOP_Star</span>(net, name, op);
+}
+
+<span class="t-cmt">// 构造函数:节点被创建时跑一次</span>
+SOP_Star::<span class="t-name">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
+    : <span class="t-type">SOP_Node</span>(net, name, op)
+{
+    mySopFlags.<span class="t-name">setManagesDataIDs</span>(<span class="t-kw">true</span>);
+}
+
+SOP_Star::~<span class="t-type">SOP_Star</span>() {}
+
+<span class="t-cmt">// 核心:每次需要重算几何体时,Houdini 调用这个</span>
+<span class="t-type">OP_ERROR</span>
+SOP_Star::<span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context)
+{
+    <span class="t-type">fpreal</span> now = context.getTime();
+
+    <span class="t-cmt">// 1) 读参数</span>
+    <span class="t-type">int</span>   divisions = <span class="t-name">evalInt</span>(<span class="t-name">"divs"</span>, <span class="t-num">0</span>, now);
+    <span class="t-type">float</span> outerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">0</span>, now);
+    <span class="t-type">float</span> innerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">1</span>, now);
+    <span class="t-type">int</span>   plane     = <span class="t-name">evalInt</span>(<span class="t-name">"orient"</span>, <span class="t-num">0</span>, now);
+
+    <span class="t-type">int</span> npoints = divisions * <span class="t-num">2</span>;
+    <span class="t-kw">if</span> (npoints &lt; <span class="t-num">4</span>)
+        npoints = <span class="t-num">4</span>;
+
+    <span class="t-cmt">// 2) 决定星星画在哪个平面上</span>
+    <span class="t-type">int</span> xc, yc, zc;
+    <span class="t-kw">switch</span> (plane)
+    {
+        <span class="t-kw">case</span> <span class="t-num">0</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">1</span>; zc = <span class="t-num">2</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// XY</span>
+        <span class="t-kw">case</span> <span class="t-num">1</span>: xc = <span class="t-num">1</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">0</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// YZ</span>
+        <span class="t-kw">default</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">1</span>; <span class="t-kw">break</span>; <span class="t-cmt">// ZX</span>
+    }
+
+    <span class="t-cmt">// 3) 清空旧几何,造 npoints 个新点</span>
+    gdp-&gt;<span class="t-name">clearAndDestroy</span>();
+    <span class="t-type">GA_Offset</span> start = gdp-&gt;<span class="t-name">appendPointBlock</span>(npoints);
+
+    <span class="t-cmt">// 4) 一圈一圈摆点</span>
+    <span class="t-type">UT_AutoInterrupt</span> boss(<span class="t-name">"Building Star"</span>);
+    <span class="t-type">float</span> tinc = <span class="t-name">M_PI</span> * <span class="t-num">2</span> / (<span class="t-type">float</span>)npoints;
+
+    <span class="t-kw">for</span> (<span class="t-type">int</span> i = <span class="t-num">0</span>; i &lt; npoints; i++)
+    {
+        <span class="t-kw">if</span> (boss.<span class="t-name">wasInterrupted</span>())
+            <span class="t-kw">break</span>;
+
+        <span class="t-type">float</span> angle = (<span class="t-type">float</span>)i * tinc;
+        <span class="t-type">bool</span>  odd   = (i &amp; <span class="t-num">1</span>);
+        <span class="t-type">float</span> rad   = odd ? innerRad : outerRad;
+
+        <span class="t-type">UT_Vector3</span> pos(<span class="t-name">SYScos</span>(angle) * rad, <span class="t-name">SYSsin</span>(angle) * rad, <span class="t-num">0</span>);
+        pos = <span class="t-type">UT_Vector3</span>(pos(xc), pos(yc), pos(zc));
+
+        <span class="t-type">GA_Offset</span> ptoff = start + i;
+        gdp-&gt;<span class="t-name">setPos3</span>(ptoff, pos);
+    }
+
+    <span class="t-kw">return</span> error();
+}</code></pre>
+
+<p>
+看起来很多?别慌。这就是<strong>前 16 课的所有东西堆在一起</strong>而已——没有一个新语法。下面我们一块一块放大,每块都告诉你"这是第几课的"。</p>
+
+<h2>放大 ① · 那一堆 #include —— 第 13 课</h2>
+<pre><code><span class="t-kw">#include</span> <span class="t-name">"SOP_Star.h"</span>
+<span class="t-kw">#include</span> &lt;GU/GU_Detail.h&gt;
+<span class="t-kw">#include</span> &lt;UT/UT_Interrupt.h&gt;
+<span class="t-kw">#include</span> &lt;SYS/SYS_Math.h&gt;</code></pre>
+<p>
+这用到了<a href="0013-headers-and-compilation.html">第 13 课</a>的 <strong><code>#include</code> 与编译单元</strong>。每一行都是"把另一个文件的<em>声明</em>抄进来,这样我才能用它定义的类型和函数"。
+</p>
+<ul>
+  <li><code>"SOP_Star.h"</code> 用<strong>双引号</strong>——自己项目里的头文件。</li>
+  <li><code>&lt;GU/GU_Detail.h&gt;</code> 用<strong>尖括号</strong>——来自 HDK 库。<code>GU_Detail</code> 就是"一坨几何体"(点、面、属性),后面的 <code>gdp</code> 就是它。</li>
+  <li><code>&lt;SYS/SYS_Math.h&gt;</code> 给我们 <code>SYScos</code> / <code>SYSsin</code> / <code>M_PI</code>——也就是<a href="0010-std-string-and-stdlib.html">第 10 课</a>讲的"标准库 / 库函数"在 HDK 里的对应物。</li>
+</ul>
+
+<h2>放大 ② · 类声明 —— 第 11、12 课</h2>
+<pre><code><span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>
+{
+<span class="t-kw">public</span>:
+    <span class="t-kw">static</span> <span class="t-type">OP_Node</span> *<span class="t-name">myConstructor</span>(...);
+<span class="t-kw">protected</span>:
+    <span class="t-type">SOP_Star</span>(...);
+    <span class="t-kw">virtual</span> <span class="t-type">OP_ERROR</span> <span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context) <span class="t-kw">override</span>;
+};</code></pre>
+<p>
+这一整块是<a href="0011-structs-and-classes-reading.html">第 11 课</a>(读懂类)和<a href="0012-classes-in-depth.html">第 12 课</a>(类的深入)。逐个认:
+</p>
+<ul>
+  <li><code>class SOP_Star</code>:定义一个新类型,名字叫 <code>SOP_Star</code>。</li>
+  <li><code>: public SOP_Node</code>:<strong>继承</strong>。读作"<code>SOP_Star</code> <em>是一种</em> <code>SOP_Node</code>"。它白白拿到了 <code>SOP_Node</code> 已有的全部本事(比如那个 <code>gdp</code> 成员、<code>evalFloat</code> 方法),只需补上自己特别的部分。这正是 <a href="0012-classes-in-depth.html">第 12 课</a>的核心。</li>
+  <li><code>public:</code> / <code>protected:</code>:<strong>访问控制</strong>(第 12 课)。<code>public</code> 是对外开放的门,<code>protected</code> 是只给"自己和子类"用的内部门。</li>
+  <li><code>virtual ... cookMySop(...) override</code>:<code>virtual</code> + <code>override</code> 表示"我<strong>重写</strong>了父类的这个方法"。<code>SOP_Node</code> 说'每个 SOP 都得有 cookMySop',这里就是 <code>SOP_Star</code> 给出自己的版本。</li>
+</ul>
+<p>
+注意签名 <code>OP_ERROR cookMySop(OP_Context &amp;context)</code>——这正是<a href="0001-reading-a-function-signature.html">第 1 课</a>的"读函数签名":返回 <code>OP_ERROR</code>(成功/失败的状态码),收一个 <code>OP_Context&amp;</code> 参数。那个 <code>&amp;</code> 是<a href="0006-references.html">第 6 课</a>的<strong>引用</strong>——不复制整个 context,直接借用原件。
+</p>
+
+<h2>放大 ③ · 构造函数 —— 第 12 课</h2>
+<pre><code>SOP_Star::<span class="t-name">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
+    : <span class="t-type">SOP_Node</span>(net, name, op)   <span class="t-cmt">// ← 先让父类初始化</span>
+{
+    mySopFlags.<span class="t-name">setManagesDataIDs</span>(<span class="t-kw">true</span>);
+}</code></pre>
+<p>
+<strong>构造函数</strong>(第 12 课)是节点被创建那一刻自动跑一次的"开机程序"。读它的两个关键点:
+</p>
+<ul>
+  <li><code>SOP_Star::SOP_Star</code> 那个 <code>::</code> 是<a href="0014-namespaces-and-scope.html">第 14 课</a>的<strong>作用域解析符</strong>:"这是属于 <code>SOP_Star</code> 类的那个 <code>SOP_Star</code> 函数"。</li>
+  <li><code>: SOP_Node(net, name, op)</code> 这段叫<strong>初始化列表</strong>:在干自己的活之前,先把收到的参数转交给父类,让父类先把自己那一半搭好。</li>
+  <li>那几个 <code>OP_Network *net</code>、<code>const char *name</code> 是<a href="0007-pointers.html">第 7 课</a>的<strong>指针</strong>。<code>const char *</code> 就是 <a href="0010-std-string-and-stdlib.html">第 10 课</a>提过的"C 风格字符串"——指向一串字符的指针。</li>
+</ul>
+
+<h2>放大 ④ · 读参数 —— 第 1、3、9 课</h2>
+<pre><code><span class="t-type">fpreal</span> now = context.getTime();
+
+<span class="t-type">int</span>   divisions = <span class="t-name">evalInt</span>(<span class="t-name">"divs"</span>, <span class="t-num">0</span>, now);
+<span class="t-type">float</span> outerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">0</span>, now);
+<span class="t-type">float</span> innerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">1</span>, now);</code></pre>
+<p>
+这是你最熟的部分——<strong>读节点上的参数</strong>。这几行同时用到了好几课:
+</p>
+<ul>
+  <li><code>int divisions = ...</code>:<a href="0003-variables-types-assignment.html">第 3 课</a>的<strong>变量、类型、赋值</strong>——开一个 <code>int</code> 盒子,把右边算出来的值塞进去。<code>fpreal</code> 只是 HDK 给高精度 float 起的别名(类型,第 3 课)。</li>
+  <li><code>evalFloat("rad", 0, now)</code> / <code>evalFloat("rad", 1, now)</code>:这就是 VEX 里的 <code>ch("rad")</code>!三个参数分别是"参数名、第几个分量、什么时刻"。注意同一个参数 <code>"rad"</code> 用 <strong>index 0 和 1</strong> 取到两个值——因为 <code>rad</code> 是个二维向量参数(外半径、内半径)。这个"按下标取分量"正是<a href="0009-arrays-and-vector.html">第 9 课</a>(数组下标从 0 开始)的味道。</li>
+  <li>调用 <code>evalFloat(...)</code> 本身,就是<a href="0001-reading-a-function-signature.html">第 1 课</a>读签名的反面:你现在<em>会用</em>这个签名了。</li>
+</ul>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>cookMySop</code> 就是这个节点的 <strong>VEX Wrangle 代码</strong>。<code>evalFloat("rad", 0, now)</code> = Wrangle 里的 <code>ch("rad")</code>;<code>gdp</code> = 你 Wrangle 操作的那份几何;<code>setPos3(ptoff, pos)</code> = 给 <code>@P</code> 赋值。整段 cook 做的事,就是"每次时间或参数变了,重新把点摆好"——和你天天写的属性 Wrangle 一模一样,只是用 C++ 写出来、提前编译好,所以更快。
+</div>
+
+<h2>放大 ⑤ · switch 选平面 —— 第 16 课</h2>
+<pre><code><span class="t-type">int</span> xc, yc, zc;
+<span class="t-kw">switch</span> (plane)
+{
+    <span class="t-kw">case</span> <span class="t-num">0</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">1</span>; zc = <span class="t-num">2</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// XY</span>
+    <span class="t-kw">case</span> <span class="t-num">1</span>: xc = <span class="t-num">1</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">0</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// YZ</span>
+    <span class="t-kw">default</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">1</span>; <span class="t-kw">break</span>; <span class="t-cmt">// ZX</span>
+}</code></pre>
+<p>
+正是你刚热身回忆的<a href="0016-enums-switch-flags.html">第 16 课</a>!<code>plane</code> 是那个 "Orientation" 下拉菜单的整数值(0=XY、1=YZ、2=ZX)。<code>switch</code> 根据它跳到对应 <code>case</code>,给三个坐标轴下标赋值。
+</p>
+<p>
+官方原版这里其实用的是 <code>enum</code>(<code>SOP_StarParms::Orient::XY</code>)而不是裸数字 <code>0/1/2</code>——这也是第 16 课讲的"用 <code>enum</code> 给数字起名字、让代码自解释"。我为教学换成了数字,但你要认得:真实代码里 <code>case</code> 后面常常是 <code>enum</code> 名,不是数字。<sup><a href="#src">[1]</a></sup>
+</p>
+
+<h2>放大 ⑥ · 每点循环 —— 第 5、4、7、9 课</h2>
+<pre><code><span class="t-kw">for</span> (<span class="t-type">int</span> i = <span class="t-num">0</span>; i &lt; npoints; i++)
+{
+    <span class="t-kw">if</span> (boss.<span class="t-name">wasInterrupted</span>())
+        <span class="t-kw">break</span>;
+
+    <span class="t-type">float</span> angle = (<span class="t-type">float</span>)i * tinc;
+    <span class="t-type">bool</span>  odd   = (i &amp; <span class="t-num">1</span>);
+    <span class="t-type">float</span> rad   = odd ? innerRad : outerRad;
+
+    <span class="t-type">UT_Vector3</span> pos(<span class="t-name">SYScos</span>(angle) * rad, <span class="t-name">SYSsin</span>(angle) * rad, <span class="t-num">0</span>);
+    <span class="t-type">GA_Offset</span> ptoff = start + i;
+    gdp-&gt;<span class="t-name">setPos3</span>(ptoff, pos);
+}</code></pre>
+<p>这一块信息最密,慢慢拆——它把好几课同时用上了:</p>
+<ul>
+  <li><code>for (int i = 0; i &lt; npoints; i++)</code>:<a href="0005-loops.html">第 5 课</a>的 <strong>for 循环</strong>。把 i 从 0 数到 npoints-1,每个点跑一遍。这正是 VEX 里"逐点运行"的本质。</li>
+  <li><code>angle = (float)i * tinc</code>:<a href="0004-operators-expressions.html">第 4 课</a>的<strong>运算符与表达式</strong>。<code>(float)i</code> 是<strong>类型转换</strong>(把整数 i 变成 float 再算)。</li>
+  <li><code>odd = (i &amp; 1)</code>:第 4 课 / <a href="0016-enums-switch-flags.html">第 16 课</a>的<strong>位运算</strong> <code>&amp;</code>。<code>i &amp; 1</code> 取 i 的最低位——偶数得 0、奇数得 1。这里用它来交替"外半径/内半径",这就是星星尖角与凹角交错的来历。</li>
+  <li><code>rad = odd ? innerRad : outerRad</code>:<strong>三目运算符</strong>(第 4 课)。读作"odd 为真就取 innerRad,否则取 outerRad"。</li>
+  <li><code>UT_Vector3 pos(...)</code>:<a href="0009-arrays-and-vector.html">第 9 课</a>。<code>UT_Vector3</code> 就是 HDK 的 <code>vector</code>——三个 float 的组合,和 VEX 的 <code>vector @P</code> 同一个概念。</li>
+  <li><code>gdp-&gt;setPos3(ptoff, pos)</code>:<code>gdp</code> 是个<a href="0007-pointers.html">指针(第 7 课)</a>,所以用 <code>-&gt;</code> 而不是 <code>.</code> 来调它的方法。<code>GA_Offset</code> 是 HDK 里"第几个点"的句柄(类似 VEX 的点号 <code>@ptnum</code>,但更底层)。这一行 = 给第 ptoff 个点写入位置 = VEX 里的 <code>@P = pos;</code>。</li>
+</ul>
+
+<h3>读代码易错点</h3>
+<div class="callout callout-key">
+  <span class="label">读代码易错点</span>
+  <ul style="margin:0; padding-left:1.2rem;">
+    <li><strong><code>gdp-&gt;</code> 用箭头不是点。</strong> 因为 <code>gdp</code> 是<em>指针</em>(<code>GU_Detail *</code>,第 7 课)。看到 <code>-&gt;</code> 就提醒自己"左边是个指针"。如果它是普通对象才用 <code>.</code>(第 11 课)。</li>
+    <li><strong><code>evalFloat("rad", 0, now)</code> 里的 <code>0</code> 不是"时间"。</strong> 它是<em>第几个分量</em>(component index),时间是第三个参数 <code>now</code>。看错就会以为只取了一个值,其实 index 0 和 1 取的是两个不同的半径。</li>
+    <li><strong><code>i &amp; 1</code> 是位与,不是逻辑与 <code>&amp;&amp;</code>。</strong> 单个 <code>&amp;</code> 在按位运算(第 16 课);两个 <code>&amp;&amp;</code> 才是"并且"。读串了含义就全错。</li>
+    <li><strong>循环里的 <code>break</code> 不是"返回"。</strong> <code>if (boss.wasInterrupted()) break;</code> 只是<em>跳出 for 循环</em>(第 5 课),不是退出整个函数。函数最后那句 <code>return error();</code> 才是真正的返回点。</li>
+    <li><strong><code>cookMySop</code> 没有 <code>gdp = ...</code>。</strong> <code>gdp</code> 是从父类 <code>SOP_Node</code> 继承来的成员(第 12 课),早就存在了;你只管往里塞点。别去找它在哪声明——它在父类里。</li>
+  </ul>
+</div>
+
+<h2>放大 ⑦ · 收尾 return —— 第 1、2 课</h2>
+<pre><code>    <span class="t-kw">return</span> error();
+}</code></pre>
+<p>
+函数最后 <code>return error();</code>:把累计的错误状态(<code>OP_ERROR</code>)交回去,Houdini 据此判断这次 cook 成不成功。这就回到了<a href="0001-reading-a-function-signature.html">第 1 课</a>(返回类型是 <code>OP_ERROR</code>)和<a href="0002-tracing-the-function-body.html">第 2 课</a>(<code>return</code> 是函数的出口)。从签名到返回,你刚刚<strong>完整走通了一个真实函数体</strong>。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比 · 全景回顾</span>
+  把整份文件想成一个 <strong>HDA 的内部</strong>:<code>newSopOperator</code> 是"把这个数字资产注册到 TAB 菜单";<code>buildTemplates</code> 是节点的<strong>参数界面</strong>;构造函数是"放下节点时跑一次的初始化";<code>cookMySop</code> 是节点的<strong>计算图</strong>本身,每次上游或参数变化就重跑。你平时搭 HDA + Wrangle 做的事,C++ 插件只是把它写成了源码、编译成 <code>.so</code>/<code>.dll</code>。
+</div>
+
+<h2>毕业测验 · 读这份真实代码</h2>
+<p>不许往上翻。每题都在考"这一行/这一块到底在干嘛、是哪一课的"。</p>
+<div class="quiz" id="quiz"></div>
+
+<div class="primary-source" id="src">
+  <span class="label">主推资源 / 本课引用</span>
+  [1] SideFX 官方 HDK 文档 ·
+  <a href="https://www.sidefx.com/docs/hdk/_s_o_p___star_8_c_source.html" target="_blank">samples/SOP/SOP_Star/SOP_Star.C(源码全文)</a>
+  与
+  <a href="https://www.sidefx.com/docs/hdk/_h_d_k__op_basics__sop_generator.html" target="_blank">Creating Geometry(生成器 SOP 教程)</a>。
+  本课的代码取自真实的 SOP_Star 示例并为教学轻微精简;所有 API(<code>cookMySop</code>、<code>gdp</code>、<code>evalFloat</code>、<code>GA_Offset</code>、<code>appendPointBlock</code>、<code>setPos3</code>、<code>UT_AutoInterrupt</code>)均为 HDK 真实接口。建议对照官方原文读一遍,你会发现你已经认得里面绝大部分了。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 这是整门课的"大合奏",信息量很大很正常。任何一行卡住——比如 <code>GA_Offset</code> 和 <code>@ptnum</code> 到底差在哪、为什么是 <code>gdp-&gt;</code> 不是 <code>gdp.</code>、或者想让我把官方原版(用 <code>enum</code> 和 Verb API 的完整版)再带你读一遍——直接在对话里问我。能读懂这一课,你已经达到了本课程的核心目标:<strong>读懂并能改真实 C++</strong>。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0016-enums-switch-flags.html">第 16 课 · 枚举、switch 与位标志</a></p>
+  <p>下一课预告:<a href="0018-modify-and-build.html">第 18 课 · 改并编译</a>——现在你读懂了它,该<strong>动手改一行</strong>(比如让星星多一圈),再用 <code>hcustom</code> 编译进 Houdini,看到自己的修改真的生效。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 16 课:<code>switch (x)</code> 的某个 <code>case</code> 末尾<strong>漏写</strong> <code>break</code> 会怎样?",
+    options: ["继续掉进下一个分支", "自动跳到结尾收场", "直接报编译器错误"],
+    correct: 0,
+    why: "第 16 课:case 不写 break 会“贯穿(fall-through)”到下一个 case 继续执行,这是读 switch 最常见的坑。"
+  }
+]);
+
+renderQuiz("quiz", [
+  {
+    q: "<code>class SOP_Star : public SOP_Node</code> 这一行<strong>表示</strong>什么?",
+    options: ["SOP_Star 继承自 SOP_Node", "SOP_Star 调用了 SOP_Node", "SOP_Star 等于一个 SOP_Node"],
+    correct: 0,
+    why: "第 12 课:冒号加 public 父类名是“继承”,SOP_Star 是一种 SOP_Node,白拿父类的全部成员(如 gdp、evalFloat)。"
+  },
+  {
+    q: "<code>gdp-&gt;setPos3(ptoff, pos)</code> 用<strong>箭头</strong> <code>-&gt;</code> 是<strong>因为</strong>?",
+    options: ["因为 gdp 是一个指针", "因为 gdp 是一个引用", "因为 gdp 是一个数组"],
+    correct: 0,
+    why: "第 7 课:gdp 的类型是 GU_Detail*(指针),所以调方法用 -> ;若它是普通对象才用点号 . 。"
+  },
+  {
+    q: "<code>evalFloat(\"rad\", 1, now)</code> 里那个 <code>1</code> 代表<strong>什么</strong>?",
+    options: ["要取的第几个分量", "节点求值的时间点", "参数总共有几项"],
+    correct: 0,
+    why: "第 9 课的味道:1 是 component index(取参数 rad 的第 1 个分量,即内半径);时间是第三个参数 now。"
+  },
+  {
+    q: "<code>for (int i = 0; i &lt; npoints; i++)</code> 这一块<strong>对应</strong>哪一课?",
+    options: ["第 5 课讲的循环", "第 6 课讲的引用", "第 7 课讲的指针"],
+    correct: 0,
+    why: "第 5 课:这是标准 for 循环,从 0 跑到 npoints-1,逐点摆放——等价于 VEX 的逐点运行。"
+  },
+  {
+    q: "循环里 <code>if (boss.wasInterrupted()) break;</code> 的 <code>break</code> 会<strong>做什么</strong>?",
+    options: ["跳出这个 for 循环", "返回整个 cook 函数", "跳过本次某一行"],
+    correct: 0,
+    why: "第 5 课:break 只跳出当前循环,不退出函数;真正的函数返回是末尾的 return error()(第 2 课)。"
+  },
+  {
+    q: "<code>rad = odd ? innerRad : outerRad</code> 这个<strong>写法</strong>叫?",
+    options: ["第 4 课的三目运算", "第 3 课的变量赋值", "第 16 课的位标志位"],
+    correct: 0,
+    why: "第 4 课:?: 是三目运算符,odd 为真取 innerRad,否则取 outerRad——星星内外半径就这样交替。"
+  }
+]);
+</script>
+
+</body>
+</html>

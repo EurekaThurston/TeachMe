@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 9 课 · 数组与 std::vector</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 9 课</div>
+<h1>数组与 <code>std::vector</code> —— 一串同类型的数据</h1>
+<p class="subtitle">单个 float 是一个点的属性,一串 float 是整张几何的属性数组。读懂"一串"怎么存、怎么逐个取,你就读懂了 VFX 代码的主干。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能读懂代码<strong>怎么存一串同类型的数据并逐个访问</strong>:C 风格数组 <code>float a[3]</code>、动态数组 <code>std::vector&lt;T&gt;</code>、<strong>下标从 0 开始</strong>、用 <code>.size()</code> 拿长度、用循环遍历。这正是<strong>点/属性数组</strong>在代码里的样子。
+</div>
+
+<h2>热身 · 回忆第 8 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次"内存与生命周期"的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>从你已经懂的东西出发:点云就是一串数据</h2>
+<p>
+在 Houdini 里,一个几何体有一堆点,每个点有 <code>ptnum</code>(0、1、2……)和一份 <code>P</code>(位置)。
+"所有点的 P" 合在一起,就是一个<strong>属性数组</strong>——同一类型的值,排成一长串,用编号取。
+C++ 里存这种"一串同类型数据"的东西,就叫<strong>数组(array)</strong>。先看最朴素的一种。
+</p>
+
+<pre><code><span class="t-cmt">// C 风格数组:固定长度的一串 float</span>
+<span class="t-type">float</span> pos[<span class="t-num">3</span>] = { <span class="t-num">1.0f</span>, <span class="t-num">2.0f</span>, <span class="t-num">3.0f</span> };  <span class="t-cmt">// 一个 xyz 位置</span>
+
+<span class="t-type">float</span> x = pos[<span class="t-num">0</span>];   <span class="t-cmt">// 取第 1 个 → 1.0</span>
+<span class="t-type">float</span> y = pos[<span class="t-num">1</span>];   <span class="t-cmt">// 取第 2 个 → 2.0</span>
+<span class="t-type">float</span> z = pos[<span class="t-num">2</span>];   <span class="t-cmt">// 取第 3 个 → 3.0</span></code></pre>
+
+<p>
+读这段只需抓三点:<code>float pos[3]</code> 是"<strong>3 个 float</strong> 排成一串",名字叫 <code>pos</code>;
+<code>{ ... }</code> 是初始值;<code>pos[i]</code> 里的方括号叫<strong>下标(subscript)</strong>,用来取第几个。
+注意最要命的一条——<strong>下标从 <code>0</code> 开始数</strong>。所以 3 个元素的合法下标是 <code>0</code>、<code>1</code>、<code>2</code>,<em>没有</em> <code>pos[3]</code>。这点我们等下专门拆。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  一个 <code>float pos[3]</code> 就是一个 <strong>vector(xyz)</strong>;一个装了很多位置的数组就是 Houdini 的<strong>点云 / 几何属性数组</strong>。下标 <code>i</code> 就是<strong>点编号 <code>ptnum</code></strong>——<code>pos[0]</code> 是第 0 号点。遍历这个数组,就是 <strong>Wrangle 里"逐点处理"</strong>那件事。
+</div>
+
+<h2><code>std::vector&lt;T&gt;</code>:能增长的动态数组</h2>
+<p>
+C 风格数组的长度在写代码时就钉死了(<code>[3]</code> 永远是 3)。但真实几何的点数是运行时才知道的、还会变。
+所以现代 C++ 代码里你看到的几乎全是 <strong><code>std::vector&lt;T&gt;</code></strong>——一个<strong>能自己增长</strong>的动态数组。
+<code>&lt;T&gt;</code> 里的 <code>T</code> 是"装什么类型"(承接前面课讲的模板尖括号):<code>std::vector&lt;float&gt;</code> 装一串 float,<code>std::vector&lt;int&gt;</code> 装一串 int。
+</p>
+
+<pre><code><span class="t-cmt">// 一串 float,可以动态增长</span>
+std::vector&lt;<span class="t-type">float</span>&gt; masses = { <span class="t-num">1.0f</span>, <span class="t-num">2.5f</span>, <span class="t-num">4.0f</span> };
+
+masses.push_back(<span class="t-num">9.0f</span>);        <span class="t-cmt">// 末尾追加一个 → 现在有 4 个</span>
+
+<span class="t-type">float</span> first = masses[<span class="t-num">0</span>];      <span class="t-cmt">// 下标访问,和 C 数组一样,从 0 开始</span>
+std::size_t n = masses.size();   <span class="t-cmt">// .size() 返回元素个数 → 4</span></code></pre>
+
+<p>你需要认得的几个成员函数(它们紧跟在 <code>变量名.</code> 后面):</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">写法</th><th>意思</th><th>VFX 里类似</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>v[i]</code></td><td>取第 i 个元素(0 起)</td><td><code>@P</code> 在 <code>ptnum = i</code> 的点</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>v.size()</code></td><td>有几个元素</td><td><code>@numpt</code>(点总数)</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>v.push_back(x)</code></td><td>末尾追加一个</td><td>Add 节点新增一个点</td></tr>
+  <tr><td style="padding:0.4rem 0;"><code>v.empty()</code></td><td>是不是一个都没有</td><td>判断几何是否为空</td></tr>
+</table>
+
+<h2>遍历:逐个走一遍这串数据</h2>
+<p>
+"逐点处理"在代码里就是<strong>遍历(loop over)</strong>这串数据。两种写法你都会遇到。
+第一种是 <strong>range-based for</strong>(承接第 5 课的循环),最干净——它替你逐个把元素拿出来,你<em>不用</em>碰下标:
+</p>
+
+<pre><code><span class="t-cmt">// 写法 A:range-based for —— "对每个 m,执行……"</span>
+<span class="t-type">float</span> total = <span class="t-num">0.0f</span>;
+<span class="t-kw">for</span> (<span class="t-type">float</span> m : masses)   <span class="t-cmt">// 把 masses 里每个元素依次叫做 m</span>
+{
+    total += m;            <span class="t-cmt">// 累加;total += m 等价于 total = total + m</span>
+}
+<span class="t-cmt">// 循环结束后 total 是所有质量之和</span></code></pre>
+
+<p>
+第二种用<strong>下标 + 计数</strong>。它更啰嗦,但你在老代码里会大量看到,而且当你需要<em>知道当前是第几个</em>(比如要拿 <code>ptnum</code>)时必须用它:
+</p>
+
+<pre><code><span class="t-cmt">// 写法 B:下标循环 —— i 从 0 走到 size()-1</span>
+<span class="t-kw">for</span> (std::size_t i = <span class="t-num">0</span>; i &lt; masses.size(); ++i)
+{
+    <span class="t-type">float</span> m = masses[i];   <span class="t-cmt">// 第 i 个,i 就是"编号"</span>
+    total += m;
+}</code></pre>
+
+<p>
+盯住条件 <code>i &lt; masses.size()</code>:用的是 <strong>小于</strong>,不是 <code>&lt;=</code>。
+因为 4 个元素的合法下标是 <code>0,1,2,3</code>,而 <code>size()</code> 是 <code>4</code>——<code>i</code> 必须在到达 <code>4</code> <em>之前</em>停。这是"从 0 开始数"带来的、贯穿全课的关键算术。
+</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>
+VFX 代码里几乎总是 <strong>一个 <code>std::vector</code> 装位置 / 属性</strong>,然后一个循环逐点处理。
+下面是一个把所有点沿 Y 轴抬高、并累加质心的循环。<code>UT_Vector3</code> 是 Houdini HDK 里的"三维向量"类型(示意),你只要知道它有 <code>.x .y .z</code> 三个分量:
+</p>
+
+<pre><code><span class="t-cmt">// points 是一整张几何的点位置数组(就是点云)</span>
+std::vector&lt;UT_Vector3&gt; points = getPointPositions();
+
+UT_Vector3 sum{ <span class="t-num">0</span>, <span class="t-num">0</span>, <span class="t-num">0</span> };
+
+<span class="t-kw">for</span> (std::size_t i = <span class="t-num">0</span>; i &lt; points.size(); ++i)
+{
+    points[i].y += <span class="t-num">1.0f</span>;   <span class="t-cmt">// 第 i 号点抬高 1 个单位(逐点变换)</span>
+    sum += points[i];        <span class="t-cmt">// 累加所有位置,准备求平均</span>
+}
+
+UT_Vector3 centroid = sum / (<span class="t-type">float</span>)points.size();  <span class="t-cmt">// 质心 = 总和 / 点数</span></code></pre>
+
+<p>
+读这段,在脑子里就是一句话:"<strong>对每一号点 <code>i</code>,改它的 Y,再把它加进 <code>sum</code></strong>。"
+这和你在 Wrangle 里写 <code>@P.y += 1;</code> 是同一件事——只是 Wrangle 帮你隐藏了那个 <code>for</code> 循环和那个 <code>i</code>,而 C++ 把它们摆在明面上。看懂这个对应,90% 的 VFX C++ 循环就不陌生了。
+</p>
+
+<h2>读代码易错点(这一节最值钱)</h2>
+
+<p><strong>① 下标从 <code>0</code> 开始,不是 1。</strong> 一个有 <code>n</code> 个元素的数组,<em>合法</em>下标是 <code>0</code> 到 <code>n-1</code>。第一个是 <code>v[0]</code>,最后一个是 <code>v[n-1]</code>。看到 <code>v[1]</code> 别以为是"第一个"——那是第二个。</p>
+
+<p><strong>② 越界访问(out-of-bounds)是真正的危险。</strong> 对长度为 3 的数组写 <code>pos[3]</code> 或 <code>pos[10]</code>,C++ <em>不会</em>报错拦你——它会去读/写那块本不属于这串数据的内存。结果是垃圾值、随机崩溃,或更糟的静默错误(这正好接上第 8 课的内存话题)。读代码时,<strong>看到下标就反问一句:它会不会 ≥ size()?</strong></p>
+
+<pre><code><span class="t-type">float</span> pos[<span class="t-num">3</span>] = { <span class="t-num">1</span>, <span class="t-num">2</span>, <span class="t-num">3</span> };
+<span class="t-type">float</span> bad = pos[<span class="t-num">3</span>];   <span class="t-cmt">// ✗ 越界!合法下标只有 0,1,2 —— 这是 bug</span></code></pre>
+
+<p><strong>③ <code>.size()</code> 返回的是<em>无符号</em>的 <code>size_t</code>。</strong> <code>v.size()</code> 的类型不是普通 <code>int</code>,而是 <code>std::size_t</code>——一个<strong>永远非负</strong>的整数类型。这有个经典的小坑:倒着写循环时,无符号数<strong>减不到负数</strong>,而是"绕回"成一个巨大的数,循环就停不下来。</p>
+
+<pre><code><span class="t-cmt">// ✗ 危险:i 是无符号,减到 0 再 --i 会绕回成超大数 → 死循环 + 越界</span>
+<span class="t-kw">for</span> (std::size_t i = points.size() - <span class="t-num">1</span>; i &gt;= <span class="t-num">0</span>; --i) { <span class="t-cmt">/* ... */</span> }</code></pre>
+
+<p>
+读代码时看到 <code>std::size_t</code>(或 <code>auto i = v.size()</code>)就要警觉:这个数<strong>不可能是负的</strong>。正向循环用 <code>i &lt; v.size()</code> 永远安全;真要倒序,正确写法另有讲究,看到了就来问我。LearnCpp 专门有一节讲这个"无符号长度与下标"的坑。
+</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题在脑子里"跑一遍"再答——特别留意下标和 <code>size()</code> 的算术。</p>
+<div class="quiz" id="quiz9"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-stdvector-and-list-constructors/" target="_blank">LearnCpp · 16.2 — Introduction to std::vector and list constructors</a>
+  —— 权威免费教程里专讲 <code>std::vector</code> 的入门一节,讲清了创建、下标、<code>.size()</code>。紧接着的 <a href="https://www.learncpp.com/cpp-tutorial/stdvector-and-the-unsigned-length-and-subscript-problem/" target="_blank">16.3</a> 专门拆"无符号 <code>size_t</code> 下标"的坑,正好对应本课易错点 ③。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:<code>push_back</code> 在内存里到底发生了什么(接第 8 课)?倒序遍历正确该怎么写?<code>v[i]</code> 和 <code>v.at(i)</code> 有什么区别(谁会帮你检查越界)?<code>std::vector&lt;UT_Vector3&gt;</code> 这种"vector of struct"怎么读?——直接在对话里问,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0008-memory-lifetime.html">第 8 课 · 内存与生命周期</a></p>
+  <p>下一课预告:<a href="0010-std-string-and-stdlib.html">第 10 课 · <code>std::string</code> 与常见标准库类型</a>——一串字符就是 <code>std::string</code>,再认全那些 <code>std::</code> 开头的常客。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 8 课:一个函数里用 <code>new</code> 申请的内存,如果忘了 <code>delete</code>,会发生什么?",
+    options: ["内存被自动回收掉", "内存泄漏一直占着", "程序立刻崩溃掉"],
+    correct: 1,
+    why: "手动 new 出来的内存不会自动还,忘了 delete 就是内存泄漏(memory leak),它一直占着不释放。"
+  }
+]);
+
+renderQuiz("quiz9", [
+  {
+    q: "<code>std::vector&lt;float&gt; v = {10, 20, 30, 40};</code>。<code>v[1]</code> 的值是?",
+    options: ["值是 10", "值是 20", "值是 40"],
+    correct: 1,
+    why: "下标从 0 开始:v[0]=10,v[1]=20。v[1] 是第二个元素,不是第一个——这是最常踩的点。"
+  },
+  {
+    q: "上面那个 4 元素的 <code>v</code>,<code>v.size()</code> 返回多少?",
+    options: ["返回 3 个", "返回 4 个", "返回 5 个"],
+    correct: 1,
+    why: ".size() 是元素个数,这里有 4 个,所以是 4。注意最大合法下标是 size()-1,即 3。"
+  },
+  {
+    q: "同样的 4 元素 <code>v</code>,哪一个下标会<strong>越界</strong>(out-of-bounds)?",
+    options: ["下标 v[0]", "下标 v[3]", "下标 v[4]"],
+    correct: 2,
+    why: "合法下标是 0 到 size()-1,即 0,1,2,3。v[4] 超出范围,会读到不属于它的内存,是危险的 bug。"
+  },
+  {
+    q: "<code>for (std::size_t i = 0; i &lt; v.size(); ++i)</code> 里,条件为何用 <code>&lt;</code> 而非 <code>&lt;=</code>?",
+    options: ["用小于纯属习惯", "小于刚好不越界", "小于会漏一个值"],
+    correct: 1,
+    why: "size() 等于元素个数,但最大合法下标是 size()-1。用 < 让 i 停在 size() 之前,刚好不越界。"
+  },
+  {
+    q: "关于 <code>v.size()</code> 返回的类型,下面哪句<strong>对</strong>?",
+    options: ["它是有符号 int", "它是无符号整数", "它是浮点 float"],
+    correct: 1,
+    why: "size() 返回 std::size_t,一种无符号整数,永远非负。倒序循环若减到负数会绕回成超大数,是经典坑。"
+  },
+  {
+    q: "要给 <code>std::vector</code> 在末尾<strong>追加</strong>一个新元素,用哪个?",
+    options: ["用 v.push_back(x)", "用 v.popfront(x)", "用 v.cleartail(x)"],
+    correct: 0,
+    why: "push_back(x) 在末尾追加一个元素、长度加一,正是 vector 能动态增长的体现;另两个不是做这件事的。"
+  }
+]);
+</script>
+
+</body>
+</html>

@@ -13,5 +13,14 @@
 - 共享组件:`assets/styles.css`(Tufte 风格主样式)、`assets/quiz.js`(测验小部件,equal-length 选项、即时反馈)。新课一律复用,不内联重复代码。
 
 ## 课程进度
-- 0001 函数签名(返回类型/函数名/参数)—— 已出。
-- 下一课计划:函数体内的数据流,给定输入手算 clamp 输出(if / return / 比较)。
+完整路线图见 `SYLLABUS.html`(18 节,六部分,从零基础到"读懂并改"真实 HDK 代码)。全部 18 节已产出。
+- 01-02 上手版(温和):函数签名、函数体数据流。
+- 03-05 语言零件:变量类型赋值、运算符表达式、循环。
+- 06-08 指针墙:引用、指针、内存与生命周期。
+- 09-12 聚合数据与标准库:数组/vector、string/map、struct·class、class 深入。
+- 13-16 让整文件可读:头文件·编译、命名空间 ::、模板、枚举/switch/位标志。
+- 17-18 收成:通读真实 HDK SOP_Star 源码、改并 hcustom 编译。
+
+新组件:`SYLLABUS.html` 总览页;`styles.css` 新增 `.t-str`(字符串字面量配色)。
+03 起为"深入版"(每节 3-5 子节、多代码示例、易错点、5-6 题)。L17/L18 基于真实 SideFX 文档(SOP_Star 源码、Compiling HDK Code/hcustom)。
+后续可能的分支:Unreal C++(引擎/Niagara)、从零写完整 SOP —— 届时更新 MISSION 再排。

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 16 课 · 枚举、switch 与位标志</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 16 课</div>
+<h1>枚举、<code>switch</code> 与位标志</h1>
+<p class="subtitle">真实 DCC 代码里满地都是 <code>GROUP_POINT</code>、<code>case</code> 分支和 <code>FLAG_A | FLAG_B</code>。这一课把这三样一次读穿。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能读懂三样东西:用名字代替裸数字的<strong>命名常量 <code>enum</code></strong>、按值分流的<strong>多分支 <code>switch</code></strong>,以及 DCC API 参数里常见的<strong>位标志组合 <code>FLAG_A | FLAG_B</code></strong>——并且知道怎么用 <code>&amp;</code> 检查某个标志有没有被设上。
+</div>
+
+<h2>热身 · 回忆上一课(别翻笔记)</h2>
+<p>先凭记忆答一题,把第 15 课"模板与尖括号"捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>① <code>enum</code>:给一组数字取有意义的名字</h2>
+<p>
+你在 Houdini 的节点参数里见过<strong>下拉菜单</strong>:Group Type 让你选 Points / Primitives / Edges。底层其实就是 <code>0 / 1 / 2</code> 这几个整数。直接在代码里写 <code>if (type == 1)</code> 没人看得懂——<code>1</code> 是啥?<code>enum</code> 就是给这些整数贴上人话标签。
+</p>
+
+<pre><code><span class="t-kw">enum</span> GroupType
+{
+    GROUP_POINT,   <span class="t-cmt">// = 0(默认从 0 开始,自动 +1)</span>
+    GROUP_PRIM,    <span class="t-cmt">// = 1</span>
+    GROUP_EDGE     <span class="t-cmt">// = 2</span>
+};</code></pre>
+
+<p>
+读法:<code>enum GroupType</code> 定义了一个新"类型",它的合法取值只有花括号里那几个名字。每个名字背后还是一个整数(默认 <code>0, 1, 2, …</code>),但你读代码时看到的是 <code>GROUP_PRIM</code> 而不是冷冰冰的 <code>1</code>。这就是<strong>下拉菜单的选项名</strong>,而不是让你去记菜单第几项。
+</p>
+
+<pre><code>GroupType t = GROUP_PRIM;        <span class="t-cmt">// 像在下拉菜单里选了 "Primitives"</span>
+<span class="t-kw">if</span> (t == GROUP_PRIM) { <span class="t-cmt">/* 处理面 */</span> }   <span class="t-cmt">// 一眼就懂,不用查 1 是什么</span></code></pre>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>enum</code> 就是节点参数上那个<strong>下拉菜单(Ordered Menu)</strong>:你看到的是 "Points / Primitives / Edges" 这些<strong>选项名</strong>,而底层存的是 <code>0 / 1 / 2</code>。<code>enum</code> 让 C++ 代码也能"按名字"读,而不是"按编号"猜。
+</div>
+
+<h2>② <code>enum class</code>:更安全的现代写法</h2>
+<p>
+现代 C++ 代码里你会越来越多看到 <code>enum class</code>(也叫 scoped enum,作用域枚举)。它和传统 <code>enum</code> 干同一件事,但更"严":必须用 <code>类型名::值</code> 的形式访问——这正是<strong>第 14 课</strong>讲过的作用域运算符 <code>::</code>。
+</p>
+
+<pre><code><span class="t-kw">enum class</span> GroupType
+{
+    Point,
+    Prim,
+    Edge
+};
+
+GroupType t = GroupType::Prim;   <span class="t-cmt">// 必须带前缀 GroupType:: ,不能只写 Prim</span></code></pre>
+
+<p>两点区别,读代码时认得出就行:</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">看到这个</th><th>传统 <code>enum</code></th><th><code>enum class</code></th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;">怎么访问</td><td><code>GROUP_PRIM</code></td><td><code>GroupType::Prim</code></td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;">名字会撞车吗</td><td>会(都堆在外层)</td><td>不会(关在自己作用域里)</td></tr>
+  <tr><td style="padding:0.4rem 0;">能当整数直接用吗</td><td>能(自动变 int)</td><td>不能(更安全,要显式转)</td></tr>
+</table>
+
+<div class="callout callout-key">
+  <span class="label">读代码记住这条</span>
+  看到 <code>GroupType::Prim</code> 这种<strong>带 <code>::</code> 前缀</strong>的取值,就知道它是个 <code>enum class</code>;看到光秃秃的 <code>GROUP_PRIM</code>,多半是传统 <code>enum</code>。两者意思一样,只是写法严不严。
+</div>
+
+<h2>③ <code>switch</code>:按值分流的多岔路口</h2>
+<p>
+当一个值有好几种可能、每种都要做不同的事,与其堆一长串 <code>if / else if</code>,C++ 常用 <code>switch</code>。它特别爱和 <code>enum</code> 搭配——拿一个枚举值,跳到对应的 <code>case</code>。
+</p>
+
+<pre><code><span class="t-kw">switch</span> (groupType)
+{
+    <span class="t-kw">case</span> GROUP_POINT:
+        processPoints();
+        <span class="t-kw">break</span>;            <span class="t-cmt">// 处理完就跳出 switch</span>
+    <span class="t-kw">case</span> GROUP_PRIM:
+        processPrims();
+        <span class="t-kw">break</span>;
+    <span class="t-kw">default</span>:                 <span class="t-cmt">// 以上都不匹配时走这里</span>
+        reportUnknown();
+        <span class="t-kw">break</span>;
+}</code></pre>
+
+<p>逐块读法:</p>
+<ul>
+  <li><code>switch (groupType)</code>:拿这个值去和下面每个 <code>case</code> 比。</li>
+  <li><code>case GROUP_PRIM:</code>:如果值等于 <code>GROUP_PRIM</code>,从这里开始执行。</li>
+  <li><code>break;</code>:做完<strong>跳出整个 <code>switch</code></strong>,不再往下。</li>
+  <li><code>default:</code>:所有 <code>case</code> 都没匹配上时的兜底分支(类似 <code>else</code>)。</li>
+</ul>
+
+<h3>易踩的坑:漏写 <code>break</code> 会"贯穿"(fall-through)</h3>
+<p>
+这是 <code>switch</code> 最反直觉的地方:如果某个 <code>case</code> 末尾<strong>忘了写 <code>break</code></strong>,程序不会停,而是<strong>继续往下一个 <code>case</code> 里执行</strong>——哪怕那个 case 的标签根本不匹配。这叫 fall-through(贯穿)。
+</p>
+
+<pre><code><span class="t-kw">switch</span> (groupType)
+{
+    <span class="t-kw">case</span> GROUP_POINT:
+        processPoints();
+        <span class="t-cmt">// ← 这里漏了 break!</span>
+    <span class="t-kw">case</span> GROUP_PRIM:
+        processPrims();    <span class="t-cmt">// GROUP_POINT 也会"顺手"跑到这一句!</span>
+        <span class="t-kw">break</span>;
+}</code></pre>
+
+<p>
+有时这是<em>故意</em>的——让几个标签共用一段代码(下面会看到)。但更多时候,漏 <code>break</code> 是 bug。读代码时,看到某个 <code>case</code> 没有 <code>break</code>,要立刻警觉:这是有意贯穿,还是写漏了?
+</p>
+
+<pre><code><span class="t-cmt">// 故意贯穿:GROUP_POINT 和 GROUP_VERTEX 共用同一段处理</span>
+<span class="t-kw">switch</span> (groupType)
+{
+    <span class="t-kw">case</span> GROUP_POINT:
+    <span class="t-kw">case</span> GROUP_VERTEX:        <span class="t-cmt">// 两个标签叠在一起,都走下面这段</span>
+        processPerPoint();
+        <span class="t-kw">break</span>;
+    <span class="t-kw">case</span> GROUP_PRIM:
+        processPerPrim();
+        <span class="t-kw">break</span>;
+}</code></pre>
+
+<h2>④ 位标志(bit flags):一排可同时勾选的复选框</h2>
+<p>
+<code>enum</code> 是"单选下拉菜单",但很多 DCC API 的选项是<strong>可以同时勾好几个</strong>的——比如"建组时:既保留已有点、又包含未使用的点、还顺便归一化"。这种"多选"用<strong>位标志</strong>表示:每个标志占二进制里的<strong>一个位(bit)</strong>,互不干扰,可以自由组合。
+</p>
+
+<pre><code><span class="t-cmt">// 每个标志只点亮一个二进制位:1, 2, 4, 8, ...(都是 2 的幂)</span>
+<span class="t-kw">enum</span> BuildFlags
+{
+    BUILD_NONE      = 0,        <span class="t-cmt">// 0000 — 什么都不勾</span>
+    BUILD_KEEP      = 1,        <span class="t-cmt">// 0001 — 第 0 位</span>
+    BUILD_UNUSED    = 2,        <span class="t-cmt">// 0010 — 第 1 位</span>
+    BUILD_NORMALIZE = 4,        <span class="t-cmt">// 0100 — 第 2 位</span>
+    BUILD_REVERSE   = 8         <span class="t-cmt">// 1000 — 第 3 位</span>
+};</code></pre>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  位标志就是参数面板里那<strong>一排复选框(checkboxes)</strong>:每个框独立勾或不勾。<code>|</code> 把你勾上的框<strong>合并成一个整数参数</strong>传给函数;<code>&amp;</code> 再反过来问"这个框勾了没"。DCC 节点参数里的"组类型/标志位"就是这套机制。
+</div>
+
+<h3>用 <code>|</code> 组合标志(勾上几个框)</h3>
+<p>
+<strong>按位或 <code>|</code></strong>(注意是<em>一个</em>竖线)把多个标志"叠"成一个整数:只要任意一个标志点亮了某个位,结果里那个位就是 1。
+</p>
+
+<pre><code>int flags = BUILD_KEEP | BUILD_NORMALIZE;   <span class="t-cmt">// 0001 | 0100 = 0101 = 5</span>
+<span class="t-cmt">// 现在 flags 同时"勾上了" KEEP 和 NORMALIZE 两个框</span></code></pre>
+
+<h3>用 <code>&amp;</code> 检查某个标志(这个框勾了没)</h3>
+<p>
+<strong>按位与 <code>&amp;</code></strong>(一个 <code>&amp;</code>)拿来"问"某个标志在不在:把组合值和单个标志 <code>&amp;</code> 一下,如果那个位是 1,结果就非 0(真),否则是 0(假)。
+</p>
+
+<pre><code><span class="t-kw">if</span> (flags &amp; BUILD_NORMALIZE)   <span class="t-cmt">// 0101 &amp; 0100 = 0100,非 0 → 真</span>
+{
+    normalizeGroup();          <span class="t-cmt">// NORMALIZE 这个框勾了,执行</span>
+}
+<span class="t-kw">if</span> (flags &amp; BUILD_REVERSE)      <span class="t-cmt">// 0101 &amp; 1000 = 0000,是 0 → 假</span>
+{
+    reverseOrder();            <span class="t-cmt">// REVERSE 没勾,跳过</span>
+}</code></pre>
+
+<p>顺带认全这几个<strong>按位运算符</strong>在 flag 参数里的含义:</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">符号</th><th>名字</th><th>在 flag 里干嘛</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>|</code></td><td>按位或</td><td>组合标志(勾上)</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>&amp;</code></td><td>按位与</td><td>检查标志(问勾没)</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>~</code></td><td>按位取反</td><td>配合 <code>&amp;</code> 清掉某标志</td></tr>
+  <tr><td style="padding:0.4rem 0;"><code>&lt;&lt;</code></td><td>左移</td><td>定义标志值,如 <code>1 &lt;&lt; 2</code> 即 4</td></tr>
+</table>
+<p>
+你常会看到标志这样定义:<code>1 &lt;&lt; 2</code> 读作"把 1 左移 2 位",结果是 <code>0100 = 4</code>——比手写 <code>4</code> 更能表达"这是第 2 个位"。清掉一个标志则是 <code>flags = flags &amp; ~BUILD_KEEP</code>:<code>~</code> 把 KEEP 那个位反成 0、其余全 1,再 <code>&amp;</code> 一下就只把那个位关掉。
+</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>
+这是 Houdini HDK(C++ 开发包)里建组时很典型的一行——把<strong>多个选项用 <code>|</code> 拼成一个参数</strong>传进函数。现在你应该能读懂它在说什么:
+</p>
+
+<pre><code><span class="t-cmt">// HDK 风格:创建一个 primitive 组,组合多个构建标志</span>
+GA_PrimitiveGroup *grp = gdp-&gt;newPrimitiveGroup(<span class="t-name">"myGroup"</span>);
+
+geo-&gt;buildGroup(grp,
+    GEO_GROUP_KEEP_EXISTING | GEO_GROUP_INCLUDE_UNUSED);
+<span class="t-cmt">//        ↑ 第一个框                ↑ 第二个框</span>
+<span class="t-cmt">// 用 | 把"保留已有成员"和"包含未使用元素"两个选项合成一个参数</span></code></pre>
+
+<p>
+读这行时,把 <code>A | B</code> 在脑子里翻译成"<strong>同时打开 A 和 B 两个开关</strong>"就对了。函数内部多半会用 <code>if (flags &amp; GEO_GROUP_KEEP_EXISTING)</code> 去逐个检查你勾了哪些。这也<em>正是为什么 DCC / HDK API 爱用位标志</em>:一个 <code>int</code> 参数就能携带十几个独立开关,既省参数个数,又能随意组合。
+</p>
+
+<h2>读代码易错点</h2>
+<ul>
+  <li>
+    <strong>按位 <code>&amp;</code> <code>|</code> ≠ 逻辑 <code>&amp;&amp;</code> <code>||</code>(第 4 课)。</strong>
+    单个 <code>&amp;</code> / <code>|</code> 是<em>逐位</em>运算,处理标志;双写的 <code>&amp;&amp;</code> / <code>||</code> 是<em>真假</em>运算,处理条件。看到 <code>flags &amp; FLAG</code> 是"取那个位",看到 <code>a &amp;&amp; b</code> 是"两个都为真"。一个字之差,意思完全不同。
+  </li>
+  <li>
+    <strong><code>switch</code> 漏 <code>break</code> 会贯穿。</strong>
+    每个 <code>case</code> 末尾默认会"漏"到下一个 case。读到没有 <code>break</code> 的 case,先判断是<em>有意共用</em>还是<em>写漏了</em>。
+  </li>
+  <li>
+    <strong><code>enum class</code> 忘加前缀。</strong>
+    <code>enum class GroupType</code> 的取值必须写 <code>GroupType::Prim</code>,光写 <code>Prim</code> 编译器不认。读代码看到 <code>::</code> 前缀,就知道这是个作用域枚举。
+  </li>
+  <li>
+    <strong>检查标志别写成 <code>==</code>。</strong>
+    检查"勾没勾"要用 <code>if (flags &amp; FLAG)</code>,不是 <code>if (flags == FLAG)</code>——后者只在<em>恰好只勾了这一个</em>时才为真,组合标志时会判断错。
+  </li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题在脑子里把二进制位"点亮 / 熄灭"跑一遍再答。</p>
+<div class="quiz" id="quiz16"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/bit-flags-and-bit-manipulation-via-stdbitset/" target="_blank">LearnCpp · O.1 — Bit flags and bit manipulation via std::bitset</a>
+  —— 权威免费教程里专讲"位标志"的一章:它怎么用单个整数携带一排开关、怎么用 <code>|</code> 和 <code>&amp;</code> 设置与检查。读完你再看 HDK 的 flag 参数会非常踏实。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:为什么标志值都得是 <code>1, 2, 4, 8</code> 这种 2 的幂?<code>flags &amp; ~FLAG</code> 到底怎么把一个位关掉?<code>enum class</code> 不能直接当 int 用时怎么转?——任何一行看不懂,或者想要更多 Houdini / Unreal 里的真实例子,直接在对话里问我。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0015-templates-for-readers.html">第 15 课 · 模板作为读者</a></p>
+  <p>下一课预告:<a href="0017-reading-a-real-hdk-sop.html">第 17 课 · 通读真实 HDK SOP 源码</a>——把前面学的签名、变量、<code>enum</code>、<code>switch</code>、位标志全用上,从头读一个真实的 Houdini SOP 节点。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 15 课:在 <code>std::vector&lt;float&gt;</code> 里,尖括号 <code>&lt;float&gt;</code> 是在告诉模板什么?",
+    options: ["容器装的元素类型", "容器里元素的个数", "容器变量自己名字"],
+    correct: 0,
+    why: "模板的尖括号填的是类型参数,<float> 表示这个 vector 装的是 float;个数和变量名都不在尖括号里。"
+  }
+]);
+
+renderQuiz("quiz16", [
+  {
+    q: "<code>enum class GroupType { Point, Prim };</code>。要表示 Prim,代码里<strong>正确</strong>的写法是?",
+    options: ["写成 Object::Prim", "写成 GroupType::Prim", "写成 class::Prim 值"],
+    correct: 1,
+    why: "enum class 是作用域枚举,取值必须带类型名前缀,即 GroupType::Prim;光写 Prim 编译器不认。"
+  },
+  {
+    q: "某个 <code>case</code> 末尾<strong>漏写了 <code>break</code></strong>,运行时会发生什么?",
+    options: ["立即跳出开关", "继续跑下分支", "报错并停止"],
+    correct: 1,
+    why: "这叫 fall-through(贯穿):漏了 break,程序会顺着往下一个 case 继续执行,而不会跳出 switch。"
+  },
+  {
+    q: "<code>int f = BUILD_KEEP | BUILD_NORMALIZE;</code> 里那个 <code>|</code> 的作用是?",
+    options: ["把两个标志组合", "比较两个标志值", "只取较大那一个"],
+    correct: 0,
+    why: "按位或 | 把两个标志的二进制位叠在一起,得到同时含两者的组合值;它不是比较也不是取较大。"
+  },
+  {
+    q: "要检查 <code>flags</code> 里<strong>有没有设上</strong> <code>BUILD_REVERSE</code>,该写哪个?",
+    options: ["if (flags && REVERSE)", "if (flags == REVERSE)", "if (flags &amp; REVERSE)"],
+    correct: 2,
+    why: "检查某个标志位用按位与 if (flags & REVERSE);&& 是逻辑与,== 只在恰好仅设这一位时才为真。"
+  },
+  {
+    q: "单个 <code>&amp;</code> 和双写 <code>&amp;&amp;</code> 的区别,下面哪句<strong>对</strong>?",
+    options: ["&amp; 管位,&amp;&amp; 管真假", "&amp; 和 &amp;&amp; 完全等价", "&amp; 管真假,&amp;&amp; 管位"],
+    correct: 0,
+    why: "单个 & 是按位与,逐位运算处理标志;双写 && 是逻辑与,处理条件真假。一字之差,行为不同。"
+  },
+  {
+    q: "标志常写成 <code>1 &lt;&lt; 2</code>。这个左移表达式算出来等于多少?",
+    options: ["结果等于二", "结果等于四", "结果等于六"],
+    correct: 1,
+    why: "1 << 2 是把二进制的 1 左移两位,变成 0100,即十进制 4;它正好点亮第 2 个位。"
+  }
+]);
+</script>
+
+</body>
+</html>

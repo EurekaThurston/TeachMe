@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 15 课 · 模板作为读者——别被 &lt;&gt; 吓到</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 15 课</div>
+<h1>模板作为读者 —— 别被 <code>&lt;&gt;</code> 吓到</h1>
+<p class="subtitle">现代 C++ 满屏都是尖括号。好消息:作为读者,你几乎只需要看懂它们,极少需要自己写。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  读懂代码里的 <code>&lt;&gt;</code> 尖括号——把模板理解成"对类型通用的代码模具",把 <code>std::vector&lt;float&gt;</code> 读成"用 <code>float</code> 浇出来的 vector",从而能<strong>淡定读过</strong>任何模板化的 API 签名。
+</div>
+
+<h2>热身 · 回忆第 14 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次"命名空间与 <code>::</code>"的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>模板解决什么问题:一份逻辑,适配所有类型</h2>
+<p>
+想象你要写一个"取两者较大值"的函数。只为 <code>int</code> 写一遍?那 <code>float</code> 怎么办?<code>double</code> 又得再抄一遍?
+逻辑明明一模一样,只是<em>类型</em>不同。为每种类型重抄一遍,既啰嗦又容易出错。
+</p>
+<pre><code><span class="t-cmt">// 笨办法:同一段逻辑,被迫为每个类型各写一遍</span>
+<span class="t-type">int</span>    <span class="t-name">maxValue</span>(<span class="t-type">int</span> a, <span class="t-type">int</span> b)       { <span class="t-kw">return</span> (a &gt; b) ? a : b; }
+<span class="t-type">float</span>  <span class="t-name">maxValue</span>(<span class="t-type">float</span> a, <span class="t-type">float</span> b)   { <span class="t-kw">return</span> (a &gt; b) ? a : b; }
+<span class="t-type">double</span> <span class="t-name">maxValue</span>(<span class="t-type">double</span> a, <span class="t-type">double</span> b) { <span class="t-kw">return</span> (a &gt; b) ? a : b; }</code></pre>
+<p>
+<strong>模板(template)</strong>就是为了消灭这种重复。你写<em>一份</em>逻辑,把"类型"留成一个空位,让编译器在用到时自动填进去。这正是 LearnCpp 对函数模板的定位:<em>"一个用来生成函数的模子,其中某些类型被参数化了"</em>。
+</p>
+
+<h2>函数模板:<code>template&lt;typename T&gt;</code> 怎么读</h2>
+<p>上面三行可以塌缩成一份模板。你读到的真实代码经常长这样:</p>
+<pre><code><span class="t-kw">template</span> &lt;<span class="t-kw">typename</span> T&gt;
+T <span class="t-name">maxValue</span>(T a, T b)
+{
+    <span class="t-kw">return</span> (a &gt; b) ? a : b;
+}</code></pre>
+<p>把它逐块翻译成人话:</p>
+<pre><code><span class="t-kw">template</span> &lt;<span class="t-kw">typename</span> T&gt;     <span class="t-cmt">// 声明:下面这段代码有一个"类型占位符",我叫它 T</span>
+T        <span class="t-name">maxValue</span>(T a, T b)   <span class="t-cmt">// 返回 T,两个参数也是 T —— 三处必须是同一个类型</span>
+ │                  └─ 参数 a、b 都是那个待定的类型 T
+ └─ 返回类型也是那个待定的类型 T</code></pre>
+<p>
+读法只有两步:<strong>① 看第一行 <code>&lt;...&gt;</code> 里有几个占位符</strong>(这里只有一个 <code>T</code>);<strong>② 把 <code>T</code> 当成"任意一种类型"通读下去。</strong>
+当别处调用 <code>maxValue(3.5f, 9.2f)</code> 时,编译器看到喂进来的是 <code>float</code>,就把所有 <code>T</code> 替换成 <code>float</code>,临时生成一份 <code>float</code> 版本的函数——这个动作叫<strong>实例化(instantiation)</strong>。你不用关心生成细节,只要知道:<em>同一份模具,喂不同类型,得到不同成品。</em>
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  模板就像一个<strong>类型无关的 HDA / 节点模具</strong>。你做了一个"取较大值"的 HDA,它不在乎进来的是 <code>float</code> 属性还是 <code>int</code> 属性——你给它喂哪种类型的输入,它就生成对应类型的具体节点。<code>template&lt;typename T&gt;</code> 就是 HDA 上那个"输入类型随你"的接口,<code>T</code> 是占位符,真正接上线的那一刻才定下来。
+</div>
+
+<h2>类模板:<code>std::vector&lt;float&gt;</code> 是"用 float 浇出来的 vector"</h2>
+<p>
+第 9 课你见过 <code>std::vector</code>——一个能装一串同类型东西的"动态数组"。它其实是个<strong>类模板</strong>:<code>std::vector&lt;T&gt;</code> 是<em>模具</em>,尖括号里填什么,就浇出装什么的成品。
+</p>
+<pre><code>std::vector&lt;<span class="t-type">float</span>&gt;      points;   <span class="t-cmt">// 用 float 浇出来:一串浮点数</span>
+std::vector&lt;<span class="t-type">int</span>&gt;        ids;      <span class="t-cmt">// 用 int 浇出来:一串整数(比如点编号)</span>
+std::vector&lt;UT_Vector3&gt; positions; <span class="t-cmt">// 用 Houdini 的向量类型浇出来:一串三维向量</span></code></pre>
+<p>
+读这种类型时,把尖括号读成"装着…的":<code>std::vector&lt;float&gt;</code> = "装着 <code>float</code> 的 vector"。
+<code>std::vector</code> 这个词单独出现没有意义——它只是模具;<strong>必须配上 <code>&lt;...&gt;</code> 才是一个能用的具体类型</strong>。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>std::vector&lt;float&gt;</code> 和 <code>std::vector&lt;UT_Vector3&gt;</code> 就像<strong>同一个节点处理不同的属性类型</strong>:一个在处理标量属性(密度、温度),一个在处理向量属性(位置 <code>P</code>、速度 <code>v</code>)。节点逻辑相同,只是流过的属性类型不同。
+</div>
+
+<h2>你会在真实代码里看到</h2>
+<p>读真实头文件时,模板会和别的东西叠在一起出现。先眼熟,不用全懂:</p>
+<pre><code><span class="t-cmt">// ① 智能指针也是模板:一个"管理某类型对象的指针"模具(后面课讲)</span>
+std::unique_ptr&lt;Mesh&gt; <span class="t-name">loadMesh</span>(<span class="t-kw">const</span> std::string&amp; path);
+
+<span class="t-cmt">// ② 函数模板签名:对任意类型 T 的一整段数组求和,返回 T</span>
+<span class="t-kw">template</span> &lt;<span class="t-kw">typename</span> T&gt;
+T <span class="t-name">sumAll</span>(<span class="t-kw">const</span> std::vector&lt;T&gt;&amp; values);
+
+<span class="t-cmt">// ③ 标准库函数模板:把一段区间里的最大元素找出来(你只需读懂它"对什么工作")</span>
+<span class="t-kw">template</span> &lt;<span class="t-kw">typename</span> It&gt;
+It <span class="t-name">max_element</span>(It first, It last);</code></pre>
+<p>
+读 ② 的心法:别陷进 <code>T</code> 的细节。问自己两件事就够——<strong>它对什么类型工作?</strong>(任意 <code>T</code>,从参数 <code>std::vector&lt;T&gt;</code> 看出来)<strong>它返回什么?</strong>(一个 <code>T</code>)。
+于是 <code>sumAll&lt;float&gt;</code> 接收"一串 float"、返回"一个 float"。这就够你看懂调用它的代码了。
+</p>
+
+<h2>读代码易错点</h2>
+<p><strong>易错点 ①:把 <code>&lt;</code> <code>&gt;</code> 误读成"小于 / 大于"。</strong> 第 4 课里 <code>a &lt; b</code> 是<em>比较</em>;但紧贴在类型名或函数名后面的 <code>&lt;...&gt;</code> 是<em>模板参数</em>,不是比较。判断很简单:<strong>左边是不是一个类型名 / 模板名?</strong> 是 → 那对尖括号在"填类型",不是在比大小。</p>
+<pre><code>value &lt; minVal              <span class="t-cmt">// 比较:value 小于 minVal 吗(第 4 课)</span>
+std::vector&lt;<span class="t-type">float</span>&gt;          <span class="t-cmt">// 模板:用 float 实例化的 vector —— 这里不是"小于"</span></code></pre>
+
+<p><strong>易错点 ②:被嵌套模板唬住。</strong> 看到 <code>std::vector&lt;std::pair&lt;int, float&gt;&gt;</code> 别慌,<strong>从里往外拆</strong>:</p>
+<pre><code>std::vector&lt; std::pair&lt;<span class="t-type">int</span>, <span class="t-type">float</span>&gt; &gt;
+              └── 最里层:一个 (int, float) 的"二元组"对 ──┘
+└────────── 外层:一串这样的对 ───────────────────────────┘</code></pre>
+<p>先读最内层 <code>std::pair&lt;int, float&gt;</code>(一对值:一个 <code>int</code>、一个 <code>float</code>),再把它整个当成一种类型,套回外层 <code>std::vector&lt;…&gt;</code>:于是整体是"一串这样的二元组"。一层层剥,再吓人的尖括号也会塌成一句人话。</p>
+
+<p><strong>易错点 ③:以为每个 <code>&lt;T&gt;</code> 都得自己写。</strong> 不需要。<code>std::vector</code>、<code>std::unique_ptr</code>、<code>std::pair</code> 这些模具都是标准库<em>早就写好的</em>,你只是在<em>使用</em>它们时填一下类型。本课目标也只是"读懂",写模板是另一回事——大多数 TA 一辈子读模板远多于写模板。</p>
+
+<p><strong>易错点 ④:把 <code>typename</code> 和 <code>class</code> 当成两回事。</strong> 在模板参数里,<code>template&lt;typename T&gt;</code> 和 <code>template&lt;class T&gt;</code> <strong>意思完全一样</strong>,都表示"<code>T</code> 是个类型占位符"。老代码爱写 <code>class</code>,新代码偏好 <code>typename</code>;读到哪个都按"类型占位符"理解即可,别以为 <code>class</code> 就一定是指某个具体的类。</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题先在脑子里把尖括号"翻译成人话"再作答。答完马上看对错和原因。</p>
+<div class="quiz" id="quiz15"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/function-templates/" target="_blank">LearnCpp · 11.6 — Function templates</a>
+  —— 权威免费教程里专讲<strong>函数模板</strong>的一节,从"为每个类型重抄一遍"的痛点讲到 <code>template&lt;typename T&gt;</code> 的写法,正是本课对应内容。想再进一步看类模板,接着读它的 <a href="https://www.learncpp.com/cpp-tutorial/class-templates/" target="_blank">13.13 — Class templates</a>。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——比如 <code>std::unique_ptr&lt;Mesh&gt;</code> 那个尖括号到底装的是什么、<code>const … &amp;</code> 又是干嘛的、或者想要更多 Houdini / 渲染器里的真实模板签名来练手,直接在对话里问我。被 <code>&lt;&gt;</code> 卡住很正常,问出来就通了。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0014-namespaces-and-scope.html">第 14 课 · 命名空间与作用域解析 <code>::</code></a></p>
+  <p>下一课预告:<a href="0016-enums-switch-flags.html">第 16 课 · 枚举、<code>switch</code> 与位标志</a>——代码怎么用有名字的常量表达"模式 / 状态",以及 <code>switch</code> 怎么分支。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 14 课:<code>std::vector</code> 里的 <code>::</code> 是在表达什么?",
+    options: ["在表达小于比较关系", "在表达从属命名空间归属", "在表达乘法运算结果"],
+    correct: 1,
+    why: ":: 是作用域解析符,std::vector 表示'std 命名空间里的 vector',说明 vector 归属于 std。"
+  }
+]);
+
+renderQuiz("quiz15", [
+  {
+    q: "<code>std::vector&lt;float&gt;</code> 最准确的读法是下面哪一个?",
+    options: ["装着浮点数的动态数组", "判断向量是否小于浮点", "把向量强制转成浮点"],
+    correct: 0,
+    why: "尖括号在填类型:vector 是模具,<float> 表示用 float 浇出成品,即'装着 float 的 vector'。"
+  },
+  {
+    q: "<code>template&lt;typename T&gt; T pick(T a, T b)</code> 中,<code>T</code> 代表什么?",
+    options: ["一个待定的类型占位", "一个固定的整数数值", "一个具体的函数名字"],
+    correct: 0,
+    why: "T 是类型参数(占位符),调用时由喂进来的实参类型决定;它不是数值,也不是函数名。"
+  },
+  {
+    q: "模板参数里,<code>template&lt;class T&gt;</code> 和 <code>template&lt;typename T&gt;</code> 的关系是?",
+    options: ["两者含义完全相同", "前者只能用于类型", "后者只能用于数值"],
+    correct: 0,
+    why: "在模板参数位置,class 与 typename 等价,都表示'T 是类型占位符';新代码偏好 typename。"
+  },
+  {
+    q: "哪一处的 <code>&lt;</code> 是<strong>模板</strong>用法、而不是'小于'比较?",
+    options: ["写作 value < limit", "写作 std::vector<int>", "写作 count < total"],
+    correct: 1,
+    why: "尖括号紧贴模板名 vector 后面,是在填类型;另外两处左边是普通变量,属于小于比较。"
+  },
+  {
+    q: "拆 <code>std::vector&lt;std::pair&lt;int,float&gt;&gt;</code>,正确顺序是?",
+    options: ["先读外层再忽略内层", "从最里层往外层拆解", "只读最外那对括号"],
+    correct: 1,
+    why: "嵌套模板从里往外拆:先懂内层 pair<int,float>，再当成一种类型套回外层 vector。"
+  },
+  {
+    q: "读函数模板签名 <code>template&lt;typename T&gt; T sumAll(const std::vector&lt;T&gt;&amp;)</code> 时最该抓住什么?",
+    options: ["它对什么类型工作返回啥", "它内部循环写了几行", "它占用多少内存字节"],
+    correct: 0,
+    why: "作为读者只需抓'对什么类型工作、返回什么':接收一串 T、返回一个 T，细节可先略过。"
+  }
+]);
+</script>
+
+</body>
+</html>

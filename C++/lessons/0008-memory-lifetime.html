@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 课 · 内存与生命周期(读者视角)</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 8 课</div>
+<h1>内存与生命周期(读者视角)</h1>
+<p class="subtitle">读代码时,你要能一眼看出:这个对象<em>活在哪儿</em>、<em>活多久</em>、<em>谁负责清掉它</em>。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  在阅读代码时认出对象"活在哪、活多久"——<strong>栈上(自动)对象</strong> vs <strong>堆上 <code>new</code> 出来的对象</strong>;并理解 <code>new</code>/<code>delete</code> 和智能指针 <code>unique_ptr</code>/<code>shared_ptr</code> 出现时分别意味着什么(<strong>所有权</strong>)。注意:现阶段是<em>读懂别人怎么管内存</em>,不是要你独立管。
+</div>
+
+<h2>热身 · 回忆第 7 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次"指针 / <code>-&gt;</code>"的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>两块地盘:栈 stack 与堆 heap</h2>
+<p>
+C++ 里每个对象都得"住"在某个地方。读代码时,你只需要分清两块地盘:
+</p>
+<p>
+<strong>栈(stack)</strong>:函数运行时临时用的一块空间。你在函数里直接写出来的变量,默认就住在栈上。它的规矩很死板但很省心——<strong>离开它所在的 <code>{ }</code> 作用域,它<em>自动</em>就没了</strong>,不用任何人动手清理。
+</p>
+<p>
+<strong>堆(heap)</strong>:一块"按需申请、长期持有"的大空间。只有当代码里出现 <code>new</code>(或包了它的工具)时,才会在堆上分配一块内存。它<strong>不会自动消失</strong>——必须有人显式地、或借助工具,把它<em>释放</em>掉。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <strong>栈对象</strong>像 wrangle 里的临时变量(<code>vector tmp = ...;</code>)——出了这个节点的求值就没了,你从不操心回收。<strong>堆 / <code>new</code> 出来的对象</strong>像你<em>显式创建</em>的一份长期几何或缓存:它会一直在,直到你主动把它删掉。读到 <code>new</code>,就该想"哦,这是要长期存在的东西"。
+</div>
+
+<h2>栈上对象:出了 { } 就自动销毁</h2>
+<p>看这段。<code>p</code> 是直接写出来的变量,住在栈上:</p>
+
+<pre><code><span class="t-kw">void</span> <span class="t-name">simulate</span>()
+{
+    <span class="t-type">Particle</span> p;            <span class="t-cmt">// p 在栈上诞生</span>
+    p.mass = <span class="t-num">2.0f</span>;
+    p.update();
+}                            <span class="t-cmt">// 走到这个 } → p 自动销毁,内存自动还回去</span>
+</code></pre>
+
+<p>
+你<strong>不用写任何清理代码</strong>。函数一结束,<code>p</code> 就随作用域一起蒸发了。绝大多数局部变量都是这样——读到它们,你心里只需标记"短命、自动管理"。
+</p>
+
+<h2><code>new</code> / <code>delete</code>:堆上手动管理(老代码常见)</h2>
+<p>
+当代码需要一个对象"活得比当前函数久",就会用 <code>new</code> 在堆上分配。<code>new</code> 返回的是一个<strong>指针</strong>(第 7 课那个 <code>*</code>),指向堆上那块内存。用完必须 <code>delete</code>,否则那块内存就一直占着不还。
+</p>
+
+<pre><code><span class="t-type">Particle</span>* p = <span class="t-kw">new</span> <span class="t-type">Particle</span>();   <span class="t-cmt">// 在堆上分配,p 指向它</span>
+p-&gt;mass = <span class="t-num">2.0f</span>;                      <span class="t-cmt">// 用 -&gt; 访问(第 7 课)</span>
+p-&gt;update();
+
+<span class="t-kw">delete</span> p;                            <span class="t-cmt">// 必须手动释放,否则泄漏</span>
+p = <span class="t-kw">nullptr</span>;                        <span class="t-cmt">// 好习惯:删完置空,避免悬空</span>
+</code></pre>
+
+<p>
+读这种代码时,你要做的是<strong>给每个 <code>new</code> 找到配对的 <code>delete</code></strong>。配上了,内存被正确回收;配不上,就是下面要讲的麻烦。
+</p>
+
+<h2>读代码易错点:泄漏 / 悬空 / 释放后使用</h2>
+<p>这三个是手动管内存最经典的坑。你现阶段<strong>不必会修</strong>,但要能在读代码时<em>认出危险信号</em>。</p>
+
+<p><strong>① 内存泄漏(leak)</strong>:<code>new</code> 了,却没有任何路径走到对应的 <code>delete</code>。内存一直占着、再也拿不回来。信号:看到 <code>new</code> 后,函数里某条分支(比如提前 <code>return</code>)绕过了 <code>delete</code>。</p>
+
+<pre><code><span class="t-type">Cache</span>* c = <span class="t-kw">new</span> <span class="t-type">Cache</span>();
+<span class="t-kw">if</span> (!loadFile()) <span class="t-kw">return</span>;        <span class="t-cmt">// 提前 return → 下面的 delete 永远到不了 → 泄漏</span>
+<span class="t-kw">delete</span> c;
+</code></pre>
+
+<p><strong>② 悬空指针(dangling pointer)</strong>:对象已经被 <code>delete</code> 了,但还有指针指着那块"已经不属于你"的内存。指针本身看起来没问题,指向的东西却没了。</p>
+
+<p><strong>③ 释放后使用(use-after-free)</strong>:顺着上面那个悬空指针又去读写它。这是 bug 重灾区——结果可能是垃圾值、可能崩溃、也可能"碰巧"正常一阵子再炸。</p>
+
+<pre><code><span class="t-kw">delete</span> p;          <span class="t-cmt">// 这块内存还回去了</span>
+p-&gt;update();         <span class="t-cmt">// ✗ use-after-free:p 已悬空,这里在用一块不归你的内存</span>
+</code></pre>
+
+<div class="callout callout-key">
+  <span class="label">读代码时的警惕清单</span>
+  看到 <code>new</code> → 找它的 <code>delete</code>;看到 <code>delete</code> → 想"这之后还有谁在用这个指针吗";看到一个指针 → 问"它指的东西现在还活着吗"。这三问能帮你嗅出大半内存类 bug。
+</div>
+
+<h2>现代 C++:用智能指针表达"所有权"</h2>
+<p>
+为了不再手动配对 <code>new</code>/<code>delete</code>,现代 C++ 用<strong>智能指针</strong>:它们是包着裸指针的小对象,会在自己(栈上)销毁时<em>自动</em>把堆上的东西删掉。读代码时,它们最大的价值是<strong>把"谁负责销毁"写在了类型里</strong>。
+</p>
+
+<p><strong><code>std::unique_ptr</code>(独占所有权)</strong>:这块数据<em>归它独占</em>,它一离开作用域就把数据清掉。通常用 <code>std::make_unique</code> 创建,你<strong>看不到</strong> <code>delete</code>——因为不需要写。</p>
+
+<pre><code><span class="t-kw">auto</span> p = std::make_unique&lt;<span class="t-type">Particle</span>&gt;();  <span class="t-cmt">// p 独占这个 Particle</span>
+p-&gt;mass = <span class="t-num">2.0f</span>;
+p-&gt;update();
+<span class="t-cmt">// 离开作用域 → p 自动销毁 → 它持有的 Particle 也自动删掉,无需 delete</span>
+</code></pre>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>unique_ptr</code> = "这块数据<strong>归我独占</strong>,我走了它就清掉。" 像你在一个流程里独自持有一份临时缓存:这份缓存只有你一个引用,你的任务结束,它就被回收,不会留下垃圾。
+</div>
+
+<p><strong><code>std::shared_ptr</code>(共享所有权)</strong>:多处可以<em>共同持有</em>同一块数据,内部维护一个<strong>引用计数</strong>。每多一个 <code>shared_ptr</code> 指它,计数 +1;每销毁一个,计数 −1。<strong>计数归零时</strong>,数据才被删掉。</p>
+
+<pre><code><span class="t-kw">auto</span> mesh = std::make_shared&lt;<span class="t-type">Mesh</span>&gt;();   <span class="t-cmt">// 计数 = 1</span>
+<span class="t-kw">auto</span> alias = mesh;                          <span class="t-cmt">// 又一个持有者 → 计数 = 2</span>
+<span class="t-cmt">// 两个都销毁后 → 计数 = 0 → Mesh 才真正被释放</span>
+</code></pre>
+
+<p>
+所以读到智能指针时,你不用再去配 <code>delete</code>;你要读的是<strong>所有权</strong>:<code>unique_ptr</code> 说"只有我一个主人",<code>shared_ptr</code> 说"我们一起,最后一个走的关灯"。
+</p>
+
+<div class="callout callout-key">
+  <span class="label">一句话:RAII</span>
+  智能指针背后的思想叫 <strong>RAII</strong>——<em>对象自己管理自己的资源</em>。资源(堆内存)的生命周期绑定到一个栈上对象的生命周期:对象一销毁,资源就释放。这就是为什么现代代码里你常常<strong>看不到 <code>delete</code> 却没有泄漏</strong>。
+</div>
+
+<h2>你会在真实代码里看到</h2>
+<p>同一个意图,老代码和现代代码长这样——能认出两者、并知道"现代版不需要手动 <code>delete</code>",就达标了:</p>
+
+<pre><code><span class="t-cmt">// —— 老代码:手动 new / delete(危险但常见)——</span>
+<span class="t-type">Texture</span>* tex = <span class="t-kw">new</span> <span class="t-type">Texture</span>(<span class="t-str">"smoke.exr"</span>);
+render(tex);
+<span class="t-kw">delete</span> tex;                                   <span class="t-cmt">// 漏写这行 → 泄漏</span>
+
+<span class="t-cmt">// —— 现代代码:unique_ptr 表达独占,自动释放 ——</span>
+<span class="t-kw">auto</span> tex2 = std::make_unique&lt;<span class="t-type">Texture</span>&gt;(<span class="t-str">"smoke.exr"</span>);
+render(tex2.get());                            <span class="t-cmt">// .get() 取出里面的裸指针给旧接口用</span>
+<span class="t-cmt">// 不写 delete:tex2 出作用域时自动清理</span>
+</code></pre>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题都回到那三问:活在哪、活多久、谁负责销毁。</p>
+<div class="quiz" id="quiz8"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/dynamic-memory-allocation-with-new-and-delete/" target="_blank">LearnCpp · 19.1 — Dynamic memory allocation with new and delete</a>
+  —— 权威免费教程里讲 <code>new</code>/<code>delete</code>、泄漏与悬空指针的一章。读完你对本课"堆上手动管理"的部分会更踏实;想接着看智能指针,跟它的 22.1 一节(Introduction to smart pointers)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:<code>make_unique</code> 和 <code>new</code> 到底差在哪?为什么 <code>shared_ptr</code> 要数引用?<code>unique_ptr</code> 能不能复制给别人?<code>.get()</code> 取出裸指针安全吗?——直接在对话里问,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0007-pointers.html">第 7 课 · 指针 pointers</a></p>
+  <p>下一课预告:<a href="0009-arrays-and-vector.html">第 9 课 · 数组与 std::vector</a>——一次装一<em>堆</em>同类数据(点、粒子、颜色),以及 <code>std::vector</code> 怎么帮你自动管理这块内存。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 7 课:已知 <code>p</code> 是一个指针,要访问它指向对象的成员 <code>mass</code>,正确写法是?",
+    options: ["写成 p.mass 来取", "写成 p-&gt;mass 来取", "写成 p::mass 来取"],
+    correct: 1,
+    why: "指针访问成员用箭头 -&gt;;点号 . 是给非指针的对象用的。这正是第 7 课的核心动作。"
+  }
+]);
+
+renderQuiz("quiz8", [
+  {
+    q: "函数里直接写的 <code>Particle p;</code> 这个对象,默认住在哪、什么时候销毁?",
+    options: ["堆上,程序结束时销毁", "栈上,离开作用域销毁", "堆上,调用销毁时销毁"],
+    correct: 1,
+    why: "直接写出的局部变量住在栈上,走到所在的 } 离开作用域就自动销毁,无需手动清理。"
+  },
+  {
+    q: "读到 <code>Cache* c = new Cache();</code> 这一行,你应该立刻去找什么?",
+    options: ["配对的那句 delete", "配对的那句 return", "配对的那句 update"],
+    correct: 0,
+    why: "new 在堆上分配、不会自动释放;读代码时要为每个 new 找到配对的 delete,否则可能泄漏。"
+  },
+  {
+    q: "先 <code>delete p;</code> 之后又执行 <code>p-&gt;update();</code>,这属于哪种问题?",
+    options: ["内存泄漏(leak)", "释放后使用(use-after-free)", "类型不匹配(mismatch)"],
+    correct: 1,
+    why: "delete 后那块内存已不归你,p 成了悬空指针,再用它就是 use-after-free,行为不可预测。"
+  },
+  {
+    q: "看到 <code>std::make_unique&lt;Mesh&gt;()</code>,关于这个 Mesh 的销毁,正确理解是?",
+    options: ["须手动写一句 delete", "由该对象自动负责销毁", "由垃圾回收稍后销毁"],
+    correct: 1,
+    why: "unique_ptr 独占持有,离开作用域时自动删掉所持对象,你看不到也不需要写 delete。"
+  },
+  {
+    q: "一个 <code>std::shared_ptr</code> 指向的对象,什么时候才真正被释放?",
+    options: ["第一个持有者销毁时", "引用计数减到零时", "程序整个结束运行时"],
+    correct: 1,
+    why: "shared_ptr 用引用计数共享所有权;每销毁一个计数减一,归零时所指对象才被释放。"
+  },
+  {
+    q: "RAII 这个思想,一句话概括最贴切的是哪个?",
+    options: ["对象自己管理自己资源", "指针必须永远置空处理", "内存只能放在栈上面"],
+    correct: 0,
+    why: "RAII 把资源生命周期绑到栈对象上:对象销毁即释放资源,所以现代代码常无 delete 却不泄漏。"
+  }
+]);
+</script>
+
+</body>
+</html>

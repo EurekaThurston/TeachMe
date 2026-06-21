@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 11 课 · struct 与 class 读法</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 11 课</div>
+<h1>struct 与 class 读法 —— 把数据和功能打包</h1>
+<p class="subtitle">到目前为止你读的都是"单个值"。真实代码里,数据是<em>成捆</em>出现的。这一课教你拆包。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  自上而下读懂一个 <code>struct</code> / <code>class</code> 定义——认出<strong>数据成员</strong>、<strong>成员函数(方法)</strong>、用 <code>.</code> <strong>访问成员</strong>,以及 <strong>public / private</strong> 各自的含义。
+</div>
+
+<h2>热身 · 回忆第 10 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次的标准库类型捞回来——主动回忆比重看一遍记得牢得多。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>从你已经懂的东西出发:一个 Vector3</h2>
+<p>
+你天天在用 <strong>向量(vector)</strong>:一个点的位置 <code>P</code> 有 <code>x</code>、<code>y</code>、<code>z</code> 三个分量。
+这三个数<em>属于同一个东西</em>,所以把它们捆成一捆才合理。C++ 里捆数据的工具就是 <code>struct</code>:
+</p>
+
+<pre><code><span class="t-kw">struct</span> <span class="t-type">Vector3</span>
+{
+    <span class="t-type">float</span> x;   <span class="t-cmt">// 数据成员:横向分量</span>
+    <span class="t-type">float</span> y;   <span class="t-cmt">// 数据成员:纵向分量</span>
+    <span class="t-type">float</span> z;   <span class="t-cmt">// 数据成员:深度分量</span>
+};</code></pre>
+
+<p>
+逐块读:<code>struct</code> 是关键字,意思是"我要定义一个新类型";<code>Vector3</code> 是这个新类型的<strong>名字</strong>(以后它就能像 <code>float</code> 一样当类型用);<code>{ }</code> 里列的 <code>x</code>、<code>y</code>、<code>z</code> 叫<strong>数据成员(data members)</strong>,每行还是熟悉的「类型 名字」写法。
+最后那个 <code>};</code> 的<strong>分号别漏</strong>——struct 定义结尾必须有分号,这是 C++ 的硬规矩。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  一个 <code>struct</code> 就像 Houdini 里一个<strong>自定义属性组</strong>:你把 <code>x/y/z</code>(或者 <code>P</code>、<code>N</code>、<code>Cd</code>)这些相关属性<strong>捆在一个名字下面</strong>,整组一起传递、一起命名,而不是散着拎三个孤零零的 <code>float</code>。
+</div>
+
+<h2>类型 ≠ 实例:先有模具,再有零件</h2>
+<p>
+上面那段 <code>struct Vector3 { ... };</code> 只是<strong>定义了一种类型</strong>,它本身<em>不占数据</em>——就像 Houdini 里"属性的定义"不是某个具体点的值。
+要真正得到一份数据,你得<strong>创建一个对象(object,也叫实例 instance)</strong>:
+</p>
+
+<pre><code><span class="t-type">Vector3</span> pos;        <span class="t-cmt">// 创建一个 Vector3 对象,名字叫 pos</span>
+pos.x = <span class="t-num">1.0f</span>;       <span class="t-cmt">// 用 . 访问成员 x,给它赋值</span>
+pos.y = <span class="t-num">2.5f</span>;
+pos.z = <span class="t-num">0.0f</span>;
+
+<span class="t-type">float</span> height = pos.y;  <span class="t-cmt">// 读出 pos 的 y 分量(= 2.5)</span></code></pre>
+
+<p>
+核心动作就是那个<strong>点号 <code>.</code></strong>:<code>对象名.成员名</code>。
+<code>pos.y</code> 读作"<strong>pos 的 y</strong>"。<code>Vector3</code> 是模具(类型),<code>pos</code> 是用模具做出来的一个零件(实例)。同一个模具能做出无数个零件:<code>Vector3 a, b, c;</code> 各有各自独立的 <code>x/y/z</code>。
+</p>
+
+<h2>成员函数(方法):打包进类型里的函数</h2>
+<p>
+向量不只是三个数,它还有<em>能对自己做的运算</em>:求长度、归一化。C++ 允许你把这些函数<strong>写进 struct 内部</strong>,它们就叫<strong>成员函数(member functions)</strong>,口语里常叫<strong>方法(method)</strong>:
+</p>
+
+<pre><code><span class="t-kw">struct</span> <span class="t-type">Vector3</span>
+{
+    <span class="t-type">float</span> x, y, z;                <span class="t-cmt">// 三个数据成员,可以写在一行</span>
+
+    <span class="t-type">float</span> <span class="t-name">length</span>() <span class="t-kw">const</span>          <span class="t-cmt">// 成员函数:求自己的长度</span>
+    {
+        <span class="t-kw">return</span> std::sqrt(x*x + y*y + z*z);   <span class="t-cmt">// 直接用 x/y/z,不写对象名</span>
+    }
+
+    <span class="t-kw">void</span> <span class="t-name">normalize</span>()             <span class="t-cmt">// 成员函数:把自己缩放到长度为 1</span>
+    {
+        <span class="t-type">float</span> len = length();    <span class="t-cmt">// 成员函数之间可以直接互相调用</span>
+        x /= len; y /= len; z /= len;
+    }
+};</code></pre>
+
+<p>
+读法上和普通函数<em>几乎一样</em>——还是「返回类型 名字(参数)」加一个 <code>{ }</code> 函数体。两个新现象要认得:
+</p>
+<p>
+<strong>① 函数体里直接出现了 <code>x</code>、<code>y</code>、<code>z</code>,前面没有对象名。</strong> 因为成员函数天生"长在"某个对象身上,它里面裸写的 <code>x</code> 就是指<em>调用它的那个对象自己的</em> <code>x</code>。
+</p>
+<p>
+<strong>② <code>length()</code> 后面那个 <code>const</code></strong> 表示"我只读、不改对象的数据"(<code>normalize()</code> 没有 <code>const</code>,因为它会改 <code>x/y/z</code>)。现在认得它是个"只读保证"就够了,细节后面课再展开。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  成员函数就像这个数据类型<strong>自带的"内置节点操作"</strong>:<code>Vector3</code> 自己就懂怎么 <code>length()</code> 和 <code>normalize()</code>,就像 Houdini 的 vector 自带 <code>length()</code>、<code>normalize()</code> VEX 函数一样。数据和"能对它做的操作"打包在了一起。
+</div>
+
+<h2>怎么调用方法:还是那个点号</h2>
+<p>
+调用成员函数,语法和访问数据成员一模一样,只是名字后面多了括号 <code>()</code>:
+</p>
+
+<pre><code><span class="t-type">Vector3</span> v;
+v.x = <span class="t-num">3.0f</span>; v.y = <span class="t-num">4.0f</span>; v.z = <span class="t-num">0.0f</span>;
+
+<span class="t-type">float</span> len = v.length();   <span class="t-cmt">// "v 的 length()" → 算出 5.0</span>
+v.normalize();             <span class="t-cmt">// "让 v 归一化自己" → 现在 v 长度变 1</span></code></pre>
+
+<p>
+对照着记:<code>v.x</code> 是<strong>数据成员</strong>(一个值,没括号);<code>v.length()</code> 是<strong>成员函数</strong>(会跑一段代码并返回一个值,<strong>有括号</strong>)。
+点号左边永远是<em>一个对象</em>,右边是它的某个成员。
+</p>
+
+<h2>public / private:谁能碰这些成员</h2>
+<p>
+真实代码里,成员常常被分成两类:<strong>外人能碰的</strong>和<strong>只有自己人能碰的</strong>。控制这个的关键字是 <code>public</code> 和 <code>private</code>(它们叫<strong>访问说明符 access specifier</strong>):
+</p>
+
+<pre><code><span class="t-kw">class</span> <span class="t-type">Particle</span>
+{
+<span class="t-kw">public</span>:                      <span class="t-cmt">// 这条线以下:外部代码可以访问</span>
+    <span class="t-type">Vector3</span> position;
+    <span class="t-type">float</span> <span class="t-name">getMass</span>() <span class="t-kw">const</span> { <span class="t-kw">return</span> mass; }
+
+<span class="t-kw">private</span>:                     <span class="t-cmt">// 这条线以下:只有类内部能访问</span>
+    <span class="t-type">float</span> mass;             <span class="t-cmt">// 外面写 p.mass 会编译报错</span>
+};</code></pre>
+
+<p>
+读法:<code>public:</code> 后面列的成员,任何拿到这个对象的代码都能用 <code>.</code> 访问;<code>private:</code> 后面列的成员,<strong>只有这个类自己的成员函数</strong>能碰,外面写 <code>p.mass</code> 会直接<strong>编译失败</strong>。
+所以你常看到的套路是:数据 <code>mass</code> 设成 <code>private</code> 藏起来,再开一个 <code>public</code> 的 <code>getMass()</code> 让外面"隔着窗口"读它。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  把 <code>public</code> 想成节点<strong>暴露在界面上的参数</strong>(谁都能调),<code>private</code> 是节点<strong>内部的中间计算</strong>(藏在 HDA 里,外面看不见也改不了)。封装的目的是一样的:只露出该露的,藏住内部细节。
+</div>
+
+<h2>struct 和 class 唯一的硬区别</h2>
+<p>
+你会同时见到 <code>struct</code> 和 <code>class</code>,它们<strong>几乎完全一样</strong>。语言层面<em>唯一</em>的硬性区别只有一条:<strong>默认访问权限</strong>——
+</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;">
+    <th style="padding:0.4rem 0;">关键字</th><th>没写 public/private 时,成员默认是</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><code>struct</code></td><td>默认 <code>public</code>(外部能访问)</td></tr>
+  <tr><td style="padding:0.4rem 0;"><code>class</code></td><td>默认 <code>private</code>(只有内部能访问)</td></tr>
+</table>
+<p>
+就这么多。习惯上,大家用 <code>struct</code> 表示"一捆公开的数据"(像前面的 <code>Vector3</code>),用 <code>class</code> 表示"有藏起来的内部状态的东西"(像 <code>Particle</code>)——但这只是<em>约定</em>,不是语言强制。读代码时:看到 <code>struct</code> 就默认成员公开,看到 <code>class</code> 就默认成员私有,然后再看里面有没有写 <code>public:</code> / <code>private:</code> 改了默认。
+</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>
+渲染器、Houdini HDK、游戏引擎里满是这种结构。下面是一段贴近真实 HDK 风格的代码,综合了本课所有要点——试着自上而下读一遍:
+</p>
+
+<pre><code><span class="t-cmt">// 一个粒子:位置 + 速度 + 是否存活</span>
+<span class="t-kw">struct</span> <span class="t-type">Particle</span>
+{
+    <span class="t-type">Vector3</span> P;        <span class="t-cmt">// 位置(注意:成员的类型可以是另一个 struct!)</span>
+    <span class="t-type">Vector3</span> v;        <span class="t-cmt">// 速度</span>
+    <span class="t-type">float</span>   age;      <span class="t-cmt">// 已存活时间</span>
+    <span class="t-kw">bool</span>    alive;    <span class="t-cmt">// 是否还活着</span>
+
+    <span class="t-kw">void</span> <span class="t-name">step</span>(<span class="t-type">float</span> dt)   <span class="t-cmt">// 推进一个时间步</span>
+    {
+        P.x += v.x * dt;  <span class="t-cmt">// 链式点号:P 的 x</span>
+        P.y += v.y * dt;
+        P.z += v.z * dt;
+        age += dt;
+    }
+};
+
+<span class="t-cmt">// 别处的使用代码:</span>
+<span class="t-type">Particle</span> pt;
+pt.alive = <span class="t-kw">true</span>;
+pt.step(<span class="t-num">0.04f</span>);          <span class="t-cmt">// 调用方法,推进一帧</span>
+<span class="t-kw">if</span> (pt.P.y &lt; <span class="t-num">0.0f</span>)        <span class="t-cmt">// pt 的 P 的 y:连着两个点号</span>
+    pt.alive = <span class="t-kw">false</span>;</code></pre>
+
+<p>
+注意 <code>pt.P.y</code> 这种<strong>链式点号</strong>:<code>pt</code> 是个 <code>Particle</code>,它的成员 <code>P</code> 又是个 <code>Vector3</code>,所以再点一层 <code>.y</code> 才到那个 <code>float</code>。从左往右一层层剥就行:<em>pt 的 P 的 y</em>。
+</p>
+
+<h2>读代码易错点</h2>
+<p><strong>① 把方法当普通函数到处找。</strong> 看到调用 <code>v.length()</code> 却在文件顶层找不到 <code>length</code> 的定义?因为它是<strong>成员函数</strong>,定义藏在 <code>struct Vector3 { ... }</code> 的大括号<em>里面</em>。找方法要去它所属类型的定义里找,不是去全局找。</p>
+<p><strong>② 忘了对象名 + 点号。</strong> 在成员函数<em>外面</em>,不能裸写 <code>length()</code> 或 <code>x</code>——必须是 <code>某个对象.length()</code>、<code>某个对象.x</code>。裸写 <code>x</code> 只在成员函数<em>内部</em>才合法(那时它指当前对象自己的 <code>x</code>)。</p>
+<p><strong>③ 混淆类型和实例。</strong> <code>Vector3</code>(大写、是类型/模具)不能直接 <code>.x</code>;只有具体对象 <code>pos</code>(是实例/零件)才能 <code>pos.x</code>。看到 <code>类型名.成员</code> 这种写法,八成读错了。</p>
+<p><strong>④ 漏看 <code>private</code> 就以为能访问。</strong> 一个成员能不能从外面 <code>.</code> 到,取决于它落在 <code>public:</code> 还是 <code>private:</code> 段里。读类定义时,养成习惯先扫一眼成员归在哪一段。</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题都对照上面的 <code>Vector3</code> / <code>Particle</code> 在脑子里读一遍再答。</p>
+<div class="quiz" id="quiz11"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/introduction-to-structs-members-and-member-selection/" target="_blank">LearnCpp · 13.7 — Introduction to structs, members, and member selection</a>
+  —— 权威免费教程里专讲 struct、数据成员、以及用 <code>.</code> 访问成员的一节。本课的 <code>Vector3</code> 例子正对应它;想看 <code>public</code>/<code>private</code> 的英文原版,接着读 14.5 — Public and private members and access specifiers。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:<code>length()</code> 后面那个 <code>const</code> 到底拦住了什么?为什么要把数据设成 <code>private</code> 再开 <code>getMass()</code>,不嫌麻烦吗?<code>pt.P.y</code> 这种链能点几层?——直接在对话里问,我给你拆开讲。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0010-std-string-and-stdlib.html">第 10 课 · std::string 与常见标准库类型</a></p>
+  <p>下一课预告:<a href="0012-classes-in-depth.html">第 12 课 · class 深入</a>——构造函数、<code>this</code>、以及成员函数定义"挪到类外面"后长什么样。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 10 课:<code>std::string name;</code> 里那个 <code>std::</code> 前缀是干嘛的?",
+    options: ["表示来自标准库", "表示这是私有变量", "表示这是只读数据"],
+    correct: 0,
+    why: "std:: 是命名空间前缀,表示 string 来自 C++ 标准库;它不表示访问权限,也不表示只读。"
+  }
+]);
+
+renderQuiz("quiz11", [
+  {
+    q: "读 <code>struct Vector3 { float x, y, z; };</code>,这里的 <code>x、y、z</code> 叫什么?",
+    options: ["它们是局部变量", "它们是数据成员", "它们是返回类型"],
+    correct: 1,
+    why: "写在 struct 大括号里的变量叫数据成员;它们不是局部变量,也不是返回类型。"
+  },
+  {
+    q: "对象 <code>pos</code> 是 <code>Vector3</code>。要读它的 y 分量,正确写法是?",
+    options: ["写成 Vector3.y", "写成 pointer->y", "写成 object.y"],
+    correct: 2,
+    why: "用「对象名.成员名」,即 pos.y(object.y);Vector3 是类型不能直接点,-> 是给指针用的。"
+  },
+  {
+    q: "<code>v.x</code> 和 <code>v.length()</code> 的关键区别是什么?",
+    options: ["前者带括号调用", "后者带括号调用", "两者完全等价的"],
+    correct: 1,
+    why: "v.x 是数据成员(取一个值,无括号);v.length() 是成员函数(跑一段代码,带括号())。"
+  },
+  {
+    q: "成员函数 <code>length()</code> 体内直接写的 <code>x</code>,指的是谁的 x?",
+    options: ["指全局的某个 x", "指调用它的对象", "指任意一个对象"],
+    correct: 1,
+    why: "成员函数体里裸写的 x,指的是当前正在调用这个方法的那个对象自己的 x。"
+  },
+  {
+    q: "<code>struct</code> 和 <code>class</code> 在语言层面唯一的硬区别是什么?",
+    options: ["默认的访问权限", "能否定义函数", "占用内存大小"],
+    correct: 0,
+    why: "唯一硬区别是默认访问权限:struct 默认 public,class 默认 private;其余能力完全一样。"
+  },
+  {
+    q: "某成员落在 <code>private:</code> 段里。外部代码 <code>p.mass</code> 会怎样?",
+    options: ["读到正常的值", "触发编译报错", "返回一个空值"],
+    correct: 1,
+    why: "private 成员只有类内部能访问,外部写 p.mass 会直接编译失败,而不是读到值或空值。"
+  }
+]);
+</script>
+
+</body>
+</html>

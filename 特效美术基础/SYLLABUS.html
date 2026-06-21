@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程总览 · 特效美术基础</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .mod { margin: 2.2rem 0; }
+  .mod-head { display:flex; align-items:baseline; gap:0.6rem; border-bottom:2px solid var(--accent); padding-bottom:0.3rem; }
+  .mod-head h2 { border:none; margin:0; padding:0; }
+  .mod-tag { font-size:0.75rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); }
+  .lessons-list { list-style:none; padding:0; margin:0.8rem 0 0; }
+  .lessons-list li { display:flex; gap:0.8rem; padding:0.7rem 0; border-bottom:1px solid var(--rule); align-items:flex-start; }
+  .num { font-family:"SF Mono",Consolas,monospace; font-size:0.82rem; color:var(--muted); min-width:2.6rem; padding-top:0.15rem; }
+  .l-body { flex:1; }
+  .l-title { font-weight:600; }
+  .l-desc { font-size:0.9rem; color:var(--muted); margin-top:0.15rem; }
+  .badge { font-size:0.7rem; padding:0.1rem 0.5rem; border-radius:999px; white-space:nowrap; }
+  .badge-done { background:#e7f3ea; color:var(--good); border:1px solid var(--good); }
+  .badge-ready { background:var(--accent-soft); color:var(--accent); border:1px solid var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">特效美术基础 for VFX · 课程总览</div>
+<h1>从"读得清"到"能评判"的完整路线图</h1>
+<p class="subtitle">15 章,四个模块。遵循美术界的铁律——先把<strong>明度(value)</strong>这块地基夯实,再上<strong>光影</strong>,最后才进<strong>色彩</strong>。每一章都直接挂在你的三个目标上:① 读得清 ② 更有冲击力 ③ 能评判他人。</p>
+
+<div class="callout callout-key">
+  <span class="label">怎么用这份总览</span>
+  按顺序学最稳(后面的课会用到前面的概念)。每章是一个独立 HTML,点标题进入。学完一章随时回来,或直接问我要针对你自己作品的分析。
+</div>
+
+<div class="mod">
+  <div class="mod-head"><span class="mod-tag">模块 A</span><h2>明度 · 黑白灰(可读性的地基)</h2></div>
+  <ul class="lessons-list">
+    <li><span class="num">0001</span><div class="l-body"><div class="l-title"><a href="lessons/0001-value-readability.html">value 是可读性的地基</a></div><div class="l-desc">去色测试:眼睛靠明度差分辨形体,颜色再艳明度贴背景也看不见。</div></div><span class="badge badge-done">已出</span></li>
+    <li><span class="num">0002</span><div class="l-body"><div class="l-title"><a href="lessons/0002-silhouette.html">剪影 Silhouette:形先于色</a></div><div class="l-desc">好特效的黑剪影就能读出"是什么、力往哪去";剪影设计的可读性。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0003</span><div class="l-body"><div class="l-title"><a href="lessons/0003-value-grouping.html">明度归组与层次</a></div><div class="l-desc">把画面归并成几大明度块(notan 思维);焦点 = 最强明度对比所在。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0004</span><div class="l-body"><div class="l-title"><a href="lessons/0004-value-over-time.html">明度的时间维度</a></div><div class="l-desc">特效是动态的:起爆/峰值/消散的明度曲线,峰值帧的对比决定冲击力。</div></div><span class="badge badge-ready">规划中</span></li>
+  </ul>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><span class="mod-tag">模块 B</span><h2>光与影 Light & Shadow</h2></div>
+  <ul class="lessons-list">
+    <li><span class="num">0005</span><div class="l-body"><div class="l-title"><a href="lessons/0005-light-source.html">光从哪来:方向、衰减、自发光</a></div><div class="l-desc">光源/方向、平方反比衰减;自发光(emissive)vs 受光,为什么 VFX 多是自发光体。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0006</span><div class="l-body"><div class="l-title"><a href="lessons/0006-form-lighting.html">形体的受光语言</a></div><div class="l-desc">highlight/light/core shadow/reflected light/cast shadow,如何读出体积;用于烟与体积。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0007</span><div class="l-body"><div class="l-title"><a href="lessons/0007-glow-hdr.html">辉光、HDR 与 additive</a></div><div class="l-desc">为什么核心要"白热"才有能量感;bloom/HDR/叠加混合的明度逻辑。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0008</span><div class="l-body"><div class="l-title"><a href="lessons/0008-color-of-light.html">光的颜色:暖光冷影</a></div><div class="l-desc">光色 vs 影色、色温、环境光与反弹光;让自发光特效"咬"进场景。</div></div><span class="badge badge-ready">规划中</span></li>
+  </ul>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><span class="mod-tag">模块 C</span><h2>色彩 Color</h2></div>
+  <ul class="lessons-list">
+    <li><span class="num">0009</span><div class="l-body"><div class="l-title"><a href="lessons/0009-hsv.html">色彩三要素 HSV</a></div><div class="l-desc">Hue/Saturation/Value 与 chroma;为什么"明度仍然为王";用 Niagara 拆解颜色。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0010</span><div class="l-body"><div class="l-title"><a href="lessons/0010-color-harmony.html">色相环与配色关系</a></div><div class="l-desc">互补/邻近/分裂互补/三角/矩形;色彩和谐从哪来。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0011</span><div class="l-body"><div class="l-title"><a href="lessons/0011-temperature.html">冷暖 Temperature</a></div><div class="l-desc">冷暖对比制造空间、焦点与情绪;每个 hue 的相对冷暖。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0012</span><div class="l-body"><div class="l-title"><a href="lessons/0012-saturation.html">饱和度作为工具</a></div><div class="l-desc">饱和度对比 > 全局高饱和;"灰衬纯"原理;焦点用最高饱和,避免过饱和。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0013</span><div class="l-body"><div class="l-title"><a href="lessons/0013-color-composition.html">色彩构成:主色 + 点缀</a></div><div class="l-desc">大面积低饱和主色 + 小面积高饱和焦点;色彩比例与 dominance-accent。</div></div><span class="badge badge-ready">规划中</span></li>
+    <li><span class="num">0014</span><div class="l-body"><div class="l-title"><a href="lessons/0014-color-language.html">gameplay 的色彩语言</a></div><div class="l-desc">敌我/增益/伤害/状态的色彩编码;一致性;色盲可达性(accessibility)。</div></div><span class="badge badge-ready">规划中</span></li>
+  </ul>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><span class="mod-tag">模块 D</span><h2>综合评判 Critique</h2></div>
+  <ul class="lessons-list">
+    <li><span class="num">0015</span><div class="l-body"><div class="l-title"><a href="lessons/0015-critique-framework.html">特效评判框架</a></div><div class="l-desc">一套可执行 checklist(明度→剪影→层次→光→色彩→时间→可读性),用来给他人作品提建设性意见。</div></div><span class="badge badge-ready">规划中</span></li>
+  </ul>
+</div>
+
+<div class="ask-teacher">
+  <strong>这是路线图,不是合同。</strong> 学的过程里如果你更想先攻某一块(比如直接跳到色彩),或者想插一节针对你某个具体项目的课,直接跟我说,我会调整顺序。每章学完都欢迎把你的作品截图发我做实战分析。
+</div>
+
+<div class="lesson-footer">
+  <p>参考:<a href="RESOURCES.md">资源清单</a> · <a href="MISSION.md">我的使命</a></p>
+</div>
+
+</body>
+</html>

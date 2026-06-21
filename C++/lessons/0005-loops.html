@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 课 · 循环 —— 逐点处理的引擎</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 5 课</div>
+<h1>循环 —— 逐点处理的引擎</h1>
+<p class="subtitle">几何代码 99% 的时间在干一件事:对一堆点、一堆图元,各做一遍同样的处理。看懂循环,你就看懂了 HDK 的主干。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  读懂 <code>for</code> / <code>while</code> / range-based <code>for</code> 循环,能说出<strong>一个循环跑几次</strong>、<strong>对哪些数据各做一次什么</strong>——这是几何代码的核心模式。
+</div>
+
+<h2>热身 · 回忆第 4 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次"运算符"的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>为什么循环就是 VFX 代码的全部</h2>
+<p>
+你在 Houdini 里丢一个 <strong>Point Wrangle</strong>,写一句 <code>@P.y += 1;</code>,然后它就<em>对每一个点</em>各跑一遍。你从没写过"遍历所有点"这件事——Houdini 帮你藏起来了。
+而在 C++ / HDK 里,这个"对每个点跑一遍"是<strong>你要亲眼看到的代码</strong>:它就是一个<strong>循环(loop)</strong>。
+</p>
+<p>
+循环只做一件事:<strong>把同一段代码重复执行很多次</strong>。读循环时,你脑子里要回答两个问题——
+<strong>(1) 这段代码会跑几次?(2) 每一次它在对哪个数据做什么?</strong> 答出这两点,这个循环你就读懂了。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>for</code> 循环 = <strong>Houdini 对每个点跑一遍 wrangle</strong>。循环的"次数"= 点的数量;<strong>循环体(花括号里那段)</strong>= 节点对<strong>单个</strong>元素做的那点事。Wrangle 把循环藏了,C++ 把它摊在你面前——仅此而已。
+</div>
+
+<h2>while 循环:最朴素的"条件成立就一直跑"</h2>
+<p><code>while</code> 是最容易看懂的循环。结构就一句话:<strong>只要括号里的条件为真,就把花括号里那段再跑一遍</strong>。条件一旦变假,循环结束,代码继续往下走。</p>
+
+<pre><code><span class="t-type">int</span> i = <span class="t-num">0</span>;                 <span class="t-cmt">// 计数器,从 0 开始</span>
+<span class="t-kw">while</span> (i &lt; <span class="t-num">5</span>)               <span class="t-cmt">// 闸门:i 还小于 5 吗?</span>
+{
+    process(i);             <span class="t-cmt">// 循环体:对 i 做点事</span>
+    i = i + <span class="t-num">1</span>;             <span class="t-cmt">// 不更新 i 的话会永远卡在这里!</span>
+}</code></pre>
+
+<p>
+手跑一遍:<code>i</code> 依次是 <code>0,1,2,3,4</code>,每次都执行一遍 <code>process(i)</code>;当 <code>i</code> 变成 <code>5</code> 时,<code>5 &lt; 5</code> 为假,循环结束。
+所以它跑了<strong>5 次</strong>,分别对 <code>0,1,2,3,4</code> 各做一次。注意:<strong>循环体里必须有某行让条件最终变假</strong>(这里是 <code>i = i + 1</code>),否则就是<strong>死循环</strong>,程序永远出不来。
+</p>
+
+<h3>do-while:先跑一次,再问条件</h3>
+<p>
+<code>do-while</code> 是 <code>while</code> 的孪生兄弟,唯一区别:它<strong>先执行一遍循环体,再检查条件</strong>。所以<strong>不管条件真假,循环体至少跑一次</strong>。读代码时看到 <code>do { ... } while (...)</code>,记住"先做后问"即可。
+</p>
+<pre><code><span class="t-kw">do</span>
+{
+    askUser();              <span class="t-cmt">// 至少执行一次</span>
+} <span class="t-kw">while</span> (notConfirmed);     <span class="t-cmt">// 条件在最后才判断</span></code></pre>
+
+<h2>经典 for 循环:三段结构与执行顺序</h2>
+<p>
+<code>for</code> 是几何代码里最常见的循环。它把"计数器初始化、判断条件、更新计数器"这<strong>三件事打包写在一行括号里</strong>,用两个分号隔开,所以特别紧凑。括号里三段的顺序是固定的:
+</p>
+
+<pre><code><span class="t-kw">for</span> (<span class="t-type">int</span> i = <span class="t-num">0</span>;   i &lt; n;   i = i + <span class="t-num">1</span>)
+<span class="t-cmt">//   └─① 初始化─┘  └②条件┘  └─③ 更新──┘</span>
+{
+    process(i);            <span class="t-cmt">// ④ 循环体</span>
+}</code></pre>
+
+<p>这三段加上循环体,执行顺序<strong>不是从左到右那么简单</strong>,务必记牢这条时间线:</p>
+<pre><code>① 初始化  ── 只在最开头跑一次(int i = 0)
+② 条件    ── 每轮开始先判断;为真才进循环体,为假就退出
+④ 循环体  ── 跑你那段代码(process(i))
+③ 更新    ── 循环体跑完后才更新(i = i + 1),然后回到 ②</code></pre>
+<p>
+所以一轮的节奏是 <strong>②→④→③→②→④→③…</strong>,直到 ② 为假。上面这个 <code>for</code> 跟前面那个 <code>while</code> 完全等价——只是把"初始化 / 条件 / 更新"三处<strong>收拢到了一行</strong>,读起来一眼就知道这是个数着数跑的循环。这也是为什么 C++ 代码里数组、点列表的遍历几乎都用 <code>for</code>。
+</p>
+
+<h2>range-based for:最像 VEX 的那种"自动逐点"</h2>
+<p>
+经典 <code>for</code> 要你管计数器 <code>i</code>、还要用 <code>i</code> 去取第 <code>i</code> 个元素。但很多时候你<strong>根本不在乎序号</strong>,只想"把这一堆东西挨个拿出来处理一遍"。这时就用 <strong>range-based for</strong>(范围 for):
+</p>
+
+<pre><code><span class="t-kw">for</span> (<span class="t-type">auto</span>&amp; p : points)     <span class="t-cmt">// 对 points 里的每个元素,起名叫 p</span>
+{
+    p.y += <span class="t-num">1.0f</span>;            <span class="t-cmt">// 直接对这个元素做事,不用管它是第几个</span>
+}</code></pre>
+
+<p>
+读法:<strong>"对 <code>points</code> 里的每一个元素,把它叫做 <code>p</code>,然后执行花括号里那段"</strong>。冒号 <code>:</code> 右边是<strong>那一堆数据</strong>,左边是<strong>每次拿出来的那一个</strong>。
+这跟 VEX 里 <code>@P.y += 1;</code> 自动对每个点跑一遍,是<strong>同一个心智模型</strong>——只不过 C++ 把"遍历哪一堆"明写成了 <code>: points</code>。
+</p>
+<p>
+那个 <code>auto&amp;</code> 先眼熟:<code>auto</code> 是"类型让编译器自己猜"(下一课讲引用 <code>&amp;</code>,它让你<strong>真正改到原数据</strong>而不是改一份拷贝)。本课你只要能<strong>读出"逐个遍历 points"这层意思</strong>就达标了。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  range-based for 就是 wrangle 里的 <code>@P</code> 那种"<strong>自动逐点</strong>":你写的代码是<strong>针对单个点</strong>的(<code>p.y += 1</code>),框架负责把它套到每个点上。区别只在于:VEX 帮你隐藏了 <code>: points</code>,而 C++ 让你看见你正在遍历哪一堆几何。
+</div>
+
+<h2>break、continue 与嵌套循环</h2>
+<p>循环里有两个能改变流程的关键词,读真实代码经常撞见:</p>
+<ul>
+  <li><strong><code>break</code></strong>:<em>立刻跳出</em>整个循环,后面几轮都不跑了。像找东西"找到了就收工"。</li>
+  <li><strong><code>continue</code></strong>:<em>跳过本轮剩下的</em>,直接进下一轮。像"这个点不符合条件,略过,看下一个"。</li>
+</ul>
+
+<pre><code><span class="t-kw">for</span> (<span class="t-type">int</span> i = <span class="t-num">0</span>; i &lt; n; i = i + <span class="t-num">1</span>)
+{
+    <span class="t-kw">if</span> (mask[i] == <span class="t-num">0</span>) <span class="t-kw">continue</span>;   <span class="t-cmt">// 这个点被屏蔽 → 跳过,处理下一个</span>
+    <span class="t-kw">if</span> (found)         <span class="t-kw">break</span>;      <span class="t-cmt">// 已经找到 → 整个循环收工</span>
+    process(i);
+}</code></pre>
+
+<p>
+循环还能<strong>套循环(嵌套)</strong>:外层每跑一轮,内层就<strong>整个</strong>跑一遍。比如对每个图元(外层),再遍历它的每个顶点(内层)。读嵌套循环时,把内层当成"外层循环体里的一个完整动作"看即可——别被两层 <code>i</code>、<code>j</code> 吓到。
+</p>
+<pre><code><span class="t-kw">for</span> (<span class="t-type">int</span> prim = <span class="t-num">0</span>; prim &lt; numPrims; prim++)        <span class="t-cmt">// 外层:每个图元</span>
+{
+    <span class="t-kw">for</span> (<span class="t-type">int</span> v = <span class="t-num">0</span>; v &lt; vertsOf(prim); v++)      <span class="t-cmt">// 内层:该图元的每个顶点</span>
+    {
+        shadeVertex(prim, v);
+    }
+}</code></pre>
+<p>(<code>i++</code> 只是 <code>i = i + 1</code> 的简写,以后会大量见到,先眼熟。)</p>
+
+<h2>你会在真实代码里看到</h2>
+<p>
+下面这段是 HDK / Houdini 几何代码里<strong>最高频</strong>的样子:遍历一个几何体的所有点,把每个点的位置抬高。<code>std::vector&lt;UT_Vector3&gt;</code> 你现在只要读成"一<strong>排</strong>位置(vector 是个能装很多元素的容器,下一课细讲)";<code>.size()</code> 读成"里面有多少个"。
+</p>
+
+<pre><code><span class="t-cmt">// positions 是这块几何所有点的位置,排成一长串</span>
+<span class="t-type">std::vector</span>&lt;<span class="t-type">UT_Vector3</span>&gt; positions = mesh.getPositions();
+
+<span class="t-cmt">// 经典 for:用序号 i 一个个取出来处理</span>
+<span class="t-kw">for</span> (<span class="t-type">size_t</span> i = <span class="t-num">0</span>; i &lt; positions.size(); i++)
+{
+    positions[i].y += <span class="t-num">1.0f</span>;     <span class="t-cmt">// 把第 i 个点抬高 1</span>
+}
+
+<span class="t-cmt">// 同样的事,range-based for 写法更短、更像 @P</span>
+<span class="t-kw">for</span> (<span class="t-type">UT_Vector3</span>&amp; P : positions)
+{
+    P.y += <span class="t-num">1.0f</span>;             <span class="t-cmt">// 对每个点 P,抬高 1</span>
+}</code></pre>
+
+<p>
+看到这种结构,你的脑内独白应该是:<em>"它在遍历所有点,对每个点的 y 加 1。跑的次数 = 点的数量。"</em>
+真实的 HDK 还常写成 <code>for (GA_Offset ptoff : range)</code> 这种用<strong>偏移量</strong>遍历点的形式——名字不同,但<strong>骨架完全一样</strong>:冒号右边是"一堆点",左边是"当前这一个"。认出骨架,你就能读懂八成几何循环。
+</p>
+
+<h2>读代码易错点</h2>
+<ul>
+  <li>
+    <strong>off-by-one(差一错误)。</strong> <code>i &lt; n</code> 跑 <code>0..n-1</code> 共 <strong>n 次</strong>;但 <code>i &lt;= n</code> 会跑 <code>0..n</code> 共 <strong>n+1 次</strong>,多跑一次、还可能越界访问 <code>positions[n]</code>(不存在的第 n+1 个)。读到 <code>&lt;=</code> 时要警觉:是不是多跑了一轮?
+  </li>
+  <li>
+    <strong>死循环。</strong> <code>while</code> / <code>for</code> 的条件如果<strong>永远为真</strong>(比如忘了更新计数器,或更新方向写反),程序就卡死。读 <code>while</code> 时一定要找:<em>哪一行会让条件最终变假?</em> 找不到就是 bug。
+  </li>
+  <li>
+    <strong><code>==</code> 写成 <code>=</code>。</strong> 循环条件里要<strong>比较</strong>用 <code>==</code>;写成<strong>赋值</strong> <code>=</code> 会改变行为(第 4 课提过)。
+  </li>
+  <li>
+    <strong>range-based for 里漏了 <code>&amp;</code>。</strong> <code>for (auto p : points)</code>(没有 <code>&amp;</code>)拿到的是<strong>每个元素的拷贝</strong>,你改 <code>p</code> 改的是副本,<em>原数据纹丝不动</em>;<code>for (auto&amp; p : points)</code>(有 <code>&amp;</code>)才真正改到原数据。下一课专门讲这个 <code>&amp;</code>,现在先把它当一个"改没改到原件"的开关记住。
+  </li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题都先在脑子里回答"跑几次、对谁做什么",再选。</p>
+<div class="quiz" id="quiz5"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/for-statements/" target="_blank">LearnCpp · 8.10 — For statements</a>
+  —— 权威免费教程里专讲 <code>for</code> 循环三段结构与执行顺序的一节,例子干净。看完你对"① 初始化 / ② 条件 / ③ 更新"的节奏会更踏实;同站还有 <a href="https://www.learncpp.com/cpp-tutorial/for-statements/" target="_blank">紧随其后的 range-based for 章节</a>可顺手翻一翻。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:<code>auto&amp;</code> 里的 <code>&amp;</code> 到底改没改到原件?<code>size_t</code> 和 <code>int</code> 有什么区别?嵌套循环里 <code>break</code> 跳出的是哪一层?——直接在对话里问,我给你拆开讲。卡住很正常,问出来就通了。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0004-operators-expressions.html">第 4 课 · 运算符与表达式</a></p>
+  <p>下一课预告:<a href="0006-references.html">第 6 课 · 引用 references</a>——把本课那个神秘的 <code>&amp;</code> 彻底讲清楚:为什么加了它就能<strong>改到原数据</strong>,这是看懂"逐点修改几何"的最后一块拼图。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 4 课:整数相除 <code>7 / 2</code> 在 C++ 里结果是?",
+    options: ["结果是 3", "结果是 4", "结果是 3.5"],
+    correct: 0,
+    why: "两个 int 相除做整数除法,小数部分直接砍掉,7/2 得 3(不是四舍五入到 4,也不是 3.5)。"
+  }
+]);
+
+renderQuiz("quiz5", [
+  {
+    q: "<code>for (int i = 0; i &lt; 5; i++)</code> 的循环体会执行<strong>几次</strong>?",
+    options: ["执行四次循环", "执行五次循环", "执行六次循环"],
+    correct: 1,
+    why: "i 取 0,1,2,3,4 共五次;到 i 等于 5 时 5<5 为假,退出。i<5 跑的是 0 到 4 共 5 次。"
+  },
+  {
+    q: "<code>for</code> 三段里,<strong>哪一段只在最开头执行一次</strong>?",
+    options: ["条件那一段", "更新那一段", "初始化那段"],
+    correct: 2,
+    why: "初始化(int i = 0)只在循环开始前跑一次;条件每轮都判断,更新每轮循环体后都跑。"
+  },
+  {
+    q: "<code>for (auto&amp; p : points)</code> 这行表示循环对<strong>谁</strong>各做一次?",
+    options: ["对 points 每个元素", "对 points 这一整堆", "对名字 auto 本身"],
+    correct: 0,
+    why: "range-based for 对 points 里的每个元素各跑一次,每次把当前元素叫做 p;冒号右边是那一堆。"
+  },
+  {
+    q: "循环里 <code>continue</code> 的作用是?",
+    options: ["跳出整个的循环", "跳过本轮剩余处理", "把循环重头再来"],
+    correct: 1,
+    why: "continue 只跳过本轮剩下的语句、直接进下一轮;跳出整个循环的是 break,二者别搞混。"
+  },
+  {
+    q: "条件写成 <code>i &lt;= n</code> 相比 <code>i &lt; n</code>,循环会?",
+    options: ["少跑一轮循环", "多跑一轮循环", "跑同样的轮数"],
+    correct: 1,
+    why: "i<=n 会让 i 取到 n 那一轮也成立,比 i<n 多跑一次,这正是常见的 off-by-one,还可能越界。"
+  },
+  {
+    q: "读 <code>while</code> 循环时,为防死循环最该确认哪件事?",
+    options: ["条件最终会变假", "循环体写得够短", "计数器叫什么名"],
+    correct: 0,
+    why: "必须有某行让条件最终变假(如更新计数器),否则条件永远为真就是死循环,程序卡死出不来。"
+  }
+]);
+</script>
+
+</body>
+</html>

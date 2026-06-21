@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 课 · 黑白灰:特效读得清的地基</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">美术基础 for VFX · 第 1 课</div>
+<h1>黑白灰:特效"读得清"的地基</h1>
+<p class="subtitle">一个特效在战斗里糊成一团,九成不是颜色不够亮——是明度(value)出了问题。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  看任意一张特效截图,你能做一次<strong>去色测试</strong>,并据此判断它在画面里<strong>读不读得清</strong>——因为眼睛分辨形体,靠的是<strong>明度差</strong>,不是颜色。
+</div>
+
+<h2>三要素里,先抓"明度"</h2>
+<p>
+任何一个颜色都能拆成三件事:<strong>色相 hue</strong>(是红是蓝)、<strong>饱和度 saturation</strong>(鲜还是灰)、<strong>明度 value</strong>(亮还是暗)。
+这一课只盯住最后一个——<strong>value(明度)</strong>:一块颜色有多亮、多暗,跟它是什么颜色无关。
+</p>
+<p>把一幅画面抽掉所有颜色,剩下的那张<strong>黑白灰</strong>照片,就是它的<strong>明度结构</strong>。</p>
+
+<div class="value-strip" aria-hidden="true">
+  <span style="background:#111"></span><span style="background:#333"></span><span style="background:#555"></span>
+  <span style="background:#777"></span><span style="background:#999"></span><span style="background:#bbb"></span>
+  <span style="background:#ddd"></span><span style="background:#f4f4f4"></span>
+</div>
+<p class="scene-caption">从黑到白的明度阶。读图时,眼睛先读的是"谁更亮、谁更暗",而不是"谁是什么颜色"。</p>
+
+<div class="callout callout-key">
+  <span class="label">核心定律</span>
+  两块区域<strong>明度相同</strong>时,哪怕色相天差地别,挨在一起也会<strong>"糊"成一团</strong>、分不出边界。可读性 = 明度差。颜色再艳,明度贴着背景,照样看不见。
+</div>
+
+<h2>去色测试 · 亲手验一次</h2>
+<p>
+下面两个特效用的是<strong>同一个背景、同一个形状</strong>,只有<strong>颜色不同</strong>:左边是炽热的高明度核心,右边是饱和的紫色魔法。
+彩色状态下,两个看起来都挺"显眼"。现在点按钮<strong>去色</strong>——只留明度,看哪个还能从背景里跳出来。
+</p>
+
+<div class="two-col">
+  <div>
+    <div class="scene" id="sceneA" style="background:linear-gradient(160deg,#454838 0%,#3c3f31 60%,#34362a 100%);">
+      <div class="fx" style="width:42%;aspect-ratio:1;left:29%;top:24%;
+        background:radial-gradient(circle, #fff6c0 0%, #ffb23a 38%, rgba(255,138,42,0) 72%);"></div>
+    </div>
+    <p class="scene-caption"><strong>A · 高明度核心</strong>(亮黄白)</p>
+  </div>
+  <div>
+    <div class="scene" id="sceneB" style="background:linear-gradient(160deg,#454838 0%,#3c3f31 60%,#34362a 100%);">
+      <div class="fx" style="width:42%;aspect-ratio:1;left:29%;top:24%;
+        background:radial-gradient(circle, #5f3789 0%, #54307a 48%, rgba(84,48,122,0) 74%);"></div>
+    </div>
+    <p class="scene-caption"><strong>B · 饱和但中明度</strong>(亮紫)</p>
+  </div>
+</div>
+
+<div class="toggle-row">
+  <button id="desatBtn" class="btn" data-on="↩ 回到彩色" data-off="◐ 去色看明度">◐ 去色看明度</button>
+  <span class="scene-caption" style="margin:0;">← 点一下,再点回来,来回对比</span>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">看到了什么</span>
+  去色后,<strong>A 依然亮得跳出来</strong>(它和背景有大明度差);<strong>B 几乎溶进背景</strong>——它的紫很鲜,但<em>明度</em>跟olive 背景几乎一样。在真实战斗的繁杂画面里,B 这种特效就是"看不清"的元凶。颜色骗了你的眼睛,明度才是真相。
+</div>
+
+<h2>接回 Niagara</h2>
+<p>
+你在 Niagara 里调 <code>Color</code> 曲线、<code>Emissive</code>(自发光)强度、HDR 强度,本质上很大一部分是在调<strong>明度</strong>。
+所以当美术总监说"这技能在战斗里看不清",第一杠杆<strong>不是把颜色调得更饱和</strong>,而是:
+</p>
+<ul>
+  <li>把核心提到<strong>更高明度</strong>(更亮的 HDR 核 / 白热中心),拉开与背景的明度差;</li>
+  <li>或反过来,给特效<strong>压一圈更暗的边、烟或描边</strong>,让它在亮背景前也能"咬住"形;</li>
+  <li>判断标准:截一张<strong>放进真实战斗背景</strong>的图,去色,看它还跳不跳得出来。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz1"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=x30j-PUN1G4" target="_blank">GDC 2017 · Art Directing VFX for Stylized Games</a>
+  —— 一线团队讲如何为游戏特效建立<strong>明度/色彩/可读性</strong>的美术支柱,跟你的目标最贴。本课的"明度=可读性"就是其中的地基。<br>
+  想补"明度"本身的短视频:<a href="https://www.ctrlpaint.com/library" target="_blank">Ctrl+Paint 免费基础库</a>(找 value 一节,约 5 分钟)。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 我是你的老师——想要更多 Niagara 的具体例子、想让我拿你自己的一张特效截图来做去色分析、或者想知道明度和"剪影 silhouette"是什么关系,直接在对话里问我。卡住很正常,问出来就通了。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>剪影与明度归组</strong>——为什么一个好特效,光看它的黑白剪影就该认得出是什么、力道往哪去。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/value-tools.js"></script>
+<script>
+wireDesaturateToggle("desatBtn", "sceneA", "sceneB");
+renderQuiz("quiz1", [
+  {
+    q: "特效在繁杂战斗里「糊」成一团、读不清,最常见的美术原因是?",
+    options: ["它跟背景的明度太接近了", "它的颜色饱和度还不够高", "它发射的粒子数量不够多"],
+    correct: 0,
+    why: "眼睛靠明度差分辨形体。明度贴着背景,颜色再艳也读不清;加饱和往往没用。"
+  },
+  {
+    q: "「去色测试」是把画面去掉什么、只留下什么?",
+    options: ["去掉色相,只留下明度", "去掉明度,只留下色相", "去掉饱和,只留下色相"],
+    correct: 0,
+    why: "去色 = 抽掉颜色信息(色相/饱和),只剩黑白灰,也就是纯粹的明度结构。"
+  },
+  {
+    q: "两块颜色天差地别、但明度相同的区域挨在一起,会?",
+    options: ["边界糊在一起、难分清", "边界变得更锐利更清晰", "交界处会产生强烈发光"],
+    correct: 0,
+    why: "明度相同则无明度差,眼睛分不出边界,即使色相对比很大也会糊成一团。"
+  },
+  {
+    q: "想让一个特效在很亮的背景前更跳出来,第一步最该做的是?",
+    options: ["压暗它周围、拉开明度差", "把它颜色调得更饱和些", "再给它叠更多发光粒子"],
+    correct: 0,
+    why: "亮背景前,把特效或其边压暗以制造明度差,比继续加亮/加饱和更有效。"
+  }
+]);
+</script>
+
+</body>
+</html>

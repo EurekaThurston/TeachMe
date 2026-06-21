@@ -1,17 +1,19 @@
-/* Shared stylesheet for all C++-for-VFX lessons.
-   Tufte-inspired: serif body, generous margins, readable measure, prints well. */
+/* Shared stylesheet for all 美术基础-for-VFX lessons.
+   Tufte-inspired: serif body, generous margins, readable measure, prints well.
+   Palette leans neutral/ink so color swatches in lessons read truthfully. */
 
 :root {
-  --ink: #1a1a1a;
-  --paper: #fffef9;
-  --muted: #6b6357;
-  --rule: #d9d2c5;
-  --accent: #8a3324;       /* terracotta — for headings/links */
-  --accent-soft: #f5ece4;
-  --code-bg: #f4f1ea;
+  --ink: #17181c;
+  --paper: #fcfbf7;
+  --muted: #6c6a63;
+  --rule: #ddd8cc;
+  --accent: #b4632a;        /* warm ochre — headings/links */
+  --accent-soft: #f6ece1;
+  --panel: #ffffff;
   --good: #2f6b3f;
   --bad: #9a2b2b;
-  --vex: #2b5d8a;          /* used for VFX/VEX analogy callouts */
+  --vfx: #2b6d8a;           /* Niagara / VFX callouts */
+  --shadow: rgba(0,0,0,0.08);
 }
 
 * { box-sizing: border-box; }
@@ -19,7 +21,7 @@
 html { font-size: 18px; }
 
 body {
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Songti SC", serif;
   color: var(--ink);
   background: var(--paper);
   line-height: 1.55;
@@ -64,31 +66,13 @@ a:hover { border-bottom-color: var(--accent); }
 
 .subtitle { color: var(--muted); font-size: 1.05rem; font-style: italic; margin-top: 0; }
 
-/* ---- Code ---- */
-code, pre, .mono {
+strong { font-weight: 600; }
+
+code, .mono {
   font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
-  font-size: 0.92em;
+  font-size: 0.9em;
+  background: #f1ede4; padding: 0.12em 0.35em; border-radius: 3px;
 }
-code { background: var(--code-bg); padding: 0.12em 0.35em; border-radius: 3px; }
-
-pre {
-  background: var(--code-bg);
-  border: 1px solid var(--rule);
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  padding: 1rem 1.1rem;
-  overflow-x: auto;
-  line-height: 1.5;
-}
-pre code { background: none; padding: 0; }
-
-/* simple token coloring helpers (apply by hand with spans) */
-.t-type { color: var(--accent); font-weight: 600; }
-.t-name { color: #2b5d8a; }
-.t-kw   { color: #7a3e9d; font-weight: 600; }
-.t-num  { color: #2f6b3f; }
-.t-str  { color: #b06a00; }
-.t-cmt  { color: var(--muted); font-style: italic; }
 
 /* ---- Callouts ---- */
 .callout {
@@ -97,24 +81,61 @@ pre code { background: none; padding: 0; }
   margin: 1.4rem 0;
   font-size: 0.97rem;
 }
-.callout-vex   { background: #eef4fa; border-left: 3px solid var(--vex); }
-.callout-key   { background: var(--accent-soft); border-left: 3px solid var(--accent); }
-.callout-vex .label, .callout-key .label {
+.callout-vfx { background: #eaf3f7; border-left: 3px solid var(--vfx); }
+.callout-key { background: var(--accent-soft); border-left: 3px solid var(--accent); }
+.callout-vfx .label, .callout-key .label {
   display: block; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
   margin-bottom: 0.3rem; font-weight: 700;
 }
-.callout-vex .label { color: var(--vex); }
+.callout-vfx .label { color: var(--vfx); }
 .callout-key .label { color: var(--accent); }
+
+/* ---- Value strip (a gradient of grays for teaching value scale) ---- */
+.value-strip { display: flex; height: 2.4rem; border-radius: 4px; overflow: hidden; margin: 1.2rem 0; border: 1px solid var(--rule); }
+.value-strip > span { flex: 1; }
+
+/* ---- Swatch grid (color / value comparison) ---- */
+.swatches { display: flex; gap: 0.6rem; margin: 1.2rem 0; flex-wrap: wrap; }
+.swatch {
+  width: 5.2rem; height: 5.2rem; border-radius: 6px; border: 1px solid var(--rule);
+  display: flex; align-items: flex-end; justify-content: center;
+  font-size: 0.72rem; color: #fff; padding-bottom: 0.3rem;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+/* ---- Scene mock (a fake game frame to test readability) ---- */
+.scene {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px;
+  overflow: hidden; border: 1px solid var(--rule); box-shadow: 0 2px 10px var(--shadow);
+  margin: 0.4rem 0;
+}
+.scene .fx { position: absolute; border-radius: 50%; filter: blur(0.5px); }
+.scene-caption { font-size: 0.82rem; color: var(--muted); text-align: center; margin: 0.3rem 0 1.2rem; }
+
+/* desaturate toggle target */
+.desat { filter: grayscale(1) contrast(1.02); }
+
+.toggle-row { display: flex; gap: 0.6rem; align-items: center; margin: 0.8rem 0 0.2rem; flex-wrap: wrap; }
+.btn {
+  font-family: inherit; font-size: 0.92rem; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 5px;
+  padding: 0.45rem 0.9rem; color: var(--ink); transition: background 0.12s, border-color 0.12s;
+}
+.btn:hover { background: #f1ede4; }
+.btn.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin: 1.2rem 0; }
+@media (max-width: 540px) { .two-col { grid-template-columns: 1fr; } }
 
 /* ---- Quiz widget (used with quiz.js) ---- */
 .quiz { margin: 1.2rem 0; }
 .quiz-q {
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--rule);
   border-radius: 6px;
   padding: 1.1rem 1.2rem;
   margin: 1rem 0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  box-shadow: 0 1px 3px var(--shadow);
 }
 .quiz-q .q-text { font-weight: 600; margin-bottom: 0.8rem; }
 .quiz-opt {
@@ -122,9 +143,9 @@ pre code { background: none; padding: 0; }
   font-family: inherit; font-size: 0.98rem;
   background: var(--paper); border: 1px solid var(--rule);
   border-radius: 5px; padding: 0.6rem 0.85rem; margin: 0.4rem 0;
-  cursor: pointer; transition: background 0.12s, border-color 0.12s;
+  cursor: pointer; transition: background 0.12s, border-color 0.12s; color: var(--ink);
 }
-.quiz-opt:hover { background: var(--code-bg); }
+.quiz-opt:hover { background: #f1ede4; }
 .quiz-opt.correct { background: #e7f3ea; border-color: var(--good); color: var(--good); }
 .quiz-opt.wrong   { background: #fbeaea; border-color: var(--bad); color: var(--bad); }
 .quiz-opt:disabled { cursor: default; }
@@ -142,10 +163,9 @@ pre code { background: none; padding: 0; }
   background: var(--accent-soft); border-radius: 5px; padding: 0.85rem 1.1rem;
   margin: 2rem 0 0; font-size: 0.95rem;
 }
-
 .primary-source {
   border: 1px dashed var(--accent); border-radius: 5px;
-  padding: 0.9rem 1.1rem; margin: 1.6rem 0; background: #fff;
+  padding: 0.9rem 1.1rem; margin: 1.6rem 0; background: var(--panel);
 }
 .primary-source .label {
   display: block; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
@@ -155,5 +175,6 @@ pre code { background: none; padding: 0; }
 @media print {
   body { max-width: 100%; padding: 0; font-size: 11pt; }
   .quiz-opt:hover { background: var(--paper); }
+  .btn { display: none; }
   a { color: var(--ink); border: none; }
 }

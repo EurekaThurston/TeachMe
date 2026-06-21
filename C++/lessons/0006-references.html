@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 课 · 引用 references</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">C++ for VFX TAs · 第 6 课</div>
+<h1>引用 references —— 给数据起个别名</h1>
+<p class="subtitle">签名里那个不起眼的 <code>&amp;</code>,决定了函数是在<em>复制一份</em>还是在<em>动你的原件</em>。读懂它,你就读懂了真实代码里 90% 的参数。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  读懂签名里的 <code>T&amp;</code> 和 <code>const T&amp;</code>:理解"传引用"让函数能<strong>改调用方的数据</strong>,而 <code>const&amp;</code> 是<strong>"只读、不复制"</strong>;并明白为什么真实 HDK/引擎代码里参数几乎<strong>全是 <code>const&amp;</code></strong>。
+</div>
+
+<h2>热身 · 回忆第 5 课(别翻笔记)</h2>
+<p>先凭记忆答一题,把上次的循环捞回来——这种"主动回忆"比重看一遍记得牢得多。</p>
+<div class="quiz" id="warmup"></div>
+
+<h2>引用是什么:同一份数据的"第二个名字"</h2>
+<p>
+一个<strong>引用(reference)</strong>就是某个<em>已经存在</em>的变量的<strong>别名</strong>。它不是新盒子、不存新数据——它只是给同一个盒子又贴了一张名牌。写法是在类型后面加 <code>&amp;</code>:
+</p>
+
+<pre><code><span class="t-type">float</span> density = <span class="t-num">3.0</span>;        <span class="t-cmt">// 真正的盒子,名叫 density</span>
+<span class="t-type">float</span>&amp; alias = density;       <span class="t-cmt">// alias 是 density 的别名,不是新盒子</span>
+
+alias = <span class="t-num">9.0</span>;                  <span class="t-cmt">// 改 alias 就是在改 density</span>
+<span class="t-cmt">// 现在 density 也是 9.0 —— 它俩自始至终是同一个盒子</span></code></pre>
+
+<p>引用有两条铁律,读代码时要默认它们成立:</p>
+<ul>
+<li><strong>必须在出生时就绑定。</strong> 你不能写 <code>float&amp; alias;</code> 然后晚点再说它指谁——声明的那一刻就得给它一个变量去绑。</li>
+<li><strong>绑了就不能改绑。</strong> 之后无论怎么给 <code>alias</code> 赋值,都是在改<em>它绑的那个原件</em>,而不是让它去当别人的别名。这点跟下一课的"指针"正好相反,先记住。</li>
+</ul>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  引用就像在 Houdini 里给一个已有属性<strong>建了一个 alias 通道</strong>:它没复制点云、没多占内存,只是另一个能读写<em>同一份</em>数据的入口。你从 alias 通道写值,主属性立刻变——因为它们本来就是同一份。
+</div>
+
+<h2>核心区别:按值传递 vs 按引用传递</h2>
+<p>
+这是本课的心脏。函数怎么"拿到"你给的参数,有两种根本不同的方式。
+</p>
+
+<h3>① 按值传递(pass by value)—— 复制一份</h3>
+<p>参数类型没有 <code>&amp;</code> 时,函数拿到的是你那个值的<strong>一份拷贝</strong>。它在拷贝上随便改,你的原件<em>纹丝不动</em>:</p>
+
+<pre><code><span class="t-type">void</span> <span class="t-name">tryToModify</span>(<span class="t-type">float</span> x)   <span class="t-cmt">// x 是「调用方那个值」的一份复制品</span>
+{
+    x = <span class="t-num">100.0</span>;             <span class="t-cmt">// 只改了复制品</span>
+}
+
+<span class="t-type">float</span> mass = <span class="t-num">3.0</span>;
+tryToModify(mass);
+<span class="t-cmt">// mass 还是 3.0 —— 函数动的是拷贝,不是 mass 本人</span></code></pre>
+
+<h3>② 按引用传递(pass by reference)—— 操作原件</h3>
+<p>参数类型带 <code>&amp;</code> 时,函数拿到的是你那个变量<strong>本人的别名</strong>。它改参数,就是<strong>改你的原件</strong>:</p>
+
+<pre><code><span class="t-type">void</span> <span class="t-name">modify</span>(<span class="t-type">float</span>&amp; x)        <span class="t-cmt">// x 是「调用方那个变量」的别名</span>
+{
+    x = <span class="t-num">100.0</span>;             <span class="t-cmt">// 直接改原件</span>
+}
+
+<span class="t-type">float</span> mass = <span class="t-num">3.0</span>;
+modify(mass);
+<span class="t-cmt">// mass 现在是 100.0 —— 函数透过别名改掉了 mass 本人</span></code></pre>
+
+<p>
+就差一个 <code>&amp;</code>,结果天壤之别。<strong>读真实代码时,看到参数上的 <code>&amp;</code>,你就要警觉:这个函数<em>可能会改我传进去的东西</em>。</strong>这也是它存在的意义——很多函数(尤其名字像 <code>compute…</code>、<code>fill…</code>、<code>get…(out)</code>)就是靠引用参数把结果"写回"给调用方的。
+</p>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  按值传一份几何 = 先把整个点云<strong>复制一份</strong>再交给函数,贵且浪费。按引用传 = 把<strong>原件本身</strong>递过去,函数直接在原点云上操作——就像一个节点拿到的是上游真实的几何句柄,而不是它的快照。
+</div>
+
+<h2><code>const T&amp;</code>:只读引用 —— 既不复制,又不让你改</h2>
+<p>
+这是真实代码里出现频率<strong>最高</strong>的参数写法。它把上面两种好处合并了:
+</p>
+<ul>
+<li><code>&amp;</code> 让它<strong>不复制</strong>——直接用原件,省掉拷贝大对象的开销;</li>
+<li><code>const</code> 给它上锁——函数<strong>只能读、不能写</strong>原件,所以调用方很安全。</li>
+</ul>
+
+<pre><code><span class="t-type">float</span> <span class="t-name">computeArea</span>(<span class="t-kw">const</span> <span class="t-type">Geometry</span>&amp; geo)   <span class="t-cmt">// 只读地借用 geo</span>
+{
+    <span class="t-kw">return</span> geo.surfaceArea();   <span class="t-cmt">// 能读它的数据</span>
+    <span class="t-cmt">// geo.clear();  ← 编译器会拒绝:const 不准改</span>
+}</code></pre>
+
+<p>
+读这一行你脑子里要翻译成:<strong>"我借你的 <code>geo</code> 看看,保证不复制、也保证不动它。"</strong> 正因为这个承诺,你把任何东西传进去都放心。<a href="https://www.learncpp.com/cpp-tutorial/pass-by-const-lvalue-reference/" target="_blank">LearnCpp 12.6</a> 直接给出一条经验法则:对于复制代价高的类型,默认用 <code>const T&amp;</code> 传。
+</p>
+
+<p><strong>为什么真实代码里参数几乎全是 <code>const&amp;</code>?</strong> 三个原因叠加:</p>
+<ul>
+<li><strong>省钱。</strong> 复制一个 <code>std::string</code>、一个向量数组、一份几何,都要真实地搬数据;<code>const&amp;</code> 零拷贝。</li>
+<li><strong>安全。</strong> <code>const</code> 让编译器替你把关,函数碰不了你的原件,读代码时你能立刻排除"它会不会偷偷改我数据"的担忧。</li>
+<li><strong>通用。</strong> <code>const T&amp;</code> 还能接收临时值和字面量(比如直接传一个表达式的结果),而非 const 的 <code>T&amp;</code> 不行——这点 <a href="https://www.learncpp.com/cpp-tutorial/lvalue-references-to-const/" target="_blank">LearnCpp 12.4</a> 讲得很细。</li>
+</ul>
+
+<div class="callout callout-vex">
+  <span class="label">VFX 类比</span>
+  <code>const T&amp;</code> 就是一个<strong>"只读输入端口"</strong>:节点能把上游的数据接进来看、参与计算,但绝不会反过来改上游。这正是大多数节点对输入的态度——读它,不毁它。
+</div>
+
+<h2>你会在真实代码里看到</h2>
+<p>下面是 Houdini HDK 风格的一段真实签名(几乎每个 HDK 函数都长这样)。别管细节,只盯着参数上的 <code>const … &amp;</code>:</p>
+
+<pre><code><span class="t-cmt">// 计算一个几何体的包围盒(HDK 风格)</span>
+<span class="t-type">bool</span> <span class="t-name">computeBounds</span>(<span class="t-kw">const</span> <span class="t-type">GU_Detail</span>&amp; gdp, <span class="t-type">UT_BoundingBox</span>&amp; box)
+{
+    <span class="t-kw">return</span> gdp.getBBox(&amp;box);   <span class="t-cmt">// 读 gdp(只读),把结果写进 box</span>
+}</code></pre>
+
+<p>这一行签名里两个 <code>&amp;</code> 各司其职,读懂它你就读懂了 HDK 的惯例:</p>
+<ul>
+<li><code>const GU_Detail&amp; gdp</code> —— <strong>输入</strong>:整份几何,只读借用,不复制(几何很大,复制会很贵)。</li>
+<li><code>UT_BoundingBox&amp; box</code> —— <strong>输出</strong>:没有 <code>const</code>,所以函数会<em>写</em>它;调用方传一个空盒子进去,函数把算好的包围盒填回来。返回值 <code>bool</code> 只表示成功/失败。</li>
+</ul>
+
+<p>引擎侧也一样。Unreal 里你会反复见到这种成对出现的模式:</p>
+
+<pre><code><span class="t-cmt">// 把一个世界坐标点找最近的样条点(UE 风格)</span>
+<span class="t-type">void</span> <span class="t-name">FindClosest</span>(<span class="t-kw">const</span> <span class="t-type">FVector</span>&amp; worldPos, <span class="t-type">FVector</span>&amp; outClosest)
+{
+    outClosest = project(worldPos);   <span class="t-cmt">// 读 worldPos,写 outClosest</span>
+}</code></pre>
+
+<p>命名约定帮你二次确认:带 <code>out</code> 前缀、又没有 <code>const</code> 的引用参数,基本就是函数用来<strong>回填结果</strong>的口子。</p>
+
+<h2>读代码易错点</h2>
+<p>这几个是阅读引用时最常栽的坑,逐条记住:</p>
+<ul>
+<li><strong>把 <code>&amp;</code> 看漏了。</strong> <code>void f(Mesh m)</code> 和 <code>void f(Mesh&amp; m)</code> 行为完全不同:前者改不到你的原件,后者能改。读签名时务必把 <code>&amp;</code> 当成关键信息,别一眼扫过去。</li>
+<li><strong>把声明里的 <code>&amp;</code> 和取地址 <code>&amp;</code> 搞混。</strong> 写在<em>类型后面</em>的 <code>&amp;</code>(如 <code>float&amp; x</code>)是"引用类型";写在<em>变量前面</em>的 <code>&amp;</code>(如 <code>&amp;mass</code>)是"取它的地址"——那是第 7 课指针的东西,这里先分清位置。</li>
+<li><strong>以为 <code>const T&amp;</code> 会复制。</strong> 不会。它和 <code>T&amp;</code> 一样是零拷贝的别名,<code>const</code> 只是加了"不准改"的锁,跟"复不复制"无关。</li>
+<li><strong>返回引用的陷阱(先眼熟)。</strong> 函数也可以<em>返回</em>引用,写成 <code>T&amp; getElement(...)</code>,意思是"把内部某个真实数据的别名给你,你能直接改它"。但有个致命坑:<strong>绝不能返回函数内局部变量的引用</strong>——那个变量在函数结束时就销毁了,返回的别名会指向一块已经失效的内存(悬空引用)。读代码时看到返回 <code>&amp;</code>,要留意它引用的东西"活得够不够久"。</li>
+</ul>
+
+<h2>性能账:引用 vs 拷贝</h2>
+<p>
+为什么这件事在 VFX 里格外要紧?因为你的数据常常<strong>很大</strong>。一个 <code>float</code> 复制起来不值一提,但一份几何、一个上百万点的数组、一条长字符串,按值传一次就要实打实搬一遍内存。
+</p>
+<ul>
+<li><strong>小而便宜的类型</strong>(<code>int</code>、<code>float</code>、<code>bool</code>):按值传就好,复制成本几乎为零,反而更直观。</li>
+<li><strong>大或复制昂贵的类型</strong>(几何、容器、字符串、矩阵):用 <code>const T&amp;</code> 传,只读时零拷贝;需要函数写回时用 <code>T&amp;</code>。</li>
+</ul>
+<p>
+所以当你在一段每帧、每点都跑的热代码里看到 <code>const GU_Detail&amp;</code> 而不是 <code>GU_Detail</code>,那不是随手写的——是作者在<strong>有意避免复制大几何</strong>。读懂这个意图,你就开始像写代码的人一样思考了。
+</p>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>每题先在脑子里翻译那个 <code>&amp;</code>:它是别名还是拷贝?是只读还是可写?</p>
+<div class="quiz" id="quiz6"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://www.learncpp.com/cpp-tutorial/pass-by-lvalue-reference/" target="_blank">LearnCpp · 12.5 — Pass by lvalue reference</a>
+  —— 权威免费教程里专讲"按引用传参"的一节,把"复制一份 vs 操作原件"讲得最透彻。读完顺手看 12.6(<code>const</code> 引用)会更完整。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 比如:为什么 <code>const T&amp;</code> 能接字面量而 <code>T&amp;</code> 不能?什么时候该传 <code>T&amp;</code> 什么时候传 <code>const T&amp;</code>?返回引用到底什么时候安全?——直接问,我给你拆开讲,也能给更多 Houdini/UE 的真实例子。
+</div>
+
+<div class="lesson-footer">
+  <p>上一课:<a href="0005-loops.html">第 5 课 · 循环 loops</a></p>
+  <p>下一课预告:<a href="0007-pointers.html">第 7 课 · 指针 pointers</a>——引用的"亲戚",但它能为空、能改绑、还要解引用。本课是"指针墙"的前半,把引用吃透,指针就好懂一半了。</p>
+  <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("warmup", [
+  {
+    q: "回忆第 5 课:一个 <code>for</code> 循环写成 <code>for (int i = 0; i &lt; 4; i++)</code>,循环体一共<strong>执行几次</strong>?",
+    options: ["执行了三次", "执行了四次", "执行了五次"],
+    correct: 1,
+    why: "i 取 0、1、2、3 共四次都满足 i<4;到 i=4 时条件为假,退出。所以循环体跑四次。"
+  }
+]);
+
+renderQuiz("quiz6", [
+  {
+    q: "<code>void scale(float& v)</code> 里那个 <code>&amp;</code> 意味着函数对 <code>v</code> 的操作会<strong>怎样</strong>?",
+    options: ["只动一份拷贝原件", "直接改动调用方原件", "完全无法读取原件"],
+    correct: 1,
+    why: "带 & 是按引用传递,v 是调用方变量的别名;函数改 v 就是改原件本人,不是拷贝。"
+  },
+  {
+    q: "<code>void f(Mesh m)</code>(没有 <code>&amp;</code>)调用时,函数<strong>拿到</strong>的是什么?",
+    options: ["拿到原件一份拷贝", "拿到原件本身别名", "拿到原件内存地址"],
+    correct: 0,
+    why: "没有 & 就是按值传递,函数拿到原件的一份复制品;在拷贝上改不影响调用方的原件。"
+  },
+  {
+    q: "<code>const Geometry&amp; geo</code> 这个参数同时保证了<strong>哪两件事</strong>?",
+    options: ["复制原件且能写", "不复制原件且只读", "改绑原件且加锁"],
+    correct: 1,
+    why: "& 让它零拷贝直接借原件;const 上锁让函数只能读不能写。既省复制开销又安全。"
+  },
+  {
+    q: "真实 HDK/引擎代码里参数几乎都用 <code>const T&amp;</code>,最主要<strong>为了什么</strong>?",
+    options: ["避免复制大对象", "允许函数改原件", "强制函数返回值"],
+    correct: 0,
+    why: "几何、字符串、容器复制很贵;const& 零拷贝又保证只读,所以是默认首选的传参方式。"
+  },
+  {
+    q: "看签名 <code>void fill(const Source&amp; in, Target&amp; out)</code>,哪个参数会被函数<strong>写入</strong>?",
+    options: ["参数名叫做 in", "参数名叫做 out", "两个参数都写"],
+    correct: 1,
+    why: "in 带 const 是只读输入;out 没有 const 的引用,是函数用来回填结果的输出口子。"
+  },
+  {
+    q: "关于<strong>返回引用</strong>,下面哪句说法是<strong>对</strong>的?",
+    options: ["可以返回局部变量", "不可返回局部变量", "返回必然零开销"],
+    correct: 1,
+    why: "局部变量在函数结束时销毁,返回它的引用会变成指向失效内存的悬空引用,是危险错误。"
+  }
+]);
+</script>
+
+</body>
+</html>
