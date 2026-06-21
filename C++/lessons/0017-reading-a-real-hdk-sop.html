@@ -3,310 +3,231 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>第 17 课 · 通读一个真实 HDK SOP 源码</title>
+<title>第 17 课 · 通读一个真实 Unreal C++ 源码</title>
 <link rel="stylesheet" href="../assets/styles.css">
 </head>
 <body>
 
 <div class="lesson-kicker">C++ for VFX TAs · 第 17 课</div>
-<h1>通读一个真实 HDK SOP 源码</h1>
-<p class="subtitle">毕业项目来了。前 16 课的每一块拼图,这一课全部拼上——读懂一份真正能编译进 Houdini 的 C++ 插件。</p>
+<h1>通读一个真实 Unreal C++ 源码</h1>
+<p class="subtitle">这是阅读篇的毕业测试:不再看教学小例子,而是从头到尾读懂一个真实、能编译的 Unreal Engine Actor 类。</p>
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
-  把前 16 课串起来,<strong>自上而下读懂一个真实的 Houdini HDK SOP 插件源码</strong>,并能对里面的每一个语法构造说出:"这是第几课学的 X"。读完你不再是"看代码",而是<strong>认得出代码</strong>。
+  把前 16 课串起来,自上而下读懂一个真实的 Unreal Engine C++ <strong>Actor 类</strong>(<code>.h</code> + <code>.cpp</code>),认出其中每个语法构造是哪一课学的,并理解 Unreal 特有的反射宏(<code>UCLASS</code> / <code>UPROPERTY</code> / <code>UFUNCTION</code> / <code>GENERATED_BODY</code>)和 <code>U</code>/<code>A</code>/<code>F</code>/<code>T</code> 前缀,只是"包在普通 C++ 外面的一层 Unreal 约定"。
 </div>
 
 <h2>热身 · 回忆第 16 课(别翻笔记)</h2>
-<p>先凭记忆答一题,把上一课的 <code>enum</code> / <code>switch</code> 捞回来——它马上就会在真实代码里出现。</p>
+<p>先凭记忆答一题,把上次的枚举 / <code>switch</code> / 位标志捞回来——主动回忆比重看一遍记得牢。</p>
 <div class="quiz" id="warmup"></div>
 
-<h2>我们要读的真实文件:SOP_Star</h2>
+<h2>先看全貌:一个完整(已精简)的 Actor</h2>
 <p>
-这是 SideFX 官方 HDK 自带的示例插件 <strong><code>SOP_Star</code></strong>:一个"生成器"SOP,在视口里画出一颗星星。你给它"分段数"和"内/外半径",它就摆出对应数量的点,连成一个多边形。<sup><a href="#src">[1]</a></sup>
-为了教学,我把它<em>轻微精简</em>了(去掉了部分错误处理和注释),但所有 API 都是<strong>真实存在</strong>的,没有一个是我编的。
-</p>
-<p>
-它分成两个文件,这是 C++ 的常规拆法(<a href="0013-headers-and-compilation.html">第 13 课</a>的"头文件 / 源文件"):
-头文件 <code>.h</code> 声明这个类长什么样,源文件 <code>.C</code> 写出每个方法具体怎么做。先把<strong>整体</strong>过一遍,后面再逐块放大。
+这是一个会自转、并在开场时打印一串路标点的 Actor。代码拆成两个文件:<strong>头文件</strong> <code>SpinningBeacon.h</code> 声明"有什么",<strong>源文件</strong> <code>SpinningBeacon.cpp</code> 写"怎么做"。这正是<a href="0013-headers-and-compilation.html">第 13 课</a>讲的 <code>.h</code> / <code>.cpp</code> 分工。先整体扫一遍,不懂的地方下面逐块拆。
 </p>
 
-<h3>头文件 SOP_Star.h(精简)</h3>
-<pre><code><span class="t-cmt">// SOP_Star.h —— 声明这个插件类</span>
-<span class="t-kw">#include</span> &lt;SOP/SOP_Node.h&gt;
-<span class="t-kw">#include</span> &lt;UT/UT_StringHolder.h&gt;
+<p><strong><code>SpinningBeacon.h</code></strong></p>
+<pre><code><span class="t-cmt">// SpinningBeacon.h</span>
+<span class="t-kw">#pragma</span> once
 
-<span class="t-kw">namespace</span> <span class="t-name">HDK_Sample</span> {
+<span class="t-kw">#include</span> <span class="t-str">"CoreMinimal.h"</span>
+<span class="t-kw">#include</span> <span class="t-str">"GameFramework/Actor.h"</span>
+<span class="t-kw">#include</span> <span class="t-str">"SpinningBeacon.generated.h"</span>
 
-<span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>
+<span class="t-name">UCLASS</span>()
+<span class="t-kw">class</span> MYGAME_API <span class="t-type">ASpinningBeacon</span> : <span class="t-kw">public</span> <span class="t-type">AActor</span>
 {
-<span class="t-kw">public</span>:
-    <span class="t-kw">static</span> <span class="t-type">OP_Node</span> *<span class="t-name">myConstructor</span>(<span class="t-type">OP_Network</span> *net,
-                                  <span class="t-kw">const</span> <span class="t-type">char</span> *name,
-                                  <span class="t-type">OP_Operator</span> *op);
+    <span class="t-name">GENERATED_BODY</span>()
 
-    <span class="t-kw">static</span> <span class="t-kw">const</span> <span class="t-type">UT_StringHolder</span> theSOPTypeName;
+<span class="t-kw">public</span>:
+    <span class="t-type">ASpinningBeacon</span>();                              <span class="t-cmt">// 构造函数</span>
+
+    <span class="t-name">UPROPERTY</span>(EditAnywhere, Category = <span class="t-str">"Beacon"</span>)
+    <span class="t-type">float</span> <span class="t-name">SpinSpeed</span> = <span class="t-num">90.0f</span>;                      <span class="t-cmt">// 每秒转多少度</span>
+
+    <span class="t-name">UPROPERTY</span>(VisibleAnywhere, Category = <span class="t-str">"Beacon"</span>)
+    <span class="t-type">TArray</span>&lt;<span class="t-type">FVector</span>&gt; <span class="t-name">Waypoints</span>;                  <span class="t-cmt">// 一组路标点</span>
 
 <span class="t-kw">protected</span>:
-    <span class="t-type">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op);
-    <span class="t-kw">virtual</span> ~<span class="t-type">SOP_Star</span>();
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">BeginPlay</span>() <span class="t-kw">override</span>;
 
-    <span class="t-kw">virtual</span> <span class="t-type">OP_ERROR</span> <span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context) <span class="t-kw">override</span>;
-};
-
-} <span class="t-cmt">// namespace HDK_Sample</span></code></pre>
-
-<h3>源文件 SOP_Star.C(精简)</h3>
-<pre><code><span class="t-cmt">// SOP_Star.C —— 实现每个方法</span>
-<span class="t-kw">#include</span> <span class="t-name">"SOP_Star.h"</span>
-<span class="t-kw">#include</span> &lt;GU/GU_Detail.h&gt;
-<span class="t-kw">#include</span> &lt;OP/OP_Operator.h&gt;
-<span class="t-kw">#include</span> &lt;OP/OP_OperatorTable.h&gt;
-<span class="t-kw">#include</span> &lt;UT/UT_Interrupt.h&gt;
-<span class="t-kw">#include</span> &lt;SYS/SYS_Math.h&gt;
-
-<span class="t-kw">using namespace</span> <span class="t-name">HDK_Sample</span>;
-
-<span class="t-kw">const</span> <span class="t-type">UT_StringHolder</span> SOP_Star::theSOPTypeName(<span class="t-name">"hdk_star"</span>);
-
-<span class="t-cmt">// Houdini 启动时调用这个,把插件登记进节点表</span>
-<span class="t-kw">void</span> <span class="t-name">newSopOperator</span>(<span class="t-type">OP_OperatorTable</span> *table)
-{
-    table-&gt;<span class="t-name">addOperator</span>(<span class="t-kw">new</span> <span class="t-type">OP_Operator</span>(
-        SOP_Star::theSOPTypeName,   <span class="t-cmt">// 内部类型名</span>
-        <span class="t-name">"Star"</span>,                     <span class="t-cmt">// 菜单里显示的名字</span>
-        SOP_Star::myConstructor,    <span class="t-cmt">// 怎么造一个出来</span>
-        SOP_Star::buildTemplates(), <span class="t-cmt">// 它有哪些参数</span>
-        <span class="t-num">0</span>, <span class="t-num">0</span>,                       <span class="t-cmt">// 最少/最多输入数</span>
-        <span class="t-kw">nullptr</span>,
-        <span class="t-name">OP_FLAG_GENERATOR</span>));        <span class="t-cmt">// 标志:这是个生成器</span>
-}
-
-<span class="t-cmt">// 工厂方法:造一个 SOP_Star 实例</span>
-<span class="t-type">OP_Node</span> *
-SOP_Star::<span class="t-name">myConstructor</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
-{
-    <span class="t-kw">return</span> <span class="t-kw">new</span> <span class="t-type">SOP_Star</span>(net, name, op);
-}
-
-<span class="t-cmt">// 构造函数:节点被创建时跑一次</span>
-SOP_Star::<span class="t-name">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
-    : <span class="t-type">SOP_Node</span>(net, name, op)
-{
-    mySopFlags.<span class="t-name">setManagesDataIDs</span>(<span class="t-kw">true</span>);
-}
-
-SOP_Star::~<span class="t-type">SOP_Star</span>() {}
-
-<span class="t-cmt">// 核心:每次需要重算几何体时,Houdini 调用这个</span>
-<span class="t-type">OP_ERROR</span>
-SOP_Star::<span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context)
-{
-    <span class="t-type">fpreal</span> now = context.getTime();
-
-    <span class="t-cmt">// 1) 读参数</span>
-    <span class="t-type">int</span>   divisions = <span class="t-name">evalInt</span>(<span class="t-name">"divs"</span>, <span class="t-num">0</span>, now);
-    <span class="t-type">float</span> outerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">0</span>, now);
-    <span class="t-type">float</span> innerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">1</span>, now);
-    <span class="t-type">int</span>   plane     = <span class="t-name">evalInt</span>(<span class="t-name">"orient"</span>, <span class="t-num">0</span>, now);
-
-    <span class="t-type">int</span> npoints = divisions * <span class="t-num">2</span>;
-    <span class="t-kw">if</span> (npoints &lt; <span class="t-num">4</span>)
-        npoints = <span class="t-num">4</span>;
-
-    <span class="t-cmt">// 2) 决定星星画在哪个平面上</span>
-    <span class="t-type">int</span> xc, yc, zc;
-    <span class="t-kw">switch</span> (plane)
-    {
-        <span class="t-kw">case</span> <span class="t-num">0</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">1</span>; zc = <span class="t-num">2</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// XY</span>
-        <span class="t-kw">case</span> <span class="t-num">1</span>: xc = <span class="t-num">1</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">0</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// YZ</span>
-        <span class="t-kw">default</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">1</span>; <span class="t-kw">break</span>; <span class="t-cmt">// ZX</span>
-    }
-
-    <span class="t-cmt">// 3) 清空旧几何,造 npoints 个新点</span>
-    gdp-&gt;<span class="t-name">clearAndDestroy</span>();
-    <span class="t-type">GA_Offset</span> start = gdp-&gt;<span class="t-name">appendPointBlock</span>(npoints);
-
-    <span class="t-cmt">// 4) 一圈一圈摆点</span>
-    <span class="t-type">UT_AutoInterrupt</span> boss(<span class="t-name">"Building Star"</span>);
-    <span class="t-type">float</span> tinc = <span class="t-name">M_PI</span> * <span class="t-num">2</span> / (<span class="t-type">float</span>)npoints;
-
-    <span class="t-kw">for</span> (<span class="t-type">int</span> i = <span class="t-num">0</span>; i &lt; npoints; i++)
-    {
-        <span class="t-kw">if</span> (boss.<span class="t-name">wasInterrupted</span>())
-            <span class="t-kw">break</span>;
-
-        <span class="t-type">float</span> angle = (<span class="t-type">float</span>)i * tinc;
-        <span class="t-type">bool</span>  odd   = (i &amp; <span class="t-num">1</span>);
-        <span class="t-type">float</span> rad   = odd ? innerRad : outerRad;
-
-        <span class="t-type">UT_Vector3</span> pos(<span class="t-name">SYScos</span>(angle) * rad, <span class="t-name">SYSsin</span>(angle) * rad, <span class="t-num">0</span>);
-        pos = <span class="t-type">UT_Vector3</span>(pos(xc), pos(yc), pos(zc));
-
-        <span class="t-type">GA_Offset</span> ptoff = start + i;
-        gdp-&gt;<span class="t-name">setPos3</span>(ptoff, pos);
-    }
-
-    <span class="t-kw">return</span> error();
-}</code></pre>
-
-<p>
-看起来很多?别慌。这就是<strong>前 16 课的所有东西堆在一起</strong>而已——没有一个新语法。下面我们一块一块放大,每块都告诉你"这是第几课的"。</p>
-
-<h2>放大 ① · 那一堆 #include —— 第 13 课</h2>
-<pre><code><span class="t-kw">#include</span> <span class="t-name">"SOP_Star.h"</span>
-<span class="t-kw">#include</span> &lt;GU/GU_Detail.h&gt;
-<span class="t-kw">#include</span> &lt;UT/UT_Interrupt.h&gt;
-<span class="t-kw">#include</span> &lt;SYS/SYS_Math.h&gt;</code></pre>
-<p>
-这用到了<a href="0013-headers-and-compilation.html">第 13 课</a>的 <strong><code>#include</code> 与编译单元</strong>。每一行都是"把另一个文件的<em>声明</em>抄进来,这样我才能用它定义的类型和函数"。
-</p>
-<ul>
-  <li><code>"SOP_Star.h"</code> 用<strong>双引号</strong>——自己项目里的头文件。</li>
-  <li><code>&lt;GU/GU_Detail.h&gt;</code> 用<strong>尖括号</strong>——来自 HDK 库。<code>GU_Detail</code> 就是"一坨几何体"(点、面、属性),后面的 <code>gdp</code> 就是它。</li>
-  <li><code>&lt;SYS/SYS_Math.h&gt;</code> 给我们 <code>SYScos</code> / <code>SYSsin</code> / <code>M_PI</code>——也就是<a href="0010-std-string-and-stdlib.html">第 10 课</a>讲的"标准库 / 库函数"在 HDK 里的对应物。</li>
-</ul>
-
-<h2>放大 ② · 类声明 —— 第 11、12 课</h2>
-<pre><code><span class="t-kw">class</span> <span class="t-type">SOP_Star</span> : <span class="t-kw">public</span> <span class="t-type">SOP_Node</span>
-{
 <span class="t-kw">public</span>:
-    <span class="t-kw">static</span> <span class="t-type">OP_Node</span> *<span class="t-name">myConstructor</span>(...);
-<span class="t-kw">protected</span>:
-    <span class="t-type">SOP_Star</span>(...);
-    <span class="t-kw">virtual</span> <span class="t-type">OP_ERROR</span> <span class="t-name">cookMySop</span>(<span class="t-type">OP_Context</span> &amp;context) <span class="t-kw">override</span>;
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime) <span class="t-kw">override</span>;
 };</code></pre>
-<p>
-这一整块是<a href="0011-structs-and-classes-reading.html">第 11 课</a>(读懂类)和<a href="0012-classes-in-depth.html">第 12 课</a>(类的深入)。逐个认:
-</p>
-<ul>
-  <li><code>class SOP_Star</code>:定义一个新类型,名字叫 <code>SOP_Star</code>。</li>
-  <li><code>: public SOP_Node</code>:<strong>继承</strong>。读作"<code>SOP_Star</code> <em>是一种</em> <code>SOP_Node</code>"。它白白拿到了 <code>SOP_Node</code> 已有的全部本事(比如那个 <code>gdp</code> 成员、<code>evalFloat</code> 方法),只需补上自己特别的部分。这正是 <a href="0012-classes-in-depth.html">第 12 课</a>的核心。</li>
-  <li><code>public:</code> / <code>protected:</code>:<strong>访问控制</strong>(第 12 课)。<code>public</code> 是对外开放的门,<code>protected</code> 是只给"自己和子类"用的内部门。</li>
-  <li><code>virtual ... cookMySop(...) override</code>:<code>virtual</code> + <code>override</code> 表示"我<strong>重写</strong>了父类的这个方法"。<code>SOP_Node</code> 说'每个 SOP 都得有 cookMySop',这里就是 <code>SOP_Star</code> 给出自己的版本。</li>
-</ul>
-<p>
-注意签名 <code>OP_ERROR cookMySop(OP_Context &amp;context)</code>——这正是<a href="0001-reading-a-function-signature.html">第 1 课</a>的"读函数签名":返回 <code>OP_ERROR</code>(成功/失败的状态码),收一个 <code>OP_Context&amp;</code> 参数。那个 <code>&amp;</code> 是<a href="0006-references.html">第 6 课</a>的<strong>引用</strong>——不复制整个 context,直接借用原件。
-</p>
 
-<h2>放大 ③ · 构造函数 —— 第 12 课</h2>
-<pre><code>SOP_Star::<span class="t-name">SOP_Star</span>(<span class="t-type">OP_Network</span> *net, <span class="t-kw">const</span> <span class="t-type">char</span> *name, <span class="t-type">OP_Operator</span> *op)
-    : <span class="t-type">SOP_Node</span>(net, name, op)   <span class="t-cmt">// ← 先让父类初始化</span>
+<p><strong><code>SpinningBeacon.cpp</code></strong></p>
+<pre><code><span class="t-cmt">// SpinningBeacon.cpp</span>
+<span class="t-kw">#include</span> <span class="t-str">"SpinningBeacon.h"</span>
+
+<span class="t-type">ASpinningBeacon</span>::<span class="t-name">ASpinningBeacon</span>()
 {
-    mySopFlags.<span class="t-name">setManagesDataIDs</span>(<span class="t-kw">true</span>);
+    PrimaryActorTick.bCanEverTick = <span class="t-kw">true</span>;        <span class="t-cmt">// 允许每帧 Tick</span>
+}
+
+<span class="t-type">void</span> <span class="t-type">ASpinningBeacon</span>::<span class="t-name">BeginPlay</span>()
+{
+    <span class="t-type">Super</span>::<span class="t-name">BeginPlay</span>();                          <span class="t-cmt">// 先让父类做它的开场</span>
+
+    Waypoints.<span class="t-name">Add</span>(<span class="t-type">FVector</span>(<span class="t-num">0.0f</span>, <span class="t-num">0.0f</span>, <span class="t-num">0.0f</span>));
+    Waypoints.<span class="t-name">Add</span>(<span class="t-type">FVector</span>(<span class="t-num">100.0f</span>, <span class="t-num">0.0f</span>, <span class="t-num">50.0f</span>));
+
+    <span class="t-kw">for</span> (<span class="t-kw">const</span> <span class="t-type">FVector</span>&amp; Point : Waypoints)
+    {
+        <span class="t-name">UE_LOG</span>(LogTemp, Warning, <span class="t-str">TEXT("Waypoint Z = %f")</span>, Point.Z);
+    }
+}
+
+<span class="t-type">void</span> <span class="t-type">ASpinningBeacon</span>::<span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime)
+{
+    <span class="t-type">Super</span>::<span class="t-name">Tick</span>(DeltaTime);
+
+    <span class="t-type">FRotator</span> Step(<span class="t-num">0.0f</span>, SpinSpeed * DeltaTime, <span class="t-num">0.0f</span>);
+    <span class="t-name">AddActorLocalRotation</span>(Step);             <span class="t-cmt">// 绕自身 Yaw 轴转一点</span>
 }</code></pre>
-<p>
-<strong>构造函数</strong>(第 12 课)是节点被创建那一刻自动跑一次的"开机程序"。读它的两个关键点:
-</p>
-<ul>
-  <li><code>SOP_Star::SOP_Star</code> 那个 <code>::</code> 是<a href="0014-namespaces-and-scope.html">第 14 课</a>的<strong>作用域解析符</strong>:"这是属于 <code>SOP_Star</code> 类的那个 <code>SOP_Star</code> 函数"。</li>
-  <li><code>: SOP_Node(net, name, op)</code> 这段叫<strong>初始化列表</strong>:在干自己的活之前,先把收到的参数转交给父类,让父类先把自己那一半搭好。</li>
-  <li>那几个 <code>OP_Network *net</code>、<code>const char *name</code> 是<a href="0007-pointers.html">第 7 课</a>的<strong>指针</strong>。<code>const char *</code> 就是 <a href="0010-std-string-and-stdlib.html">第 10 课</a>提过的"C 风格字符串"——指向一串字符的指针。</li>
-</ul>
 
-<h2>放大 ④ · 读参数 —— 第 1、3、9 课</h2>
-<pre><code><span class="t-type">fpreal</span> now = context.getTime();
+<p>下面把它切成几块,一块一块读。每读一块,我都会指出"这用到了第几课"。</p>
 
-<span class="t-type">int</span>   divisions = <span class="t-name">evalInt</span>(<span class="t-name">"divs"</span>, <span class="t-num">0</span>, now);
-<span class="t-type">float</span> outerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">0</span>, now);
-<span class="t-type">float</span> innerRad  = <span class="t-name">evalFloat</span>(<span class="t-name">"rad"</span>,  <span class="t-num">1</span>, now);</code></pre>
+<h2>第 1 块:头文件顶部的 <code>#include</code></h2>
+<pre><code><span class="t-kw">#pragma</span> once
+
+<span class="t-kw">#include</span> <span class="t-str">"CoreMinimal.h"</span>
+<span class="t-kw">#include</span> <span class="t-str">"GameFramework/Actor.h"</span>
+<span class="t-kw">#include</span> <span class="t-str">"SpinningBeacon.generated.h"</span></code></pre>
 <p>
-这是你最熟的部分——<strong>读节点上的参数</strong>。这几行同时用到了好几课:
+<strong>这用到了<a href="0013-headers-and-compilation.html">第 13 课</a>的头文件与编译。</strong> <code>#pragma once</code> 是"这个头文件只让编译器读一遍"的防重复声明。三个 <code>#include</code> 把别处定义好的名字搬进来:<code>CoreMinimal.h</code> 带来 Unreal 最常用的基础类型(比如 <code>FVector</code>、<code>TArray</code>),<code>GameFramework/Actor.h</code> 带来父类 <code>AActor</code> 的定义,这样下面才能写 <code>: public AActor</code>。
 </p>
+<p>
+第三行 <code>SpinningBeacon.generated.h</code> 比较特别:它是 Unreal 的代码生成工具(UHT,Unreal Header Tool)<em>自动生成</em>的文件,你不会手写它。只要类里用了 <code>UCLASS()</code> 等反射宏,就<strong>必须</strong>把这个 <code>.generated.h</code> 放在 <code>#include</code> 列表的<strong>最后一行</strong>。记住这条规则即可,不用纠结它内部是什么。<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/gameplay-classes-in-unreal-engine" target="_blank">[Unreal 文档:Gameplay Classes]</a>
+</p>
+
+<h2>第 2 块:<code>UCLASS()</code> 装饰的类,继承自 <code>AActor</code></h2>
+<pre><code><span class="t-name">UCLASS</span>()
+<span class="t-kw">class</span> MYGAME_API <span class="t-type">ASpinningBeacon</span> : <span class="t-kw">public</span> <span class="t-type">AActor</span>
+{
+    <span class="t-name">GENERATED_BODY</span>()</code></pre>
+<p>
+<strong>这用到了<a href="0011-structs-and-classes-reading.html">第 11 课</a>和<a href="0012-classes-in-depth.html">第 12 课</a>的类与继承。</strong> 把它和普通 C++ 对照着看,你会发现核心就是一句你已经学过的话:<code>class ASpinningBeacon : public AActor</code>——定义一个叫 <code>ASpinningBeacon</code> 的类,<strong>公有继承</strong>自父类 <code>AActor</code>。继承意味着它自动拥有 <code>AActor</code> 的所有能力(能被放进关卡、有位置、能被 Tick),你只在它基础上加自己的东西。
+</p>
+<p>剩下三个零件是 Unreal 包在外面的"约定层":</p>
 <ul>
-  <li><code>int divisions = ...</code>:<a href="0003-variables-types-assignment.html">第 3 课</a>的<strong>变量、类型、赋值</strong>——开一个 <code>int</code> 盒子,把右边算出来的值塞进去。<code>fpreal</code> 只是 HDK 给高精度 float 起的别名(类型,第 3 课)。</li>
-  <li><code>evalFloat("rad", 0, now)</code> / <code>evalFloat("rad", 1, now)</code>:这就是 VEX 里的 <code>ch("rad")</code>!三个参数分别是"参数名、第几个分量、什么时刻"。注意同一个参数 <code>"rad"</code> 用 <strong>index 0 和 1</strong> 取到两个值——因为 <code>rad</code> 是个二维向量参数(外半径、内半径)。这个"按下标取分量"正是<a href="0009-arrays-and-vector.html">第 9 课</a>(数组下标从 0 开始)的味道。</li>
-  <li>调用 <code>evalFloat(...)</code> 本身,就是<a href="0001-reading-a-function-signature.html">第 1 课</a>读签名的反面:你现在<em>会用</em>这个签名了。</li>
+<li><code>UCLASS()</code> 放在 <code>class</code> 那一行<em>上面</em>,告诉 Unreal:"这个类要登记进引擎的反射系统",这样编辑器、Blueprint、序列化才认得它。它<strong>不是普通 C++</strong>,是 Unreal 的宏。</li>
+<li><code>MYGAME_API</code> 是个导出宏,跟模块编译有关,读代码时可以略过它,直接看后面的类名。</li>
+<li><code>GENERATED_BODY()</code> 必须放在<strong>类体最开头</strong>(花括号后第一行)。它会被展开成一堆 Unreal 自动生成的样板代码。所有 gameplay 类都必须有它。<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/gameplay-classes-in-unreal-engine" target="_blank">[Unreal 文档]</a></li>
 </ul>
 
 <div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>cookMySop</code> 就是这个节点的 <strong>VEX Wrangle 代码</strong>。<code>evalFloat("rad", 0, now)</code> = Wrangle 里的 <code>ch("rad")</code>;<code>gdp</code> = 你 Wrangle 操作的那份几何;<code>setPos3(ptoff, pos)</code> = 给 <code>@P</code> 赋值。整段 cook 做的事,就是"每次时间或参数变了,重新把点摆好"——和你天天写的属性 Wrangle 一模一样,只是用 C++ 写出来、提前编译好,所以更快。
+  <span class="label">前缀速记(只此一处类比)</span>
+  类名前面那个大写字母是 Unreal 的<strong>命名前缀约定</strong>,看到就能猜出它是哪一类东西:<code>A</code> = 能放进关卡的 Actor(<code>AActor</code>),<code>U</code> = 不能独立存在、必须挂在别人身上的对象/组件(<code>UStaticMeshComponent</code>),<code>F</code> = 普通数据结构(<code>FVector</code>、<code>FRotator</code>),<code>T</code> = 模板容器(<code>TArray</code>)。前缀只是名字的一部分,不改变它是不是 C++ 类。
 </div>
 
-<h2>放大 ⑤ · switch 选平面 —— 第 16 课</h2>
-<pre><code><span class="t-type">int</span> xc, yc, zc;
-<span class="t-kw">switch</span> (plane)
-{
-    <span class="t-kw">case</span> <span class="t-num">0</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">1</span>; zc = <span class="t-num">2</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// XY</span>
-    <span class="t-kw">case</span> <span class="t-num">1</span>: xc = <span class="t-num">1</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">0</span>; <span class="t-kw">break</span>;  <span class="t-cmt">// YZ</span>
-    <span class="t-kw">default</span>: xc = <span class="t-num">0</span>; yc = <span class="t-num">2</span>; zc = <span class="t-num">1</span>; <span class="t-kw">break</span>; <span class="t-cmt">// ZX</span>
-}</code></pre>
+<h2>第 3 块:<code>UPROPERTY</code> 成员变量</h2>
+<pre><code>    <span class="t-name">UPROPERTY</span>(EditAnywhere, Category = <span class="t-str">"Beacon"</span>)
+    <span class="t-type">float</span> <span class="t-name">SpinSpeed</span> = <span class="t-num">90.0f</span>;
+
+    <span class="t-name">UPROPERTY</span>(VisibleAnywhere, Category = <span class="t-str">"Beacon"</span>)
+    <span class="t-type">TArray</span>&lt;<span class="t-type">FVector</span>&gt; <span class="t-name">Waypoints</span>;</code></pre>
 <p>
-正是你刚热身回忆的<a href="0016-enums-switch-flags.html">第 16 课</a>!<code>plane</code> 是那个 "Orientation" 下拉菜单的整数值(0=XY、1=YZ、2=ZX)。<code>switch</code> 根据它跳到对应 <code>case</code>,给三个坐标轴下标赋值。
+<strong>这用到了<a href="0003-variables-types-assignment.html">第 3 课</a>(变量与类型)和<a href="0009-arrays-and-vector.html">第 9 课</a>(数组与 vector)。</strong> 先把 <code>UPROPERTY(...)</code> 那一行<em>盖住</em>,你看到的就是两句最普通的成员变量声明:
 </p>
-<p>
-官方原版这里其实用的是 <code>enum</code>(<code>SOP_StarParms::Orient::XY</code>)而不是裸数字 <code>0/1/2</code>——这也是第 16 课讲的"用 <code>enum</code> 给数字起名字、让代码自解释"。我为教学换成了数字,但你要认得:真实代码里 <code>case</code> 后面常常是 <code>enum</code> 名,不是数字。<sup><a href="#src">[1]</a></sup>
-</p>
-
-<h2>放大 ⑥ · 每点循环 —— 第 5、4、7、9 课</h2>
-<pre><code><span class="t-kw">for</span> (<span class="t-type">int</span> i = <span class="t-num">0</span>; i &lt; npoints; i++)
-{
-    <span class="t-kw">if</span> (boss.<span class="t-name">wasInterrupted</span>())
-        <span class="t-kw">break</span>;
-
-    <span class="t-type">float</span> angle = (<span class="t-type">float</span>)i * tinc;
-    <span class="t-type">bool</span>  odd   = (i &amp; <span class="t-num">1</span>);
-    <span class="t-type">float</span> rad   = odd ? innerRad : outerRad;
-
-    <span class="t-type">UT_Vector3</span> pos(<span class="t-name">SYScos</span>(angle) * rad, <span class="t-name">SYSsin</span>(angle) * rad, <span class="t-num">0</span>);
-    <span class="t-type">GA_Offset</span> ptoff = start + i;
-    gdp-&gt;<span class="t-name">setPos3</span>(ptoff, pos);
-}</code></pre>
-<p>这一块信息最密,慢慢拆——它把好几课同时用上了:</p>
 <ul>
-  <li><code>for (int i = 0; i &lt; npoints; i++)</code>:<a href="0005-loops.html">第 5 课</a>的 <strong>for 循环</strong>。把 i 从 0 数到 npoints-1,每个点跑一遍。这正是 VEX 里"逐点运行"的本质。</li>
-  <li><code>angle = (float)i * tinc</code>:<a href="0004-operators-expressions.html">第 4 课</a>的<strong>运算符与表达式</strong>。<code>(float)i</code> 是<strong>类型转换</strong>(把整数 i 变成 float 再算)。</li>
-  <li><code>odd = (i &amp; 1)</code>:第 4 课 / <a href="0016-enums-switch-flags.html">第 16 课</a>的<strong>位运算</strong> <code>&amp;</code>。<code>i &amp; 1</code> 取 i 的最低位——偶数得 0、奇数得 1。这里用它来交替"外半径/内半径",这就是星星尖角与凹角交错的来历。</li>
-  <li><code>rad = odd ? innerRad : outerRad</code>:<strong>三目运算符</strong>(第 4 课)。读作"odd 为真就取 innerRad,否则取 outerRad"。</li>
-  <li><code>UT_Vector3 pos(...)</code>:<a href="0009-arrays-and-vector.html">第 9 课</a>。<code>UT_Vector3</code> 就是 HDK 的 <code>vector</code>——三个 float 的组合,和 VEX 的 <code>vector @P</code> 同一个概念。</li>
-  <li><code>gdp-&gt;setPos3(ptoff, pos)</code>:<code>gdp</code> 是个<a href="0007-pointers.html">指针(第 7 课)</a>,所以用 <code>-&gt;</code> 而不是 <code>.</code> 来调它的方法。<code>GA_Offset</code> 是 HDK 里"第几个点"的句柄(类似 VEX 的点号 <code>@ptnum</code>,但更底层)。这一行 = 给第 ptoff 个点写入位置 = VEX 里的 <code>@P = pos;</code>。</li>
+<li><code>float SpinSpeed = 90.0f;</code> ——一个 <code>float</code> 变量,声明时直接赋了初值 <code>90.0f</code>(末尾 <code>f</code> 表示这是 float 字面量)。</li>
+<li><code>TArray&lt;FVector&gt; Waypoints;</code> ——一个动态数组。<code>TArray</code> 是 Unreal 版的 <code>std::vector</code>,尖括号里 <code>&lt;FVector&gt;</code> 说明它装的是 <code>FVector</code>(三维向量)。这正是<a href="0015-templates-for-readers.html">第 15 课</a>讲的<strong>模板尖括号</strong>读法:<code>容器&lt;元素类型&gt;</code>。</li>
+</ul>
+<p>
+再把 <code>UPROPERTY(...)</code> 揭开:它把这个变量也登记进反射系统,括号里的<strong>说明符</strong>决定它在编辑器里的行为。<code>EditAnywhere</code> 表示美术能在编辑器面板里改它;<code>VisibleAnywhere</code> 表示只能看不能改;<code>Category = "Beacon"</code> 决定它在面板里归到哪个分组下。<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-uproperties" target="_blank">[Unreal 文档:UProperties]</a> 对读代码而言,关键是认出:<strong>变量本体是普通 C++,<code>UPROPERTY</code> 只是给它贴的一张 Unreal 标签</strong>。
+</p>
+
+<h2>第 4 块:声明 <code>BeginPlay</code> 与 <code>Tick</code>(带 <code>virtual</code> / <code>override</code>)</h2>
+<pre><code><span class="t-kw">protected</span>:
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">BeginPlay</span>() <span class="t-kw">override</span>;
+
+<span class="t-kw">public</span>:
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime) <span class="t-kw">override</span>;</code></pre>
+<p>
+<strong>这用到了<a href="0001-reading-a-function-signature.html">第 1 课</a>(读函数签名)和<a href="0012-classes-in-depth.html">第 12 课</a>(类的 public/protected 与虚函数)。</strong> 抛开 <code>virtual</code> 和 <code>override</code>,这两行就是普通的函数声明,用<a href="0001-reading-a-function-signature.html">第 1 课</a>的"读合同"方法看:
+</p>
+<ul>
+<li><code>void BeginPlay()</code> ——返回 <code>void</code>(不返回值),无参数。</li>
+<li><code>void Tick(float DeltaTime)</code> ——返回 <code>void</code>,接收一个 <code>float</code> 参数 <code>DeltaTime</code>(距上一帧过了多少秒)。</li>
+</ul>
+<p>
+<code>virtual ... override</code> 是<a href="0012-classes-in-depth.html">第 12 课</a>的内容:父类 <code>AActor</code> 里本来就有 <code>BeginPlay</code> 和 <code>Tick</code>,<code>override</code> 表示"我用自己的版本<strong>覆盖</strong>父类那个"。这两个名字是 Unreal 生命周期的固定钩子:<code>BeginPlay()</code> 在关卡开始、这个 Actor 进入游戏时被引擎调用一次;<code>Tick(float DeltaTime)</code> 在之后<strong>每一帧</strong>被调用。<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-actor-lifecycle" target="_blank">[Unreal 文档:Actor Lifecycle]</a> 你不用手动去调它们,引擎到点会替你调。
+</p>
+
+<h2>第 5 块:构造函数</h2>
+<pre><code><span class="t-type">ASpinningBeacon</span>::<span class="t-name">ASpinningBeacon</span>()
+{
+    PrimaryActorTick.bCanEverTick = <span class="t-kw">true</span>;
+}</code></pre>
+<p>
+<strong>这用到了<a href="0012-classes-in-depth.html">第 12 课</a>的构造函数和<a href="0014-namespaces-and-scope.html">第 14 课</a>的作用域符号 <code>::</code>。</strong> <code>ASpinningBeacon::ASpinningBeacon()</code> 里的 <code>::</code> 读作"属于":它说"这是 <code>ASpinningBeacon</code> 这个类的、名字也叫 <code>ASpinningBeacon</code> 的函数"——名字和类同名、且没有返回类型,这就是<strong>构造函数</strong>的特征,在对象创建时自动跑一次。
+</p>
+<p>
+里面只有一句:<code>PrimaryActorTick.bCanEverTick = true;</code>。<code>PrimaryActorTick</code> 是从父类继承来的一个成员,通过点号 <code>.</code> 访问它内部的开关 <code>bCanEverTick</code>,把它赋值为 <code>true</code>(这是<a href="0004-operators-expressions.html">第 4 课</a>的赋值 <code>=</code>,不是比较 <code>==</code>)。意思是"允许这个 Actor 每帧被 Tick"。<strong>必须在构造函数里设</strong>,因为它要在 <code>BeginPlay</code> 之前就定好。<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/actor-ticking-in-unreal-engine" target="_blank">[Unreal 文档:Actor Ticking]</a>(顺带一提:<code>bCanEverTick</code> 前缀 <code>b</code> 是 Unreal 给 <code>bool</code> 变量的命名约定。)
+</p>
+
+<h2>第 6 块:<code>BeginPlay()</code> 里的 <code>Super</code> 与遍历 <code>TArray</code></h2>
+<pre><code><span class="t-type">void</span> <span class="t-type">ASpinningBeacon</span>::<span class="t-name">BeginPlay</span>()
+{
+    <span class="t-type">Super</span>::<span class="t-name">BeginPlay</span>();
+
+    Waypoints.<span class="t-name">Add</span>(<span class="t-type">FVector</span>(<span class="t-num">0.0f</span>, <span class="t-num">0.0f</span>, <span class="t-num">0.0f</span>));
+    Waypoints.<span class="t-name">Add</span>(<span class="t-type">FVector</span>(<span class="t-num">100.0f</span>, <span class="t-num">0.0f</span>, <span class="t-num">50.0f</span>));
+
+    <span class="t-kw">for</span> (<span class="t-kw">const</span> <span class="t-type">FVector</span>&amp; Point : Waypoints)
+    {
+        <span class="t-name">UE_LOG</span>(LogTemp, Warning, <span class="t-str">TEXT("Waypoint Z = %f")</span>, Point.Z);
+    }
+}</code></pre>
+<p>这块最长,但全是前面学过的东西拼起来。逐行读:</p>
+<ul>
+<li><code>Super::BeginPlay();</code> ——<code>Super</code> 是"父类"的代称(等于 <code>AActor</code>)。这一句先把父类版本的 <code>BeginPlay</code> 跑一遍,再做自己的事。覆盖父类方法时通常都要这么做,免得漏掉父类的初始化。又是<a href="0014-namespaces-and-scope.html">第 14 课</a>的 <code>::</code>。</li>
+<li><code>Waypoints.Add(FVector(0.0f, 0.0f, 0.0f));</code> ——往数组里<strong>追加</strong>一个元素。<code>Waypoints.Add(...)</code> 是<a href="0011-structs-and-classes-reading.html">第 11 课</a>的"对象 . 方法"调用;括号里 <code>FVector(0.0f, 0.0f, 0.0f)</code> 当场造一个三维向量 (X, Y, Z)。这是<a href="0009-arrays-and-vector.html">第 9 课</a>动态数组的 <code>Add</code>(对应 <code>std::vector::push_back</code>)。</li>
+<li><code>for (const FVector&amp; Point : Waypoints)</code> ——这是<a href="0005-loops.html">第 5 课</a>的<strong>范围 for 循环</strong>:把 <code>Waypoints</code> 里的元素一个个取出,每次叫 <code>Point</code>。<code>const FVector&amp;</code> 用了<a href="0006-references.html">第 6 课</a>的<strong>引用</strong> <code>&amp;</code>(不拷贝,直接借用)和 <code>const</code>(循环里不改它),这是只读遍历的标准写法。</li>
+<li><code>UE_LOG(LogTemp, Warning, TEXT("Waypoint Z = %f"), Point.Z);</code> ——往日志打印。<code>Point.Z</code> 用点号取出该向量的 Z 分量(<a href="0011-structs-and-classes-reading.html">第 11 课</a>读成员)。<code>TEXT("...")</code> 是 Unreal 的字符串字面量写法,<code>%f</code> 是占位符,会被后面的 <code>Point.Z</code> 填进去。</li>
 </ul>
 
-<h3>读代码易错点</h3>
-<div class="callout callout-key">
-  <span class="label">读代码易错点</span>
-  <ul style="margin:0; padding-left:1.2rem;">
-    <li><strong><code>gdp-&gt;</code> 用箭头不是点。</strong> 因为 <code>gdp</code> 是<em>指针</em>(<code>GU_Detail *</code>,第 7 课)。看到 <code>-&gt;</code> 就提醒自己"左边是个指针"。如果它是普通对象才用 <code>.</code>(第 11 课)。</li>
-    <li><strong><code>evalFloat("rad", 0, now)</code> 里的 <code>0</code> 不是"时间"。</strong> 它是<em>第几个分量</em>(component index),时间是第三个参数 <code>now</code>。看错就会以为只取了一个值,其实 index 0 和 1 取的是两个不同的半径。</li>
-    <li><strong><code>i &amp; 1</code> 是位与,不是逻辑与 <code>&amp;&amp;</code>。</strong> 单个 <code>&amp;</code> 在按位运算(第 16 课);两个 <code>&amp;&amp;</code> 才是"并且"。读串了含义就全错。</li>
-    <li><strong>循环里的 <code>break</code> 不是"返回"。</strong> <code>if (boss.wasInterrupted()) break;</code> 只是<em>跳出 for 循环</em>(第 5 课),不是退出整个函数。函数最后那句 <code>return error();</code> 才是真正的返回点。</li>
-    <li><strong><code>cookMySop</code> 没有 <code>gdp = ...</code>。</strong> <code>gdp</code> 是从父类 <code>SOP_Node</code> 继承来的成员(第 12 课),早就存在了;你只管往里塞点。别去找它在哪声明——它在父类里。</li>
-  </ul>
-</div>
+<h2>第 7 块:<code>Tick()</code> 每帧自转</h2>
+<pre><code><span class="t-type">void</span> <span class="t-type">ASpinningBeacon</span>::<span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime)
+{
+    <span class="t-type">Super</span>::<span class="t-name">Tick</span>(DeltaTime);
 
-<h2>放大 ⑦ · 收尾 return —— 第 1、2 课</h2>
-<pre><code>    <span class="t-kw">return</span> error();
+    <span class="t-type">FRotator</span> Step(<span class="t-num">0.0f</span>, SpinSpeed * DeltaTime, <span class="t-num">0.0f</span>);
+    <span class="t-name">AddActorLocalRotation</span>(Step);
 }</code></pre>
 <p>
-函数最后 <code>return error();</code>:把累计的错误状态(<code>OP_ERROR</code>)交回去,Houdini 据此判断这次 cook 成不成功。这就回到了<a href="0001-reading-a-function-signature.html">第 1 课</a>(返回类型是 <code>OP_ERROR</code>)和<a href="0002-tracing-the-function-body.html">第 2 课</a>(<code>return</code> 是函数的出口)。从签名到返回,你刚刚<strong>完整走通了一个真实函数体</strong>。
+<strong>这用到了<a href="0004-operators-expressions.html">第 4 课</a>(表达式)和<a href="0003-variables-types-assignment.html">第 3 课</a>(局部变量)。</strong> 第一句 <code>Super::Tick(DeltaTime)</code> 还是先调父类版本。然后 <code>FRotator Step(...)</code> 声明一个局部变量 <code>Step</code>,类型是 <code>FRotator</code>(一个旋转量,三个参数依次是 Roll、Pitch、Yaw)。
+</p>
+<p>
+中间那个参数 <code>SpinSpeed * DeltaTime</code> 是<a href="0004-operators-expressions.html">第 4 课</a>的<strong>表达式</strong>:转速(度/秒)乘以本帧用了多少秒,得到"这一帧该转多少度"。乘上 <code>DeltaTime</code> 是游戏代码里极常见的套路——这样不管帧率高低,转动速度都一致。最后 <code>AddActorLocalRotation(Step)</code> 把这点旋转加到自己身上。每帧加一点,看起来就是匀速自转。
 </p>
 
-<div class="callout callout-vex">
-  <span class="label">VFX 类比 · 全景回顾</span>
-  把整份文件想成一个 <strong>HDA 的内部</strong>:<code>newSopOperator</code> 是"把这个数字资产注册到 TAB 菜单";<code>buildTemplates</code> 是节点的<strong>参数界面</strong>;构造函数是"放下节点时跑一次的初始化";<code>cookMySop</code> 是节点的<strong>计算图</strong>本身,每次上游或参数变化就重跑。你平时搭 HDA + Wrangle 做的事,C++ 插件只是把它写成了源码、编译成 <code>.so</code>/<code>.dll</code>。
-</div>
+<h2>读代码易错点</h2>
+<ul>
+<li><strong>反射宏不是普通 C++。</strong> <code>UCLASS()</code>、<code>UPROPERTY()</code>、<code>UFUNCTION()</code>、<code>GENERATED_BODY()</code> 都是 Unreal 自己的宏,普通 C++ 编译器并不认识它们;它们要靠 Unreal Header Tool 先处理。读代码时把它们当成"贴在普通声明上的 Unreal 标签",先看被它们包住的真正声明。</li>
+<li><strong>前缀只是名字。</strong> <code>A</code>/<code>U</code>/<code>F</code>/<code>T</code> 不是关键字,只是命名约定。<code>ASpinningBeacon</code> 和 <code>SpinningBeacon</code> 文件名对得上但不是同一个词——类名带 <code>A</code>,文件名常常不带。看到前缀能帮你判断它大概是什么(能否放进关卡、是不是组件),但别把它当语法。</li>
+<li><strong>忘了 <code>GENERATED_BODY()</code> 会整类报错。</strong> 它必须在类体第一行;漏了它,反射系统不认这个类,编译直接失败。读别人代码时若看到一个 <code>UCLASS</code> 类却找不到 <code>GENERATED_BODY()</code>,基本可以断定那段代码不完整。</li>
+<li><strong><code>Tick</code> 不写 <code>bCanEverTick = true</code> 就不会被调。</strong> 光声明并实现 <code>Tick()</code> 不够;若构造函数里没把 <code>PrimaryActorTick.bCanEverTick</code> 设为 <code>true</code>,引擎根本不会每帧调它。看到 <code>Tick</code> 没生效,先回构造函数找这一句。</li>
+<li><strong><code>=</code> 不是 <code>==</code>。</strong> 构造函数里的 <code>bCanEverTick = true</code> 是<strong>赋值</strong>;<a href="0002-tracing-the-function-body.html">第 2 课</a>提醒过,比较相等才用 <code>==</code>。读条件判断时尤其要分清。</li>
+</ul>
 
-<h2>毕业测验 · 读这份真实代码</h2>
-<p>不许往上翻。每题都在考"这一行/这一块到底在干嘛、是哪一课的"。</p>
-<div class="quiz" id="quiz"></div>
+<h2>毕业测试 · 读这段真实代码</h2>
+<p>下面六题全部基于上面这个 <code>ASpinningBeacon</code> 的真实代码。用前面学的方法,在脑子里读一遍再答。</p>
+<div class="quiz" id="quizfinal"></div>
 
-<div class="primary-source" id="src">
-  <span class="label">主推资源 / 本课引用</span>
-  [1] SideFX 官方 HDK 文档 ·
-  <a href="https://www.sidefx.com/docs/hdk/_s_o_p___star_8_c_source.html" target="_blank">samples/SOP/SOP_Star/SOP_Star.C(源码全文)</a>
-  与
-  <a href="https://www.sidefx.com/docs/hdk/_h_d_k__op_basics__sop_generator.html" target="_blank">Creating Geometry(生成器 SOP 教程)</a>。
-  本课的代码取自真实的 SOP_Star 示例并为教学轻微精简;所有 API(<code>cookMySop</code>、<code>gdp</code>、<code>evalFloat</code>、<code>GA_Offset</code>、<code>appendPointBlock</code>、<code>setPos3</code>、<code>UT_AutoInterrupt</code>)均为 HDK 真实接口。建议对照官方原文读一遍,你会发现你已经认得里面绝大部分了。
+<div class="primary-source">
+  <span class="label">主推资源(读一篇就好)</span>
+  <a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/gameplay-classes-in-unreal-engine" target="_blank">Unreal Engine 官方文档 · Gameplay Classes in Unreal Engine</a>
+  —— 官方对 <code>UCLASS</code> / <code>GENERATED_BODY</code> / <code>A</code> 与 <code>U</code> 前缀 / <code>.h</code> 与 <code>.cpp</code> 分工的权威说明。配套延伸:<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-actor-lifecycle" target="_blank">Actor Lifecycle</a>(<code>BeginPlay</code> / <code>Tick</code>)、<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-uproperties" target="_blank">UProperties</a>、<a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/array-containers-in-unreal-engine" target="_blank">TArray</a>。
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 这是整门课的"大合奏",信息量很大很正常。任何一行卡住——比如 <code>GA_Offset</code> 和 <code>@ptnum</code> 到底差在哪、为什么是 <code>gdp-&gt;</code> 不是 <code>gdp.</code>、或者想让我把官方原版(用 <code>enum</code> 和 Verb API 的完整版)再带你读一遍——直接在对话里问我。能读懂这一课,你已经达到了本课程的核心目标:<strong>读懂并能改真实 C++</strong>。
+  <strong>有疑问就问我。</strong> 我是你的老师——这段代码里任何一行卡住、想知道 <code>UPROPERTY</code> 还有哪些常用说明符、<code>FRotator</code> 三个参数到底谁是谁、或者 <code>Super</code> 为什么能代表父类,直接在对话里问我。读真实代码会卡很正常,问出来就通了。
 </div>
 
 <div class="lesson-footer">
   <p>上一课:<a href="0016-enums-switch-flags.html">第 16 课 · 枚举、switch 与位标志</a></p>
-  <p>下一课预告:<a href="0018-modify-and-build.html">第 18 课 · 改并编译</a>——现在你读懂了它,该<strong>动手改一行</strong>(比如让星星多一圈),再用 <code>hcustom</code> 编译进 Houdini,看到自己的修改真的生效。</p>
+  <p>下一课预告:<a href="0018-modify-and-build.html">第 18 课 · 改并编译</a>——从"读懂"迈向"动手改",改一处 <code>UPROPERTY</code> 或 <code>Tick</code> 逻辑,然后真正编译跑起来。</p>
   <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
 </div>
 
@@ -314,49 +235,49 @@ SOP_Star::<span class="t-name">cookMySop</span>(<span class="t-type">OP_Context<
 <script>
 renderQuiz("warmup", [
   {
-    q: "回忆第 16 课:<code>switch (x)</code> 的某个 <code>case</code> 末尾<strong>漏写</strong> <code>break</code> 会怎样?",
-    options: ["继续掉进下一个分支", "自动跳到结尾收场", "直接报编译器错误"],
-    correct: 0,
-    why: "第 16 课:case 不写 break 会“贯穿(fall-through)”到下一个 case 继续执行,这是读 switch 最常见的坑。"
+    q: "回忆第 16 课:<code>switch</code> 语句里,每个 <code>case</code> 末尾常写哪个关键字来防止"贯穿"到下一个分支?",
+    options: ["写 return 收尾", "写 break 收尾", "写 switch 收尾"],
+    correct: 1,
+    why: "break 让控制流跳出 switch;漏写会"贯穿"继续执行下一个 case,这是第 16 课的经典坑。"
   }
 ]);
 
-renderQuiz("quiz", [
+renderQuiz("quizfinal", [
   {
-    q: "<code>class SOP_Star : public SOP_Node</code> 这一行<strong>表示</strong>什么?",
-    options: ["SOP_Star 继承自 SOP_Node", "SOP_Star 调用了 SOP_Node", "SOP_Star 等于一个 SOP_Node"],
-    correct: 0,
-    why: "第 12 课:冒号加 public 父类名是“继承”,SOP_Star 是一种 SOP_Node,白拿父类的全部成员(如 gdp、evalFloat)。"
+    q: "<code>class ASpinningBeacon : public AActor</code> 这一行说明 <code>ASpinningBeacon</code> 的<strong>父类</strong>是谁?",
+    options: ["父类是 UCLASS", "父类是 AActor", "父类是 Super"],
+    correct: 1,
+    why: "冒号后面 public 跟的那个名字就是父类,这里是 AActor;UCLASS 是宏,Super 只是父类的代称。"
   },
   {
-    q: "<code>gdp-&gt;setPos3(ptoff, pos)</code> 用<strong>箭头</strong> <code>-&gt;</code> 是<strong>因为</strong>?",
-    options: ["因为 gdp 是一个指针", "因为 gdp 是一个引用", "因为 gdp 是一个数组"],
-    correct: 0,
-    why: "第 7 课:gdp 的类型是 GU_Detail*(指针),所以调方法用 -> ;若它是普通对象才用点号 . 。"
+    q: "头文件里 <code>SpinningBeacon.generated.h</code> 在 <code>#include</code> 列表中必须放在什么位置?",
+    options: ["必须放最前一行", "放哪里都可以", "必须放最后一行"],
+    correct: 2,
+    why: "用了反射宏的类,自动生成的 .generated.h 规定要放在 include 列表最后一行,否则编译报错。"
   },
   {
-    q: "<code>evalFloat(\"rad\", 1, now)</code> 里那个 <code>1</code> 代表<strong>什么</strong>?",
-    options: ["要取的第几个分量", "节点求值的时间点", "参数总共有几项"],
-    correct: 0,
-    why: "第 9 课的味道:1 是 component index(取参数 rad 的第 1 个分量,即内半径);时间是第三个参数 now。"
+    q: "<code>TArray&lt;FVector&gt; Waypoints;</code> 这个数组里装的<strong>元素类型</strong>是什么?",
+    options: ["装的是 TArray", "装的是 float", "装的是 FVector"],
+    correct: 2,
+    why: "模板尖括号里写的就是元素类型,这里 <FVector> 说明数组每个元素都是一个 FVector 向量。"
   },
   {
-    q: "<code>for (int i = 0; i &lt; npoints; i++)</code> 这一块<strong>对应</strong>哪一课?",
-    options: ["第 5 课讲的循环", "第 6 课讲的引用", "第 7 课讲的指针"],
+    q: "构造函数里 <code>bCanEverTick = true;</code> 这一句的作用是什么?",
+    options: ["允许该角色每帧 Tick", "立即先调一次 Tick", "禁止该角色每帧 Tick"],
     correct: 0,
-    why: "第 5 课:这是标准 for 循环,从 0 跑到 npoints-1,逐点摆放——等价于 VEX 的逐点运行。"
+    why: "它把"能否被 Tick"的开关设为 true,引擎之后才会每帧调 Tick();不设就一直不会被调。"
   },
   {
-    q: "循环里 <code>if (boss.wasInterrupted()) break;</code> 的 <code>break</code> 会<strong>做什么</strong>?",
-    options: ["跳出这个 for 循环", "返回整个 cook 函数", "跳过本次某一行"],
+    q: "<code>for (const FVector&amp; Point : Waypoints)</code> 这个循环每轮把什么交给 <code>Point</code>?",
+    options: ["数组里的一个元素", "数组的当前下标", "数组的元素总数"],
     correct: 0,
-    why: "第 5 课:break 只跳出当前循环,不退出函数;真正的函数返回是末尾的 return error()(第 2 课)。"
+    why: "范围 for 每轮取出 Waypoints 的一个元素(一个 FVector),用引用 & 借来叫 Point,不做拷贝。"
   },
   {
-    q: "<code>rad = odd ? innerRad : outerRad</code> 这个<strong>写法</strong>叫?",
-    options: ["第 4 课的三目运算", "第 3 课的变量赋值", "第 16 课的位标志位"],
+    q: "<code>Tick</code> 里 <code>SpinSpeed * DeltaTime</code> 为何要乘上 <code>DeltaTime</code>?",
+    options: ["为了让旋转不分帧率", "为了把转速翻上一倍", "为了让代码更短一点"],
     correct: 0,
-    why: "第 4 课:?: 是三目运算符,odd 为真取 innerRad,否则取 outerRad——星星内外半径就这样交替。"
+    why: "乘以这一帧经过的秒数,得到本帧应转角度,使转动快慢与帧率无关——游戏代码的常见套路。"
   }
 ]);
 </script>

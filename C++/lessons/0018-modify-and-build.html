@@ -3,179 +3,215 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>第 18 课 · 改并编译:让你的改动真正跑起来</title>
+<title>第 18 课 · 改并编译 —— 在 Unreal 里让改动跑起来</title>
 <link rel="stylesheet" href="../assets/styles.css">
 </head>
 <body>
 
 <div class="lesson-kicker">C++ for VFX TAs · 第 18 课</div>
-<h1>改并编译 —— 让你的改动真正跑起来</h1>
-<p class="subtitle">这是本目标路径的<strong>最后一课</strong>。前面 17 课都在练"读懂"。今天我们把最后半步走完:动手改一处,编译,让它在 Houdini 里真的动起来。</p>
+<h1>改并编译 —— 在 Unreal 里让改动跑起来</h1>
+<p class="subtitle">最后一课。前面你学会了"读";现在合上这门课的闭环——改一小处、编译、在编辑器里亲眼看到它生效。</p>
 
 <div class="callout callout-key">
   <span class="label">本课目标(一个收获)</span>
-  走通这个闭环:<strong>读懂 → 改一小处 → 编译 → 加载验证</strong>。具体来说——对第 17 课那种现有 HDK SOP 做一个<strong>安全的小修改</strong>(改一个默认参数,或加一个 <code>if</code> 守卫),用 <code>hcustom</code> 编译,读懂并修掉常见报错,然后回 Houdini 里看到你的改动生效。
+  走通"<strong>读懂 → 改一小处 → 编译 → 在编辑器里验证</strong>"这个闭环:对一个现有 Unreal C++ <code>Actor</code> 做一个安全的小改动(改默认 <code>UPROPERTY</code> 值,或在 <code>Tick</code> 里加一个 <code>if</code> 守卫),用 <strong>Live Coding</strong> 或重新编译让它生效,读懂并修掉常见报错,最后在 Unreal 编辑器里看到效果。
 </div>
 
 <h2>热身 · 回忆第 17 课(别翻笔记)</h2>
-<p>先凭记忆答一题,把上次通读 HDK SOP 的东西捞回来——主动回忆比重看一遍记得牢。</p>
+<p>先凭记忆答一题,把上一课读真实 Unreal C++ 源码的东西捞回来——这一课就建立在它之上。</p>
 <div class="quiz" id="warmup"></div>
 
-<h2>1. 修改的安全策略:小步、可回退</h2>
+<h2>这一课的形状:一个闭环,不是一堆语法</h2>
 <p>
-你已经会读代码了。现在最容易犯的错,不是"看不懂",而是"<strong>一次改太多</strong>"。改 C++ 和你在 Houdini 里搭网络不一样——搭错了节点连线一眼能看出来,而 C++ 改错可能要等编译完、甚至加载进 Houdini 才暴露。所以纪律比聪明更重要:
+前 17 课都在练"读"。这一课不教新语法,而是教一个<strong>动作流程</strong>:把你已经读懂的代码<em>动一下</em>,然后让 Unreal 把改动编译进去、在视口里跑起来。整门课的目标——"读懂并能改真实 C++"——就靠这一步合上。
 </p>
-<ul>
-  <li><strong>改前先读懂。</strong> 动手前,先用第 1–2 课的功夫把你要改的那个函数读明白:它收什么、吐什么、那一行在做什么。看不懂就先别改。</li>
-  <li><strong>一次只改一处。</strong> 改一个默认值,或加一个分支——<em>就这一处</em>。这样编译报错时,你<strong>百分百知道是谁引起的</strong>。一次改五处,报错你就得猜了。</li>
-  <li><strong>能回退。</strong> 改之前把原文件复制一份(<code>SOP_Star.C.bak</code>),或者用 git。改坏了,一键还原,心里有底才敢动手。</li>
-  <li><strong>小步快跑。</strong> 改一点 → 编译 → 看效果 → 再改一点。别攒一大堆改动才第一次编译。</li>
-</ul>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  这就是你调 VEX 或搭 HDA 时的习惯:改一行 Wrangle、回视口看结果、再改下一行。C++ 的循环一模一样,只是中间<strong>多插了一步"编译"</strong>。报错信息不是在骂你,它是<strong>编译器在跟你提需求</strong>——就像节点出问题时那条红字,是节点在告诉你它缺什么。
-</div>
-
-<h2>2. 一个具体的小改动</h2>
+<p>闭环只有四步,记住它:</p>
+<table style="width:100%; border-collapse:collapse; font-size:0.96rem; margin:0.6rem 0 1rem;">
+  <tr style="border-bottom:1px solid var(--rule); text-align:left;"><th style="padding:0.4rem 0;">步骤</th><th>你做什么</th><th>结果</th></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><strong>① 读懂</strong></td><td>找到要改的那一行,确认它干嘛</td><td>知道改哪、改成啥</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><strong>② 改一小处</strong></td><td>改一个默认值,或加一个 <code>if</code></td><td>源码变了,但还没生效</td></tr>
+  <tr style="border-bottom:1px solid var(--rule);"><td style="padding:0.4rem 0;"><strong>③ 编译</strong></td><td>Live Coding 或重新 build</td><td>C++ 被翻译成机器码并装回引擎</td></tr>
+  <tr><td style="padding:0.4rem 0;"><strong>④ 验证</strong></td><td>在编辑器/视口里看效果</td><td>确认改动真的生效了</td></tr>
+</table>
 <p>
-拿第 17 课读过的那种星形 SOP 当例子。假设里面有一段算"星星半径"的逻辑,大致长这样(已简化):
+为什么"改"和"生效"是两步?因为 C++ 是<strong>提前编译</strong>的语言(这正是<a href="0013-headers-and-compilation.html">第 13 课</a>讲的:源码 <code>.h</code>/<code>.cpp</code> 要先经过<em>编译 + 链接</em>才变成引擎能运行的机器码)。你在文本编辑器里改字符,引擎里跑的还是<em>上一次</em>编译出来的旧机器码——直到你重新编译。这跟你在 Blueprint 里连根线就立刻能玩、或在材质里调个数就实时刷新<strong>不一样</strong>:C++ 的改动必须先过编译这道关。
 </p>
 
-<pre><code><span class="t-type">fpreal</span> <span class="t-name">SOP_Star::getRadius</span>(<span class="t-type">fpreal</span> t) <span class="t-kw">const</span>
+<h2>我们要改的真实代码:一个 Actor</h2>
+<p>
+下面是一个最常见、最有代表性的 Unreal C++ <code>Actor</code>:它每帧让自己绕 Z 轴转一点。这种"会自己动的物件"在 VFX/场景搭建里到处都是。它和第 17 课一样分成头文件 <code>.h</code>(声明)和源文件 <code>.cpp</code>(实现)两份。<sup><a href="#src">[1]</a></sup>
+</p>
+
+<h3>头文件 SpinningActor.h(精简)</h3>
+<pre><code><span class="t-cmt">// SpinningActor.h —— 声明这个 Actor 类</span>
+<span class="t-kw">#pragma once</span>
+
+<span class="t-kw">#include</span> <span class="t-name">"CoreMinimal.h"</span>
+<span class="t-kw">#include</span> <span class="t-name">"GameFramework/Actor.h"</span>
+<span class="t-kw">#include</span> <span class="t-name">"SpinningActor.generated.h"</span>   <span class="t-cmt">// 自动生成,必须放最后</span>
+
+<span class="t-type">UCLASS</span>()
+<span class="t-kw">class</span> MYGAME_API <span class="t-type">ASpinningActor</span> : <span class="t-kw">public</span> <span class="t-type">AActor</span>
 {
-    <span class="t-type">fpreal</span> radius = evalFloat(<span class="t-num">"radius"</span>, <span class="t-num">0</span>, t);   <span class="t-cmt">// 从参数面板读 radius</span>
-    <span class="t-kw">return</span> radius;
+    <span class="t-type">GENERATED_BODY</span>()
+
+<span class="t-kw">public</span>:
+    <span class="t-type">ASpinningActor</span>();
+
+    <span class="t-cmt">// 每秒转多少度,可在编辑器面板里调</span>
+    <span class="t-type">UPROPERTY</span>(<span class="t-name">EditAnywhere</span>, <span class="t-name">Category</span> = <span class="t-name">"Spin"</span>)
+    <span class="t-type">float</span> RotationSpeed = <span class="t-num">90.0f</span>;
+
+<span class="t-kw">protected</span>:
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">BeginPlay</span>() <span class="t-kw">override</span>;
+
+<span class="t-kw">public</span>:
+    <span class="t-kw">virtual</span> <span class="t-type">void</span> <span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime) <span class="t-kw">override</span>;
+};</code></pre>
+
+<h3>源文件 SpinningActor.cpp(精简)</h3>
+<pre><code><span class="t-cmt">// SpinningActor.cpp —— 实现每个方法</span>
+<span class="t-kw">#include</span> <span class="t-name">"SpinningActor.h"</span>
+
+<span class="t-cmt">// 构造函数:Actor 被创建时跑一次</span>
+ASpinningActor::<span class="t-name">ASpinningActor</span>()
+{
+    <span class="t-cmt">// 打开逐帧 Tick(默认是关的)</span>
+    PrimaryActorTick.bCanEverTick = <span class="t-kw">true</span>;
+}
+
+<span class="t-type">void</span> ASpinningActor::<span class="t-name">BeginPlay</span>()
+{
+    <span class="t-type">Super</span>::<span class="t-name">BeginPlay</span>();   <span class="t-cmt">// 先让父类做它那一半</span>
+}
+
+<span class="t-cmt">// 每帧调用一次,DeltaTime 是上一帧到这一帧的秒数</span>
+<span class="t-type">void</span> ASpinningActor::<span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime)
+{
+    <span class="t-type">Super</span>::<span class="t-name">Tick</span>(DeltaTime);
+
+    <span class="t-type">FRotator</span> delta(<span class="t-num">0.0f</span>, RotationSpeed * DeltaTime, <span class="t-num">0.0f</span>);
+    <span class="t-name">AddActorLocalRotation</span>(delta);
 }</code></pre>
 
 <p>
-<strong>改动 A:改一个默认参数。</strong> 假设别处的参数模板里 <code>radius</code> 默认值是 <code>1</code>,你想让新建节点时默认更大一点。找到那行默认值,把数字改掉——<em>只改这一个数</em>:
+你应该已经认得这里几乎所有东西了(第 17 课的"放大"逐块讲过):<code>class ... : public AActor</code> 是<strong>继承</strong>(<a href="0012-classes-in-depth.html">第 12 课</a>);<code>ASpinningActor()</code> 是<strong>构造函数</strong>(第 12 课);<code>Tick(float DeltaTime)</code> 是<a href="0001-reading-a-function-signature.html">第 1 课</a>的<strong>函数签名</strong>;<code>RotationSpeed * DeltaTime</code> 是<a href="0004-operators-expressions.html">第 4 课</a>的<strong>表达式</strong>。新面孔只有几个 Unreal 专属的<strong>宏</strong>:<code>UCLASS()</code>、<code>UPROPERTY(...)</code>、<code>GENERATED_BODY()</code>——把它们当成"贴在类/变量上的标签",作用是让 Unreal 认得这个类、并把 <code>RotationSpeed</code> 暴露到编辑器面板里。<code>EditAnywhere</code> 就是"这个值允许在编辑器里改"。
 </p>
 
-<pre><code><span class="t-cmt">// 改前:</span>
-PRM_Default(<span class="t-num">1.0</span>)     <span class="t-cmt">// radius 默认 1.0</span>
-<span class="t-cmt">// 改后:</span>
-PRM_Default(<span class="t-num">2.0</span>)     <span class="t-cmt">// radius 默认 2.0 ← 唯一的改动</span></code></pre>
-
+<h2>改动 A · 改一个默认 <code>UPROPERTY</code> 值(最安全)</h2>
 <p>
-<strong>改动 B:加一个 <code>if</code> 守卫。</strong> 更有意思的一类改动:加一道"闸门",防止非法值。比如不让半径变成 0 或负数(回想第 2 课,<code>if</code> 就是一道闸门):
+最安全的第一个改动:让它转快一点。在<strong>头文件</strong>里把默认转速从 <code>90</code> 改成 <code>180</code>。这是一处<strong>单字符级</strong>的改动,不会动到任何结构。
+</p>
+<pre><code><span class="t-cmt">// 改之前</span>
+<span class="t-type">float</span> RotationSpeed = <span class="t-num">90.0f</span>;
+
+<span class="t-cmt">// 改之后 ——— 只改了这一个数字</span>
+<span class="t-type">float</span> RotationSpeed = <span class="t-num">180.0f</span>;</code></pre>
+<p>
+就这一行。注意:因为它写在 <code>UPROPERTY(EditAnywhere)</code> 上,<strong>已经摆进场景的那个 Actor</strong> 可能仍保留它当初的值(编辑器把改过的实例值存下来了);这个新默认值对<em>之后新拖进场景</em>的实例生效。这是 Unreal 的正常行为,先眼熟,后面"验证"一节会再说。
 </p>
 
-<pre><code><span class="t-type">fpreal</span> <span class="t-name">SOP_Star::getRadius</span>(<span class="t-type">fpreal</span> t) <span class="t-kw">const</span>
+<h2>改动 B · 在 <code>Tick</code> 里加一个 <code>if</code> 守卫(读代码者最该会的)</h2>
+<p>
+第二个改动更能体现"读懂才能改":给 <code>Tick</code> 加一个<strong>守卫(guard)</strong>,转速接近 0 时干脆别算旋转,省掉无意义的每帧操作。"守卫"就是函数开头一个 <code>if</code>,条件不满足就提前 <code>return</code> 退出——这正是<a href="0002-tracing-the-function-body.html">第 2 课</a>讲的"<code>return</code> 立刻离场"。
+</p>
+<pre><code><span class="t-type">void</span> ASpinningActor::<span class="t-name">Tick</span>(<span class="t-type">float</span> DeltaTime)
 {
-    <span class="t-type">fpreal</span> radius = evalFloat(<span class="t-num">"radius"</span>, <span class="t-num">0</span>, t);
-    <span class="t-kw">if</span> (radius &lt; <span class="t-num">0.001</span>)      <span class="t-cmt">// ← 新加的守卫:半径太小就顶到一个安全下限</span>
-        radius = <span class="t-num">0.001</span>;
-    <span class="t-kw">return</span> radius;
+    <span class="t-type">Super</span>::<span class="t-name">Tick</span>(DeltaTime);
+
+    <span class="t-kw">if</span> (RotationSpeed == <span class="t-num">0.0f</span>)   <span class="t-cmt">// ← 新增:转速为 0 就不用算了</span>
+        <span class="t-kw">return</span>;                  <span class="t-cmt">//    提前退出,后面两行不执行</span>
+
+    <span class="t-type">FRotator</span> delta(<span class="t-num">0.0f</span>, RotationSpeed * DeltaTime, <span class="t-num">0.0f</span>);
+    <span class="t-name">AddActorLocalRotation</span>(delta);
 }</code></pre>
-
 <p>
-两个改动都<strong>极小、极安全</strong>:没动函数签名、没碰别处逻辑,而且你能用第 2 课的"手跑一遍"完全预测它的行为(<code>radius=−0.5</code> → 走进 <code>if</code> → 变成 <code>0.001</code>)。这正是"读懂再改"的回报——你<em>知道</em>它会怎么跑,不是赌。
+你能读懂它<em>因为</em>你学过:<code>==</code> 是"是否相等"的两个等号(<a href="0002-tracing-the-function-body.html">第 2 课</a>,别写成一个 <code>=</code>);<code>if (...) return;</code> 是条件成立就立刻结束函数(第 2 课);它加在 <code>Super::Tick(DeltaTime)</code> <em>之后</em>,所以父类的 <code>Tick</code> 仍然照常跑。这就是"读代码"直接变现成"安全地改代码":你<strong>知道</strong>这一行加在哪不会破坏别的逻辑。
 </p>
 
-<h2>3. 用 hcustom 编译:从 <code>.C</code> 到能加载的插件</h2>
+<h2>编译让它生效:Live Coding vs 完整重新编译</h2>
 <p>
-改完源码,它还只是文本,Houdini 不认。要把 <code>.C</code> 变成 Houdini 能加载的<strong>插件库</strong>,SideFX 提供了一个命令行工具:<strong><code>hcustom</code></strong>。它把编译器、Houdini 的头文件路径、要链接的库全帮你配好,你只管喂源文件。
+改完源码,引擎里跑的还是旧机器码。把改动"装进去"有两条路,你<strong>必须</strong>分清什么时候用哪条。
 </p>
 
-<p><strong>第一步:打开带 Houdini 环境的命令行。</strong></p>
-<ul>
-  <li><strong>Windows(你的系统):</strong> 从开始菜单进 <em>Side Effects Software → Houdini X.Y.ZZZ → Command Line Tools</em>,它会开一个<strong>已经初始化好 Houdini 环境</strong>的命令行窗口。所有路径、变量都设好了。</li>
-  <li><strong>Linux / macOS:</strong> 先 <code>cd</code> 到 Houdini 安装目录,再 <code>source houdini_setup</code> 来加载环境。</li>
-</ul>
-
-<p><strong>第二步:在源文件所在目录运行 <code>hcustom</code>。</strong></p>
-
-<pre><code><span class="t-cmt"># 一条命令搞定编译 + 链接 + 安装</span>
-hcustom SOP_Star.C</code></pre>
-
+<h3>路线一 · Live Coding(编辑器开着就能编,最快)</h3>
 <p>
-官方文档说得很直白:这会"在当前工作目录里生成一个对应的目标文件 <code>SOP_Star.o</code> 和一个插件库 <code>SOP_Star.so</code>"。(Windows 上插件后缀是 <code>.dll</code>,macOS 上是 <code>.dylib</code>——同一个东西,不同平台叫法。)
-</p>
-
-<p><strong>第三步:产物落在哪?</strong> 关键的一句,记住它:<code>hcustom</code> 会<strong>自动把插件库装进 <code>$HOME/houdiniX.Y/dso</code> 目录</strong>(Windows 上是 <code>C:\Users\你\Documents\houdiniX.Y\dso</code>)。这个 <code>dso</code> 文件夹就是 Houdini 启动时<strong>扫描并加载自定义插件</strong>的地方(它由 <code>HOUDINI_DSO_PATH</code> 这个环境变量指定)。所以你不用手动拷文件——编译成功 = 插件已就位。
-</p>
-
-<div class="callout callout-vex">
-  <span class="label">VFX 类比</span>
-  <code>dso</code> 文件夹之于 HDK 插件,就像你放 <code>.hda</code> 的 <code>otls</code> 文件夹之于自定义资产:Houdini 启动时去那儿"点名",把里面的东西都加载进来。<code>hcustom</code> 替你把编译好的插件直接放进了点名册,省得你手动搬。
-</div>
-
-<p>
-两个有用的诊断命令,卡住时能救命:<code>hcustom --cflags</code> 打印它用的编译选项,<code>hcustom --ldflags</code> 打印链接选项;Windows 上还有 <code>hcustom --output_msvcdir</code> 确认它有没有找到你的 Visual C++。<strong>一个限制要知道:</strong><code>hcustom</code> 只能把<em>单个</em> <code>.C</code> 文件编成一个插件;多文件工程要用 Makefile 或 CMake(超出本课范围,先眼熟)。
-</p>
-
-<h2>4. 读代码易错点:编译错误 vs 链接错误</h2>
-<p>
-改完一编译,十有八九第一次会报错——<strong>这是正常的,不是你笨</strong>。会读报错,你就赢了一大半。承接第 13 课(头文件与编译单元),报错分两大类,出现的<strong>时机</strong>和<strong>意思</strong>完全不同,别混:
-</p>
-
-<h3>编译错误(Compile error):语法/类型层面,出现得早</h3>
-<p>
-编译器在<strong>读你这个 <code>.C</code> 文件本身</strong>时就发现毛病了——通常是手滑:漏分号、括号没配对、类型不匹配、名字拼错。它会精确告诉你<strong>哪一行</strong>:
-</p>
-<pre><code>SOP_Star.C:42:18: error: expected ';' before 'return'
-    radius = 0.001
-                  ^   <span class="t-cmt">// ← 漏了分号,改动 B 里最常见的手滑</span>
-                  ;</code></pre>
-<p>
-读法:<code>文件:行号:列号: error: 说明</code>。这里 <code>42:18</code> 就是"第 42 行第 18 列"。修法:照它说的,在第 42 行末尾补上 <code>;</code>。<strong>永远从<em>第一条</em> error 开始修</strong>——后面一堆往往是被第一条带崩的,修好第一条再重编,可能后面全没了。
-</p>
-
-<h3>链接错误(Link error):拼装阶段,出现得晚</h3>
-<p>
-编译<em>过了</em>(语法没问题),却在<strong>最后把各块拼成插件</strong>时炸了。典型信号是字眼里带 <code>undefined reference</code> / <code>unresolved external symbol</code>——意思是"<strong>你用了某个函数/符号,但我找不到它的实现</strong>"(回想第 13 课:声明在 <code>.h</code>,定义在 <code>.cpp/.C</code>;链接器负责把"用"和"实现"对上号):
-</p>
-<pre><code>SOP_Star.o: undefined reference to `SOP_Star::getRadius(fpreal) const'
-collect2: error: ld returned 1 exit status   <span class="t-cmt">// ld 是链接器</span></code></pre>
-<p>
-读法:它<strong>不给行号</strong>(链接阶段早过了"看行"的时候),给的是一个<strong>符号名</strong>。这条说"<code>getRadius</code> 被声明/调用了,但没找到它的函数体"。常见原因:你在头文件里加了个函数声明,却忘了写它的实现;或者函数签名两边对不上(一边 <code>const</code> 一边没 <code>const</code>)。
-</p>
-
-<div class="callout callout-vex">
-  <span class="label">一句话记牢</span>
-  <strong>编译错误 = "这句话我读不通"(给行号,语法/类型问题)。链接错误 = "这个东西我找不到"(给符号名,缺实现/对不上)。</strong> 看到 <code>undefined reference</code> 别再去检查语法——那是链接器在喊它缺一份实现。
-</div>
-
-<h2>5. 回 Houdini 验证 + 迭代循环</h2>
-<p>
-编译通过、插件进了 <code>dso</code> 文件夹,最后一步:<strong>让 Houdini 加载它,亲眼确认改动生效</strong>。
+Unreal 5 自带 <strong>Live Coding</strong>,默认开启(在 <em>Editor Preferences &gt; General &gt; Live Coding</em> 里能看到开关)。<sup><a href="#src">[1]</a></sup> 用法只有一步:
 </p>
 <ul>
-  <li><strong>最省事:重启 Houdini。</strong> 它启动时会重新扫描 <code>dso</code>,加载你刚编好的新版本。新建一个 Star SOP,看 <code>radius</code> 默认是不是变成了 2.0(改动 A);或把半径拖成负数,看几何是不是被你的 <code>if</code> 守卫兜住了(改动 B)。</li>
-  <li><strong>验证 = 把代码里的预测对上视口。</strong> 你在第 2 课手跑出来的结果,现在用眼睛核对一遍。对上了,这个闭环就闭合了。</li>
-  <li><strong>没生效?三个嫌疑:</strong> ① 编译其实没成功(回看命令行有没有红字);② 改了源码但忘了重新 <code>hcustom</code>;③ Houdini 还加载着旧版本(没重启)。按这个顺序排查。</li>
+  <li><strong>保存</strong>你改过的 <code>.h</code>/<code>.cpp</code>(不存的话改动不会被编译)。</li>
+  <li>焦点在 Unreal 编辑器(或你的 IDE)上时,按 <strong><code>Ctrl + Alt + F11</code></strong> 触发一次 Live Coding 编译。<sup><a href="#src">[1]</a></sup></li>
+  <li>右下角弹出一个编译状态通知;成功的话,编辑器<strong>不用重启</strong>,改动立刻在当前会话里生效。你甚至可以在编译时继续操作编辑器。<sup><a href="#src">[1]</a></sup></li>
 </ul>
-
 <p>
-然后就是<strong>迭代</strong>:<em>改 → 编 → 看 → 再改</em>。这正是开头那个 VFX 类比的全貌——和你调 VEX 的循环同构,只是每轮中间多一步 <code>hcustom</code>。你已经把这一整圈走通了。
+上面的<strong>改动 A、B 都属于 Live Coding 能搞定的小改动</strong>:改一个 <code>.h</code> 里的默认值、在已有函数体里加几行逻辑。官方文档明确说:在 <code>.h</code> 头文件里改默认值,Live Coding <em>能</em>看到变化生效。<sup><a href="#src">[1]</a></sup>
 </p>
 
+<h3>路线二 · 完整重新编译(改了结构就必须走这条)</h3>
+<p>
+有些改动 Live Coding <strong>处理不了</strong>,硬按 <code>Ctrl+Alt+F11</code> 可能行为异常甚至让编辑器崩溃。<sup><a href="#src">[1]</a></sup> 这时候要做<strong>完整重新编译</strong>:
+</p>
+<ul>
+  <li><strong>关掉 Unreal 编辑器。</strong></li>
+  <li>在 Visual Studio / Rider 里,把配置设成 <strong>Development Editor</strong>,右键你的项目选 <strong>Build</strong>(或 <strong>Rebuild</strong> 全量重编),让 <strong>UnrealBuildTool</strong> 重新编译并链接整个模块。<sup><a href="#src2">[2]</a></sup></li>
+  <li>(可选)也可以直接在 Unreal 编辑器工具栏点 <strong>Compile</strong> 按钮做一次常规编译。<sup><a href="#src2">[2]</a></sup></li>
+  <li>编译完再打开编辑器,改动就装好了。</li>
+</ul>
+<p>
+另外:如果你<strong>新增了文件或新的类</strong>,改的不只是代码内容、而是<em>项目结构</em>,那还要先<strong>重新生成项目文件</strong>——右键 <code>.uproject</code> 选 <em>Generate Visual Studio project files</em>(或在 IDE 的 Tools 菜单里 <em>Refresh Visual Studio Project</em>),让 IDE 认得新文件,然后再 build。<sup><a href="#src2">[2]</a></sup>
+</p>
+
+<h2>读代码易错点 · 报错与那个 UE 大坑</h2>
 <div class="callout callout-key">
-  <span class="label">对齐使命 · 收尾</span>
-  课程的使命是"<strong>读懂并改现有 C++ 代码</strong>"。读懂——前 17 课练的;改并让它跑起来——就是今天这一课。当你能<em>读懂一处</em>、<em>安全改一处</em>、<em>编译它</em>、<em>在 Houdini 里看到结果</em>,你就不再被"这是 C++ 写的"挡在门外了。这正是本目标路径的终点。
+  <span class="label">读代码易错点</span>
+  <ul style="margin:0; padding-left:1.2rem;">
+    <li><strong>改了 <code>UCLASS</code>/<code>UPROPERTY</code> 的<em>结构</em>,常常要<em>完整重编</em>,不是 Live Coding。</strong> 改一个默认<em>值</em>没问题;但<strong>新增/删除一个 <code>UPROPERTY</code>、改它的类型、加一个新的 <code>UFUNCTION</code>、加一整个新类</strong>,属于"结构性改动"。它会让 Unreal 的代码生成器(就是那个 <code>.generated.h</code>)重新生成新代码,Live Coding 这种增量补丁应付不来——官方说大改动(新函数、新变量集、大重构)在 Live Coding 下"行为不可预测",通常直接崩。<sup><a href="#src">[1]</a></sup> 正确做法:<strong>关编辑器 → 在 IDE 里完整 Build</strong>。这就接回<a href="0013-headers-and-compilation.html">第 13 课</a>的编译/链接模型:头文件里的<em>声明</em>变了,所有 <code>#include</code> 它的<em>编译单元</em>都得重新编译、重新链接,半路打补丁是不够的。</li>
+    <li><strong>报错先看<em>第一条</em>,不是最后一条。</strong> C++ 一个错误常引发一长串后续报错。从<strong>最上面那条</strong>开始读,它通常是真正的病根;修掉它,后面一片往往跟着消失。</li>
+    <li><strong>看懂报错三件套:文件、行号、信息。</strong> 比如 <code>SpinningActor.cpp(24): error C2065: 'RotatonSpeed': undeclared identifier</code> —— 文件 <code>SpinningActor.cpp</code>、第 <code>24</code> 行、"用了一个没声明过的名字"。八成是把 <code>RotationSpeed</code> 拼成了 <code>RotatonSpeed</code>。双击报错能直接跳到那一行。</li>
+    <li><strong><code>; expected</code> / "missing ';'" 往往错在<em>上一行</em>。</strong> 编译器是读到下一行才发现少了分号,所以它报的行号常常比真正出错的地方<strong>晚一行</strong>。看到这种错,先检查它上面那一行结尾。</li>
+    <li><strong><code>==</code> 写成 <code>=</code> 不一定报错,但行为全变。</strong> <code>if (RotationSpeed = 0.0f)</code> 是<em>赋值</em>再判断(第 2 课),会把转速悄悄改成 0、且条件恒为假;编译器可能只给个 warning。读/改 <code>if</code> 时务必确认是<strong>两个等号</strong>。</li>
+    <li><strong>"链接错误"(LNK)和"编译错误"(C2xxx)不是一回事。</strong> 第 13 课:编译错误是某个 <code>.cpp</code> 自己语法不对;链接错误(<code>LNK2019: unresolved external symbol</code>)是各文件单独都编过了、但拼起来时找不到某个函数的<em>实现</em>——常见于"在 <code>.h</code> 声明了函数却忘了在 <code>.cpp</code> 写它的实现"。</li>
+  </ul>
 </div>
 
-<h2>练一练 · 立刻反馈</h2>
-<p>每题都对照上面的流程和报错读法,想一遍再答。</p>
-<div class="quiz" id="quiz18"></div>
+<h2>在编辑器里验证(闭环的最后一步)</h2>
+<p>
+编译成功不等于改对了。一定要<strong>亲眼验证</strong>:
+</p>
+<ul>
+  <li><strong>改动 A(默认转速)</strong>:往场景里<em>新拖一个</em> <code>ASpinningActor</code>,点 <strong>Play</strong>,它应该转得更快了。注意<em>已经在</em>场景里的旧实例可能仍保留旧值——这正是上面说的 <code>EditAnywhere</code> 实例覆盖行为,不是 bug。也可以直接在它的 <strong>Details 面板</strong>里看 <code>RotationSpeed</code> 这一栏现在的默认是不是 <code>180</code>。</li>
+  <li><strong>改动 B(<code>if</code> 守卫)</strong>:在 Details 面板把某个实例的 <code>RotationSpeed</code> 设成 <code>0</code>,Play,它应该<strong>纹丝不动</strong>(走了你新加的 <code>return</code>);设成非 0,它照常转。两种情况都对上了,才算这一处改动真的生效。</li>
+</ul>
+<p>
+看到效果的那一刻,你就完整跑通了"读懂 → 改 → 编译 → 验证"。这正是这门课从第 1 课到现在一直瞄准的终点。
+</p>
 
-<div class="primary-source">
-  <span class="label">主推资源(读一篇就好)</span>
-  <a href="https://www.sidefx.com/docs/hdk/_h_d_k__intro__compiling.html" target="_blank">SideFX HDK · Compiling HDK Code(含 hcustom 用法)</a>
-  —— 官方权威的 HDK 编译指南:<code>hcustom SOP_Star.C</code> 的完整流程、产物 <code>.o</code> 与 <code>.so</code> 的落位、自动安装到 <code>$HOME/houdiniX.Y/dso</code>、Windows 的 Command Line Tools 入口,以及 <code>--cflags</code>/<code>--ldflags</code> 等诊断选项。本课的命令与产物路径都依据这一页。
+<h2>毕业测验 · 走通改并编译</h2>
+<p>不许往上翻。每题都在考这一课的核心动作和那个 Unreal 大坑。</p>
+<div class="quiz" id="quiz"></div>
+
+<div class="primary-source" id="src">
+  <span class="label">主推资源 / 本课引用</span>
+  [1] Unreal Engine 官方文档 ·
+  <a href="https://dev.epicgames.com/documentation/unreal-engine/using-live-coding-to-recompile-unreal-engine-applications-at-runtime" target="_blank">Using Live Coding to Recompile Unreal Engine Applications at Runtime</a>
+  —— Live Coding 的权威说明:默认开启、快捷键 <code>Ctrl+Alt+F11</code>、右下角状态通知、在 <code>.h</code> 改默认值能生效、以及"大结构改动会行为不可预测/崩溃"(这正是要完整重编的原因)。本课的 Live Coding 流程与那个"改结构要完整重编"的大坑都依据此页。
+  <br><br>
+  [2] <span id="src2">Unreal Engine 官方文档 ·</span>
+  <a href="https://dev.epicgames.com/documentation/en-us/unreal-engine/compiling-game-projects-in-unreal-engine-using-cplusplus" target="_blank">Compiling Game Projects in Unreal Engine Using C++</a>
+  —— 在 Visual Studio / Rider 里 Build / Rebuild、编辑器工具栏 Compile 按钮、Development Editor 配置、以及结构变化后用 Generate / Refresh Visual Studio Project files 重新生成项目文件。完整重新编译的步骤依据此页。
 </div>
 
 <div class="ask-teacher">
-  <strong>有疑问就问我。</strong> 我是你的老师——比如:你手头某个 HDK 文件该改哪一行?某条 <code>error:</code> / <code>undefined reference</code> 具体什么意思、怎么修?<code>hcustom</code> 在你机器上报"找不到 MSVC"怎么办?或者你想试着改一处再让我帮你看——直接把代码和报错贴进对话,我陪你把这个闭环走顺。
+  <strong>有疑问就问我。</strong> 我是你的老师。比如:你照着改了一处却编译报错、看不懂某条 <code>error C2xxx</code> 或 <code>LNK2019</code>、分不清这次该按 <code>Ctrl+Alt+F11</code> 还是关编辑器完整重编、或者想拿你<em>自己项目里</em>的某个真实 Actor 来练这套闭环——把代码或报错贴给我,我陪你一行行走通。这是本课程的收尾动作,卡住很正常,问出来就过了。
 </div>
 
 <div class="lesson-footer">
-  <p>上一课:<a href="0017-reading-a-real-hdk-sop.html">第 17 课 · 通读真实 HDK SOP 源码</a></p>
+  <p>上一课:<a href="0017-reading-a-real-hdk-sop.html">第 17 课 · 通读真实 Unreal C++ 源码</a></p>
   <p>
-    <strong>🎉 恭喜你走完了这条目标路径!</strong> 从"读懂函数签名"到"改一处并让它在 Houdini 里跑起来",你已经具备了<strong>读懂并修改现有 C++ 代码</strong>的核心能力——这正是当初定下的使命。
-    下一步:回到 <a href="../SYLLABUS.html">课程大纲(SYLLABUS)</a> 看看接下来可以走哪条路径;并强烈建议你加入
-    <a href="https://www.sidefx.com/forum/" target="_blank">SideFX 论坛社区</a>(见<a href="../RESOURCES.md">资源清单</a>),把你改的第一个插件拿去和真实的 HDK 开发者交流——你现在已经能读懂他们的回帖了。
+    <strong>🎉 你完成了这条目标路径!</strong> 回头看你的<a href="../MISSION.md">使命</a>:"能读懂一个真实 C++ 文件" + "能对现有代码做小修改并成功编译运行"——这两条你现在都做到了。从第 1 课读一行函数签名,到这一课在 Unreal 里改、编译、看到自己的改动跑起来,你已经跨过了那道"这是 C++ 写的就放弃"的天花板。
+  </p>
+  <p>
+    <strong>接下来去哪:</strong> 回到 <a href="../SYLLABUS.html">课程大纲(SYLLABUS)</a> 看全貌、挑感兴趣的方向继续深入。然后别一个人闷头练——从<a href="../RESOURCES.md">资源清单</a>里找个社区扎进去:对你现在做 Unreal(Niagara / 材质 / Blueprint + C++)来说,<strong>Unreal 的社区</strong>比 SideFX 论坛更对口,比如 <strong>Unreal Source Discord</strong> 或 <strong>Epic 官方开发者论坛(Epic Developer Community Forums)</strong>——把你读不懂的代码或编译报错贴上去,会有人答。
   </p>
   <p>参考:<a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
 </div>
@@ -184,49 +220,49 @@ collect2: error: ld returned 1 exit status   <span class="t-cmt">// ld 是链接
 <script>
 renderQuiz("warmup", [
   {
-    q: "回忆第 17 课:在一个 HDK SOP 里,真正“算几何”的逻辑,通常写在哪个函数里?",
-    options: ["写在构造函数里头", "写在 cookMySop 里头", "写在头文件声明处"],
-    correct: 1,
-    why: "cookMySop(框架在需要时调用的计算入口)才是节点干活、生成几何的地方;构造函数只做初始化。"
+    q: "回忆第 17 课:Unreal 的 Actor 里,<code>UPROPERTY(EditAnywhere)</code> 这个标签的<strong>作用</strong>是?",
+    options: ["让该变量能在编辑器里调", "让该变量在运行时只读", "让该变量自动每帧清零"],
+    correct: 0,
+    why: "第 17 课:UPROPERTY(EditAnywhere) 把这个 C++ 变量暴露到编辑器的 Details 面板,允许你在编辑器里直接改它的值。"
   }
 ]);
 
-renderQuiz("quiz18", [
+renderQuiz("quiz", [
   {
-    q: "对现有 HDK 代码做修改,下面哪条是<strong>最稳妥</strong>的策略?",
-    options: ["一次性多改几处再编一次", "一次只改一处并能够回退", "先大改再边编译边删改"],
-    correct: 1,
-    why: "一次只改一处,报错时你百分百知道是谁引起的;再加上可回退(备份/git),改坏了能一键还原。"
-  },
-  {
-    q: "运行 <code>hcustom SOP_Star.C</code> 成功后,插件库会被<strong>自动装进</strong>哪里?",
-    options: ["装进当前源码所在目录", "装进 houdiniX.Y/dso 目录", "装进渲染器的缓存目录"],
-    correct: 1,
-    why: "hcustom 会把库自动安装到 $HOME/houdiniX.Y/dso,这正是 Houdini 启动时扫描并加载自定义插件的地方。"
-  },
-  {
-    q: "报错 <code>SOP_Star.C:42:18: error: expected ';'</code>,这<strong>属于哪类</strong>错误?",
-    options: ["这属于一个链接错误", "这属于一个编译错误", "这属于一个运行错误"],
-    correct: 1,
-    why: "它给出了精确的文件:行:列,是编译器读源文件时发现的语法问题,属于编译错误;照它指的行补分号即可。"
-  },
-  {
-    q: "报错里出现 <code>undefined reference to ...</code>,它在告诉你<strong>什么</strong>?",
-    options: ["某句语法没有写通顺", "某个实现它找不到了", "某个参数默认值出错"],
-    correct: 1,
-    why: "undefined reference 是链接错误:你用了某符号但找不到它的实现(常是声明了却没写函数体,或签名对不上)。"
-  },
-  {
-    q: "编译里冒出<strong>一长串</strong> error,正确的处理顺序是?",
-    options: ["从最后一条往前修复", "从第一条开始先修复", "随便挑一条先修复"],
-    correct: 1,
-    why: "后面的报错常是被第一条带崩的;先修第一条再重编,往往后面那串会一起消失,省去白忙。"
-  },
-  {
-    q: "编译通过、插件已进 dso,但 Houdini 里<strong>没看到改动</strong>,最该先查哪一项?",
-    options: ["是否重启让它重新加载", "是否换一台机器再试", "是否升级到新版引擎"],
+    q: "这一课的核心<strong>闭环</strong>,正确的四步顺序是?",
+    options: ["读懂 → 改动 → 编译 → 验证", "编译 → 读懂 → 验证 → 改动", "改动 → 验证 → 读懂 → 编译"],
     correct: 0,
-    why: "Houdini 启动时才扫描 dso 加载插件;没重启就还跑着旧版本。先重启重载,再核对编译是否真的成功。"
+    why: "顺序是读懂→改一小处→编译让它生效→在编辑器里验证。先编译或先验证都说不通:没改没编就没东西可验。"
+  },
+  {
+    q: "把 <code>.h</code> 里 <code>RotationSpeed = 90.0f</code> 改成 <code>180.0f</code>,<strong>最快</strong>让它生效的办法是?",
+    options: ["按下 Ctrl+Alt+F11 触发", "重启整台开发用电脑", "删掉并重建整个项目"],
+    correct: 0,
+    why: "改一个 .h 里的默认值属于小改动,Live Coding 能处理:保存后按 Ctrl+Alt+F11,右下角通知编译成功即生效,无需重启编辑器。"
+  },
+  {
+    q: "下面哪种改动<strong>不能</strong>靠 Live Coding,得关编辑器完整重编?",
+    options: ["给类新增一个 UPROPERTY 字段", "把函数体里某个数字改一改", "把某一行注释的文字改一改"],
+    correct: 0,
+    why: "新增 UPROPERTY 属于结构性改动,会触发 .generated.h 重新生成,Live Coding 应付不来;后两者是小改动,Live Coding 可以。"
+  },
+  {
+    q: "为什么改结构性的 <code>UCLASS</code>/<code>UPROPERTY</code> 要<strong>完整重编</strong>(联系第 13 课)?",
+    options: ["头文件声明变了得全部重编", "因为机器码会自己慢慢失效", "因为编辑器缓存了旧的源码"],
+    correct: 0,
+    why: "第 13 课:头文件里的声明一变,所有 #include 它的编译单元都得重新编译再链接;Live Coding 的增量补丁补不全这种跨文件改动。"
+  },
+  {
+    q: "编译吐出<strong>一长串</strong>报错时,正确的读法是?",
+    options: ["先看最上面的那一条", "先看最下面的那一条", "先看最中间的那一条"],
+    correct: 0,
+    why: "一个错误常引发后续一连串报错;最上面那条通常是真正的病根,修掉它后面往往跟着一起消失。"
+  },
+  {
+    q: "守卫 <code>if (RotationSpeed == 0.0f) return;</code> 里若<strong>误写</strong>成一个 <code>=</code> 会怎样?",
+    options: ["会把转速悄悄改成零值", "会让编译立刻报错中止", "会让该物体转得更快些"],
+    correct: 0,
+    why: "第 2 课:单个 = 是赋值,这行会把 RotationSpeed 赋成 0 且条件恒假;编译器可能只给警告,行为却全变了。"
   }
 ]);
 </script>
