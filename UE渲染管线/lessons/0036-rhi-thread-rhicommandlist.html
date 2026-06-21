@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0036 · RHI 线程与 FRHICommandList</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 7 · RHI 与显示</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 7 · RHI 与显示 · Lesson 0036</p>
+  <h1>RHI 线程与 FRHICommandList</h1>
+  <p class="subtitle">渲染线程录制的"平台无关命令"如何被翻译成真正的 D3D12 调用？答案是一条专职翻译线程——<span class="term">RHI 线程</span>——以及连接两者的命令列表体系：<code>FRHICommandListImmediate</code>、<code>FRHICommandList</code>、<code>FRHICommandListExecutor</code>。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~25 分钟</span>
+    <span><b>前置</b> 0005（三线程架构）、0012（命令队列与同步）、0003（图形 API 契约）</span>
+    <span><b>产出</b> 能解释 RHI 线程的职责、Immediate 与普通 CommandList 的区别、bypass 模式的含义，以及并行命令列表的录制与合并</span>
+  </div>
+
+  <p class="lead">你在 0012 看到渲染线程调用 <code>FRHICommandListImmediate</code> 方法录制绘制命令。那些调用并不立刻变成 <code>ID3D12GraphicsCommandList::DrawIndexedInstanced()</code>——它们先被序列化成一个引擎内部的命令流，再由 <strong>RHI 线程</strong>取出、翻译、最终提交 GPU。理解这条翻译管道，才能读懂 D3D12RHI 的任何代码。</p>
+
+  <h2><span class="num">1</span>三线程架构回顾：RHI 线程的位置</h2>
+  <p>UE 4.26 标准桌面配置有三条核心线程，各自的工作是：</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body">Tick → 产出"这帧场景长什么样" → <code>ENQUEUE_RENDER_COMMAND</code> 入队</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">消费游戏命令 → 可见性剔除 → 组织各 Pass → 向 <code>FRHICommandListImmediate</code> 录制 RHI 命令 → 命令自动转发到 RHI 线程</span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程</span><span class="lane-body">消费渲染线程投递的 <code>FRHICommand*</code> 链表 → 调用具体 API（<code>ID3D12GraphicsCommandList</code>、<code>VkCommandBuffer</code>…）→ 提交 GPU 执行</span></div>
+  </div>
+
+  <p>RHI 线程的核心价值：把"翻译"工作从渲染线程解耦出去。渲染线程专注高层组织（选着色器、算资源屏障、维护 FScene），翻译成具体 API 调用这件繁琐又阻塞的事，留给 RHI 线程异步处理——两者在时间轴上重叠，节省了大量墙钟时间。</p>
+
+  <div class="callout knowledge">
+    <span class="label">GRHIThread — RHI 线程的标识</span>
+    <p>全局指针 <code>GRHIThread</code>（<span class="file">Engine/Source/Runtime/RHI/Private/RHICommandList.cpp</span>）在引擎启动时由 <code>FRHIThread::Get()</code> 初始化。它是 TaskGraph 的一个具名线程（<code>ENamedThreads::RHIThread</code>），与渲染线程类似：有自己的优先队列，在专属 CPU 核上循环取任务执行。可以通过控制台变量 <code>r.RHICmdBypass 1</code> 完全禁用 RHI 线程，退化为同步模式（详见第 4 节）。</p>
+  </div>
+
+  <h2><span class="num">2</span>命令列表家族：三个类型，三种语义</h2>
+  <p>UE RHI 有三种命令列表，它们不是继承关系，而是用途分工：</p>
+
+  <table>
+    <thead><tr><th>类型</th><th>使用场景</th><th>执行时机</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>FRHICommandListImmediate</code></td>
+        <td>渲染线程的"主命令列表"；绑定于 <code>ENQUEUE_RENDER_COMMAND</code> 的 lambda 参数。</td>
+        <td>命令被自动"推送"到 RHI 线程队列；渲染线程无需手动提交。</td>
+      </tr>
+      <tr>
+        <td><code>FRHICommandList</code></td>
+        <td>用于并行 Pass 录制（如并行 Shadow Depth 绘制）；可在 TaskGraph Worker 线程上创建。</td>
+        <td>录制完成后通过 <code>FRHICommandListImmediate::QueueAsyncCommandListSubmit()</code> 汇入主队列，RHI 线程按顺序翻译。</td>
+      </tr>
+      <tr>
+        <td><code>FRHIComputeCommandList</code></td>
+        <td>Compute Pass 的专用接口（仅含 Dispatch 类命令）；RDG 的 Compute Pass lambda 接收此类型。</td>
+        <td>同 <code>FRHICommandList</code>；可被调度到异步 Compute 队列（若平台支持）。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="marginnote"><code>FRHICommandListImmediate</code> 实际上继承自 <code>FRHICommandList</code>，"Immediate"只是语义标记——意味着提交路径是自动驱动的，不需要显式 "Execute"。</p>
+
+  <p>这三种列表的<strong>内部表示</strong>都是同一套机制：一条内存中的命令对象单向链表（<code>FRHICommand*</code>）。每次调用 <code>RHICmdList.DrawIndexedPrimitive(...)</code>，引擎就在内存池里分配一个 <code>FRHICommandDrawIndexedPrimitive</code> 节点并追加到链表尾部——没有虚函数调用，通过模板展开写好了 <code>Execute</code> 函数指针。</p>
+
+  <h2><span class="num">3</span>FRHICommandListExecutor：翻译引擎</h2>
+  <p><code>FRHICommandListExecutor</code>（<span class="file">RHI/Public/RHICommandList.h</span>）是 RHI 线程侧的执行引擎。它的核心逻辑：</p>
+
+  <pre><code><span class="cmt">// RHICommandList.cpp — 概念简化，非逐字引用</span>
+<span class="kw">void</span> <span class="fn">FRHICommandListExecutor::ExecuteInner</span>(<span class="typ">FRHICommandListBase</span>&amp; CmdList)
+{
+    <span class="typ">FRHICommandBase</span>* Cmd = CmdList.Root;
+    <span class="kw">while</span> (Cmd)
+    {
+        <span class="cmt">// 每个命令节点带一个静态 Execute 函数指针</span>
+        Cmd-&gt;<span class="fn">ExecuteAndDestruct</span>(CmdList, *<span class="typ">GDynamicRHI</span>);
+        Cmd = Cmd-&gt;Next;
+    }
+    CmdList.<span class="fn">Reset</span>();
+}</code></pre>
+  <p class="code-cap"><span class="file">Engine/Source/Runtime/RHI/Private/RHICommandList.cpp</span> — ExecuteInner 的遍历逻辑</p>
+
+  <p><code>GDynamicRHI</code> 是运行时选择的具体后端实例（如 <code>FD3D12DynamicRHI</code>）。每个 <code>FRHICommand</code> 的 <code>ExecuteAndDestruct</code> 会调用 <code>GDynamicRHI</code> 对应的 D3D12/Vulkan/Metal 方法。这就是 UE"平台无关命令 → 平台有关 API"的核心枢纽。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 为什么用链表而非数组？</span>
+    <p>RHI 命令节点的大小不一（<code>DrawIndexedPrimitive</code> 比 <code>SetShaderTexture</code> 参数多得多），用链表 + 小对象内存池可以避免对齐浪费，同时追加是 O(1)。缺点是遍历时 CPU 缓存命中率稍低，但 RHI 线程本来就是"翻译+提交"而非高频数学运算，瓶颈在 D3D12 API 本身，缓存压力相对次要。</p>
+  </div>
+
+  <h2><span class="num">4</span>Bypass 模式：r.RHICmdBypass</h2>
+  <p>控制台变量 <code>r.RHICmdBypass</code>（默认 0）若设为 1，渲染线程上的 <code>FRHICommandListImmediate</code> 调用会<strong>直接调用 GDynamicRHI 的对应方法</strong>，绕过 RHI 命令链表和 RHI 线程，退化为纯同步模式。</p>
+
+  <div class="callout warn">
+    <span class="label">Bypass 仅用于调试，不是性能优化</span>
+    <p>Bypass 消除了渲染线程与 RHI 线程的并行性，帧率通常显著下降。但它让调试变得简单：崩溃的调用栈直接指向 D3D12 API，无需穿越两层命令队列。在追查"哪条绘制命令导致设备丢失"时非常有用。生产构建中务必保持关闭。</p>
+  </div>
+
+  <p>Bypass 模式的检测代码：</p>
+
+  <pre><code><span class="cmt">// RHICommandList.h — 简化示意</span>
+<span class="kw">FORCEINLINE bool</span> <span class="fn">Bypass</span>() <span class="kw">const</span>
+{
+    <span class="kw">return</span> <span class="typ">GRHICommandList</span>.<span class="fn">BypassMode</span>() != <span class="str">0</span>;
+}
+
+<span class="cmt">// 渲染线程侧的调用路径（非 bypass）</span>
+<span class="kw">void</span> <span class="typ">FRHICommandListImmediate</span>::<span class="fn">DrawIndexedPrimitive</span>(...)
+{
+    <span class="kw">if</span> (<span class="fn">Bypass</span>())
+    {
+        <span class="typ">GDynamicRHI</span>-&gt;<span class="fn">RHIDrawIndexedPrimitive</span>(...); <span class="cmt">// 直接调用</span>
+        <span class="kw">return</span>;
+    }
+    <span class="cmt">// 否则：分配命令节点，追加到链表</span>
+    <span class="kw">new</span> (<span class="fn">AllocCommand</span>&lt;<span class="typ">FRHICommandDrawIndexedPrimitive</span>&gt;())
+        <span class="typ">FRHICommandDrawIndexedPrimitive</span>(...);
+}</code></pre>
+  <p class="code-cap"><span class="file">Engine/Source/Runtime/RHI/Public/RHICommandList.h</span> — Bypass 分支逻辑示意</p>
+
+  <h2><span class="num">5</span>并行命令列表录制</h2>
+  <p>4.26 的阴影通道、BasePass 都支持并行录制：多个 TaskGraph Worker 线程同时创建 <code>FRHICommandList</code>，各自录制自己负责的一批网格，最后汇入 <code>FRHICommandListImmediate</code>。</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">Worker 0</span><span class="s-sub">FRHICommandList #0<br>录制 BatchA</span></div>
+    <span class="flow-arrow">↓</span>
+    <div class="stage prog"><span class="s-name">Worker 1</span><span class="s-sub">FRHICommandList #1<br>录制 BatchB</span></div>
+    <span class="flow-arrow">↓</span>
+    <div class="stage prog"><span class="s-name">Worker 2</span><span class="s-sub">FRHICommandList #2<br>录制 BatchC</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage"><span class="s-name">Immediate<br>QueueAsync</span><span class="s-sub">按顺序合并<br>到主链表</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage fixed"><span class="s-name">RHI 线程</span><span class="s-sub">顺序翻译<br>D3D12 调用</span></div>
+  </div>
+
+  <p>关键约束：<strong>合并顺序必须确定性</strong>——并行录制虽然乱序，但 <code>QueueAsyncCommandListSubmit</code> 按预先分配的槽位索引（<code>ListIndex</code>）排序后再交给 RHI 线程，保证 GPU 执行顺序与录制顺序一致。</p>
+
+  <div class="callout knowledge">
+    <span class="label">FParallelCommandListSet — 并行录制的管理器</span>
+    <p><code>FParallelCommandListSet</code>（<span class="file">Renderer/Private/SceneRendering.h</span>）管理一次并行录制任务：它持有所有子 <code>FRHICommandList</code> 的指针，在析构时自动调用 <code>Dispatch</code> 把所有子列表按序汇入主列表。渲染线程的 Shadow/BasePass 并行路径都以此类为基础。</p>
+  </div>
+
+  <h2><span class="num">6</span>渲染线程到 RHI 线程的推送时机</h2>
+  <p><code>FRHICommandListImmediate</code> 不是每次录制一条命令就立刻推给 RHI 线程——那会导致大量细粒度同步。实际的推送发生在以下三个节点：</p>
+  <ol>
+    <li><strong>Immediate Flush</strong>：渲染线程主动调用 <code>RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThread)</code>（例如在需要上传纹理数据、或确认 GPU 完成特定工作时）。</li>
+    <li><strong>帧末尾</strong>：<code>RHIEndFrame()</code> / Present 路径会触发最后一次 Flush，确保本帧所有命令都已提交。</li>
+    <li><strong>命令链表超过阈值</strong>：若录制的命令数量过多（防止内存溢出），会自动触发一次分批推送。</li>
+  </ol>
+
+  <p>正常情况下渲染线程与 RHI 线程的时间线关系如下：</p>
+
+  <div class="lanes">
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">录制 Pass1 → 录制 Pass2 → 录制 Pass3 → <b>ImmediateFlush</b> → 继续录制 Pass4…</span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程</span><span class="lane-body">空闲 …… → <b>收到链表</b> → 翻译 Pass1 → 翻译 Pass2 → 翻译 Pass3 → 提交 D3D12 → ……</span></div>
+  </div>
+
+  <p>渲染线程录制期间 RHI 线程可以并发翻译上一批命令——这就是两线程并行节省时间的来源。</p>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">渲染线程调用 <code>RHICmdList.DrawIndexedPrimitive(...)</code> 时（非 bypass 模式），下列哪个描述最准确？</p>
+    <button class="q-opt">该调用立刻让 GPU 开始绘制</button>
+    <button class="q-opt">该调用立刻调用 D3D12 的 DrawIndexedInstanced，但尚未提交 GPU</button>
+    <button class="q-opt">该调用在内存链表中追加一个 <code>FRHICommandDrawIndexedPrimitive</code> 节点；RHI 线程稍后翻译成 D3D12 调用</button>
+    <div class="q-feedback" data-ok="正确。非 bypass 模式下，渲染线程只是往命令链表写节点；RHI 线程才是调用 GDynamicRHI→D3D12 的那一方。GPU 执行更晚——在 D3D12 队列提交之后。" data-no="再想：RHI 命令列表的核心语义是"录制然后交给 RHI 线程翻译"——渲染线程不直接接触 D3D12。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不开混合的不透明物体，深度测试为什么能搬到像素着色器之前？这对性能意味着什么？</summary>
+    <div class="answer">
+      <p>不，那是 0001 的问题——这里的回忆题是：</p>
+      <p><strong>解释 FRHICommandListImmediate 和 FRHICommandList 的区别，以及并行录制如何保证最终提交顺序确定性。</strong></p>
+      <p><code>FRHICommandListImmediate</code> 是渲染线程的主列表，命令推送由引擎自动管理（Flush 节点驱动），使用者无需手动提交。<code>FRHICommandList</code> 是用于并行录制的子列表，可以在 Worker 线程上创建，录制完毕后通过 <code>QueueAsyncCommandListSubmit</code> 以预分配的 <code>ListIndex</code> 槽位索引汇入主列表。RHI 线程按槽位顺序翻译，因此无论 Worker 哪个先跑完，最终 D3D12 调用顺序都与渲染线程预定的逻辑顺序一致。</p>
+    </div>
+  </details>
+
+  <details class="recall">
+    <summary>r.RHICmdBypass 打开后，渲染线程的调用栈会有什么变化？适合什么调试场景？</summary>
+    <div class="answer">
+      <p>Bypass 打开后，<code>FRHICommandListImmediate</code> 的每次 Draw/Dispatch/SetState 调用会<strong>直接调用 <code>GDynamicRHI->RHI*</code> 方法</strong>，不再追加命令节点、不再经过 RHI 线程。这使得崩溃时的调用栈完整地从渲染线程高层函数延伸到 D3D12 API，无需"穿越"两层异步队列才能找到出错的绘制命令。适合：追查设备丢失（Device Removed）、验证某条绘制是否触发 D3D12 验证层报错、单步调试资源状态转换。生产构建中必须关闭，否则丢失渲染/RHI 线程并行带来的大量帧率。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><span class="term">RHI 线程</span>（<code>ENamedThreads::RHIThread</code>，由 <code>GRHIThread</code> 标识）负责把平台无关的 <code>FRHICommand*</code> 链表翻译成具体图形 API 调用并提交 GPU。</li>
+      <li><code>FRHICommandListImmediate</code> 是渲染线程的主列表，录制完成后自动推给 RHI 线程；<code>FRHICommandList</code> 是并行 Pass 录制用的子列表，录制完后通过 <code>QueueAsyncCommandListSubmit</code> 按槽位顺序汇入主列表。</li>
+      <li><code>FRHICommandListExecutor::ExecuteInner</code> 遍历命令链表，对每个节点调用 <code>ExecuteAndDestruct(GDynamicRHI)</code>，这是"抽象 RHI → 具体 API"的核心枢纽。</li>
+      <li><code>r.RHICmdBypass 1</code> 让渲染线程直接调用 <code>GDynamicRHI</code>，跳过 RHI 线程——调试利器，生产环境不用。</li>
+      <li>推送时机：<code>ImmediateFlush</code>、帧末尾、链表超阈值——渲染线程录制期间 RHI 线程可并发翻译上一批命令。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a>——RHI 线程与命令队列的官方描述。源码真相：<span class="file">Engine/Source/Runtime/RHI/Public/RHICommandList.h</span>（命令列表定义与 Bypass 逻辑）、<span class="file">Engine/Source/Runtime/RHI/Private/RHICommandList.cpp</span>（ExecuteInner 实现）。交叉验证：<a href="https://ikrima.dev/ue4guide/graphics-development/render-architecture/new-render-pipeline/">Gamedev Guide — ikrima, Render Architecture</a>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："FRHICommand 链表的内存池是怎么分配的？""并行录制时 Worker 线程如何得到自己的 FRHICommandList 实例？""RHI 线程与渲染线程如何同步——有什么 Fence 机制？""GDynamicRHI 是在哪里被赋值为 FD3D12DynamicRHI 的？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0035-motionblur-dof-composite.html"><span class="nav-dir">← 上一课</span>0035 · 运动模糊、景深与后处理合成</a>
+    <a class="next" href="0037-d3d12rhi-pso-descriptors.html"><span class="nav-dir">下一课 →</span>0037 · D3D12 RHI 后端：PSO 缓存与描述符堆</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 7 RHI 与显示 · RHI 线程是 CPU 侧渲染管线的最后一环，也是接触真实图形 API 的第一线。</footer>
+  </article>
+</div>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 15 课 · 2D 旋转:一个角度怎么变成矩阵</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 15 课 · 模块 3 旋转</div>
+<h1>2D 旋转:一个角度怎么变成一个矩阵</h1>
+<p class="subtitle">旋转是 TA 最常碰、也最容易翻车的变换。我们从最干净的 2D 开始:一个角度 θ,如何变成一个 2×2 矩阵?答案把第 2 课的 sin/cos 和第 11 课的「矩阵=基向量按列」缝在一起。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能写出并看懂 2D 旋转矩阵:它的<strong>两列就是旋转后的 î 和 ĵ</strong>。î 转 θ 后落在 <strong>(cosθ, sinθ)</strong>,ĵ 落在 <strong>(−sinθ, cosθ)</strong>。把这两列拼起来就是旋转矩阵。旋转<strong>不改变长度</strong>(正交基),所以它只转朝向、不缩放。
+</div>
+
+<h2>从「转一根基向量」开始</h2>
+<p>
+第 11 课说:矩阵的列 = 变换后的基向量。所以要造旋转矩阵,只需问两个问题:<strong>î 转 θ 后去哪?ĵ 转 θ 后去哪?</strong>
+</p>
+<p>
+回忆第 2 课单位圆:一个单位向量,转到角度 θ,落点就是 <strong>(cosθ, sinθ)</strong>。î 一开始在 0°(指右),转 θ 后正好落在 (cosθ, sinθ)。ĵ 一开始在 90°(指上),转 θ 后落在 90°+θ,也就是 <strong>(−sinθ, cosθ)</strong>(用诱导公式:cos(90°+θ)=−sinθ,sin(90°+θ)=cosθ)。
+</p>
+<div class="formula">î → (<span class="vecA">cosθ</span>, <span class="vecA">sinθ</span>)　　ĵ → (<span class="vecB">−sinθ</span>, <span class="vecB">cosθ</span>)</div>
+
+<h2>拼成旋转矩阵</h2>
+<p>
+把这两个去处<strong>按列摆好</strong>(第 11 课的读法),就是 2D 旋转矩阵:
+</p>
+<div class="formula">R(θ) = [ <span class="vecA">cosθ</span>　<span class="vecB">−sinθ</span> ;　<span class="vecA">sinθ</span>　<span class="vecB">cosθ</span> ]　　第 1 列=转后的 î,第 2 列=转后的 ĵ</div>
+<p>
+这就是全部。一个角度,经过 sin/cos,变成四个数,装进一个 2×2 盒子。下面的画布:拖滑块改变 θ,看红色 î 和绿色 ĵ 怎么一起转,橙点跟着被旋转,右边 readout 实时显示矩阵的四个数——你会看到对角线是 cosθ、反对角是 ∓sinθ。
+</p>
+<div class="lab">
+  <canvas id="rot15"></canvas>
+  <div class="dials">
+    <label>角度 θ <input type="range" id="ang15" min="-180" max="180" value="35" step="1"> <span id="angout15">35°</span></label>
+  </div>
+  <div class="readout" id="read15"></div>
+  <p style="font-size:0.85rem;color:var(--muted);margin:0.6rem 0 0">拖角度滑块。注意:î、ĵ 始终保持单位长、互相垂直(正交基),只是整体转动——这就是「纯旋转不缩放」。</p>
+</div>
+
+<h2>为什么旋转不改变长度</h2>
+<p>
+旋转后的 î=(cosθ, sinθ),它的长度是 <code>√(cos²θ + sin²θ) = 1</code>(第 2 课的勾股恒等式)。ĵ 同理。两列都是单位长、且互相垂直——这是一组<strong>正交基</strong>(第 10 课)。所以旋转矩阵是<strong>正交矩阵</strong>:它只转朝向,不拉伸、不剪切。它的行列式 <code>det = cos²θ + sin²θ = 1</code>(第 11 课:det=1 面积不变,纯旋转)。
+</p>
+<div class="callout callout-key">
+  <span class="label">正交矩阵的福利:逆=转置</span>
+  上一课(13 课)用到的性质在这里兑现:旋转矩阵的<strong>逆就是它的转置</strong>(<code>R⁻¹ = Rᵀ</code>)。几何上,「转回去」就是转 −θ,而 R(−θ) 恰好等于 R(θ) 的转置(因为 cos(−θ)=cosθ、sin(−θ)=−sinθ,正好把反对角的负号对调)。所以<strong>求旋转的逆不用真去解逆矩阵,转置一下就行</strong>——又快又稳。
+</div>
+
+<h2>接回引擎:UV 旋转、Flipbook、贴花</h2>
+<div class="callout callout-vfx">
+  <span class="label">2D 旋转天天用</span>
+  材质里<strong>旋转 UV</strong>(转贴图、做风车/旋涡、Flipbook 朝向)用的就是这个 2×2 矩阵——UE 的 <code>CustomRotator</code> 节点内部正是 cos/sin 拼矩阵。Sprite 粒子的旋转、贴花朝向、屏幕空间 UI 转动,也都是 2D 旋转。记住:<strong>转 UV 前通常要先把 UV 平移到中心 (0.5,0.5) 再转、再移回去</strong>,否则会绕 UV 原点 (0,0) 转——这正是第 12 课「绕原点 vs 绕自身」的老问题在 UV 上重演。
+</div>
+<pre><code><span class="cmt">// HLSL:绕中心旋转 UV(先移到中心、转、再移回)</span>
+<span class="kw">float</span>  s = <span class="fn">sin</span>(theta), c = <span class="fn">cos</span>(theta);
+<span class="kw">float2x2</span> R = <span class="kw">float2x2</span>(c, -s, s, c);     <span class="cmt">// 旋转矩阵</span>
+<span class="kw">float2</span> uv2 = <span class="fn">mul</span>(R, uv - <span class="num">0.5</span>) + <span class="num">0.5</span>;   <span class="cmt">// 绕 (0.5,0.5) 转</span>
+</code></pre>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>记错正负号的位置。</strong> 标准(逆时针)是 [c, −s; s, c]。符号反了就变成顺时针/转反方向。记不住就用画布对一下方向。</li>
+  <li><strong>UV 不移到中心就转。</strong> 直接转 UV 会绕 (0,0) 角落转,贴图飞走。先 −0.5、转、再 +0.5。</li>
+  <li><strong>角度单位混了。</strong> sin/cos 吃弧度,引擎面板常给角度。该转 radians 别忘(第 2 课)。</li>
+  <li><strong>以为旋转会改大小。</strong> 纯旋转 det=1、不缩放。如果转完物体变大变小,是混进了缩放或写错了矩阵。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz15"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=kYB8IZa5AuE" target="_blank">3Blue1Brown — Linear transformations and matrices(第 3 章)</a>
+  —— 第 11 课已推荐过;这一集里「旋转就是把 î、ĵ 转到新位置」的动画,正是 2D 旋转矩阵的灵魂。重看一遍,这次盯着旋转看。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把你材质里的 UV 旋转写成 cos/sin 矩阵、并解释为什么要先移到中心?或者「转完方向反了」是不是符号位置错了?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>3D 旋转、欧拉角与万向锁</strong>——2D 只有一个角,3D 要绕三根轴转,顺序又开始要紧,还会撞上臭名昭著的<strong>万向锁(Gimbal Lock)</strong>。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/matrix-tools.js"></script>
+<script>
+Rotation2D("rot15", { angleId: "ang15", readoutId: "read15", degOutId: "angout15", point: { x: 2, y: 1 } });
+renderQuiz("quiz15", [
+  {
+    q: "2D 旋转矩阵的第一列(转后的 î)是?",
+    options: ["(cosθ, sinθ)", "(sinθ, cosθ)", "(−sinθ, cosθ)", "(1, 0)"],
+    correct: 0,
+    why: "î 从 0° 转 θ,落在单位圆 θ 处=(cosθ, sinθ)。这正是矩阵第一列,即转后的 î。"
+  },
+  {
+    q: "标准逆时针 2D 旋转矩阵是?",
+    options: ["[cosθ, −sinθ; sinθ, cosθ]", "[cosθ, sinθ; sinθ, cosθ]", "[sinθ, cosθ; cosθ, sinθ]", "[1,0; 0,1]"],
+    correct: 0,
+    why: "两列=转后的î(cosθ,sinθ)和ĵ(−sinθ,cosθ),按列拼起来。符号反了就变成顺时针。"
+  },
+  {
+    q: "为什么旋转不改变向量长度?",
+    options: ["转后基仍单位长且正交(det=1)", "旋转会归一化向量", "长度本来就不变", "旋转把长度存别处"],
+    correct: 0,
+    why: "转后î=(cosθ,sinθ)长度√(cos²+sin²)=1,ĵ同理且垂直=正交矩阵,det=1,只转不缩放。"
+  },
+  {
+    q: "旋转矩阵的逆怎么求最方便?",
+    options: ["转置即可(R⁻¹=Rᵀ)", "必须解逆矩阵", "乘以 −1", "求行列式"],
+    correct: 0,
+    why: "正交矩阵逆=转置。转回去=转−θ,而R(−θ)恰是R(θ)的转置。求逆不用真解,转置最快。"
+  },
+  {
+    q: "材质里绕中心旋转 UV,正确做法是?",
+    options: ["先 −0.5、旋转、再 +0.5", "直接对 UV 乘旋转矩阵", "先归一化 UV", "先取 frac"],
+    correct: 0,
+    why: "直接转会绕UV原点(0,0)角落转、贴图飞走。先移到中心(0.5,0.5)、转、再移回,才绕中心转。"
+  },
+  {
+    q: "sin/cos 计算旋转时,角度要用什么单位?",
+    options: ["弧度 radians", "角度 degrees", "都行无所谓", "百分比"],
+    correct: 0,
+    why: "sin/cos吃弧度。引擎面板常给角度,代入前要×π/180转弧度,否则旋转量完全不对(第2课)。"
+  }
+]);
+</script>
+</body>
+</html>

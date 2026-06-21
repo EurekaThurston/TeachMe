@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0011 · View 的诞生：从 PlayerController 到 FViewInfo</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 2 · 游戏线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 2 · 游戏线程 · Lesson 0011</p>
+  <h1>View 的诞生：从 PlayerController 到 FViewInfo</h1>
+  <p class="subtitle">渲染一帧必须知道"从哪个角度、用哪个视锥看世界"——这个信息就是 View。这节课从 <code>PlayerController</code> 开始，拆清四个 View 相关类的职责边界：谁轻、谁重、谁跨帧持久。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0009（FScene/Proxy 两份场景）</span>
+    <span><b>产出</b> 能说出 <code>FSceneView</code>、<code>FSceneViewFamily</code>、<code>FViewInfo</code>、<code>FSceneViewState</code> 各自存什么、属于哪层、为何存在</span>
+  </div>
+
+  <p class="lead">渲染器每帧必须回答两个问题：场景里有什么（答案在 <code>FScene</code>），以及从哪里看（答案在 View）。View 体系乍看有四个名字相近的类，但只要搞清"谁是给游戏/引擎模块用的跨模块接口"、"谁是渲染器内部重量级工作对象"、"谁存跨帧持久状态"，就完全不混了。</p>
+
+  <h2><span class="num">1</span>从 PlayerController 到 FSceneView</h2>
+  <p>游戏线程里，一帧的 View 参数由 <code>ULocalPlayer::CalcSceneView</code>（<span class="file">LocalPlayer.cpp</span>）构造。它用 <code>FSceneViewInitOptions</code> 收集这一帧的相机参数：</p>
+
+  <pre><code><span class="cmt">// ULocalPlayer::CalcSceneView 节选（逻辑简化）</span>
+<span class="typ">FSceneViewInitOptions</span> ViewInitOptions;
+ViewInitOptions.ViewMatrix = ...;             <span class="cmt">// 视图矩阵（相机 World → View）</span>
+ViewInitOptions.ProjectionMatrix = ...;       <span class="cmt">// 透视矩阵（View → Clip）</span>
+ViewInitOptions.SetViewRectangle(ViewRect);   <span class="cmt">// 视口像素范围</span>
+ViewInitOptions.ViewOrigin = CamLoc;
+<span class="cmt">// 后处理设置、LOD 偏差、曝光设置等也在此设入</span>
+
+<span class="typ">FSceneView</span>* View = new <span class="typ">FSceneView</span>(ViewInitOptions);
+ViewFamily.Views.Add(View);</code></pre>
+
+  <p><code>FSceneView</code>（<span class="file">SceneView.h</span>）是各引擎模块共用的 View 接口——编辑器、在线子系统、调试工具都可以构造或读取它，不依赖 Renderer 私有头。它的核心内容：<code>FViewMatrices</code>（含视图/投影/视图投影矩阵和它们的逆矩阵）、<code>FIntRect ViewRect</code>（屏幕像素矩形）、后处理设置、曝光值、LOD 偏差、<code>FSceneViewState*</code>（见第 4 节）。</p>
+
+  <div class="callout knowledge">
+    <span class="label">FViewMatrices 里有什么</span>
+    <p><code>FViewMatrices</code>（<span class="file">SceneView.h</span>）是一个自包含的矩阵集，存了当前帧的：<code>ViewMatrix</code>、<code>ProjectionMatrix</code>、<code>ViewProjectionMatrix</code>、它们各自的逆矩阵（<code>InvViewMatrix</code> 等）以及用于 HZB / TAA 的上一帧矩阵（<code>PrevViewMatrix</code> 等）。每帧构造一次，渲染器全程读它。</p>
+  </div>
+
+  <h2><span class="num">2</span>FSceneViewFamily：一帧的全部 View</h2>
+  <p>一帧里可能有多个 View：分屏（多个 <code>ULocalPlayer</code>）、编辑器分割窗口、VR 左右眼。<code>FSceneViewFamily</code>（<span class="file">SceneView.h</span>）把同一帧的全部 <code>FSceneView</code> 收进一个数组，并携带帧级别的共享信息：渲染时间（<code>CurrentRealTime</code>）、调试渲染模式（<code>EngineShowFlags</code>）、是否允许后处理等。</p>
+
+  <p><code>FSceneViewFamily</code> 在游戏线程构造，随后被传给 <code>FRendererModule::BeginRenderingViewFamily</code>，启动渲染线程对这一帧的渲染（见 0013）。</p>
+
+  <h2><span class="num">3</span>FViewInfo：渲染器内部的重量级 View</h2>
+  <p>渲染线程拿到 <code>FSceneViewFamily</code> 后，场景渲染器（<code>FDeferredShadingSceneRenderer</code>）把每个 <code>FSceneView</code> 上转为 <code>FViewInfo</code>（<span class="file">SceneRendering.h</span>）——它继承 <code>FSceneView</code>，并在上面附加渲染器私有的中间数据：</p>
+
+  <table>
+    <thead><tr><th>数据字段</th><th>类型（示意）</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>PrimitiveVisibilityMap</code></td><td><code>TBitArray</code></td><td>可见性 pass 后，标记哪些图元可见</td></tr>
+      <tr><td><code>RelevantLights</code></td><td><code>TArray&lt;FLightSceneProxy*&gt;</code></td><td>影响这个 View 的灯光列表</td></tr>
+      <tr><td><code>DynamicMeshElements</code></td><td><code>TArray&lt;FMeshBatchAndRelevance&gt;</code></td><td><code>GetDynamicMeshElements</code> 收集结果</td></tr>
+      <tr><td><code>ShadingModelMaskInView</code></td><td>位掩码</td><td>View 内出现了哪些着色模型，用于按需启用 Pass</td></tr>
+      <tr><td><code>bHZBOcclusionTests</code></td><td>bool</td><td>是否用 HZB 做遮挡测试</td></tr>
+    </tbody>
+  </table>
+
+  <p><code>FViewInfo</code> 只在渲染器内部（<span class="file">Renderer/Private/</span>）使用；外部模块用 <code>FSceneView</code>。这条边界很清晰：跨模块接口轻量，渲染器内部工作对象重量。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · FViewInfo 是渲染器的"草稿纸"</span>
+    <p><code>FSceneView</code> 是输入——它描述"从哪看"；<code>FViewInfo</code> 是工作缓冲——它在 <code>InitViews</code>、可见性、剔除、MeshDraw 收集的过程中不断被填充，是渲染器一帧内部状态的单点来源。每帧新建，帧结束即析构。要"持久"的东西放 <code>FSceneViewState</code>（第 4 节）。</p>
+  </div>
+
+  <h2><span class="num">4</span>FSceneViewState：跨帧持久状态</h2>
+  <p><code>FSceneViewState</code>（<span class="file">ScenePrivate.h</span>）是唯一需要<strong>跨帧保存</strong>的 View 相关数据，由 <code>ULocalPlayer</code>（或编辑器视口）持有，每帧通过 <code>FSceneViewInitOptions::SceneViewStateInterface</code> 注入 <code>FSceneView</code>。它存的数据全是"需要历史帧才能计算"的效果：</p>
+  <ul>
+    <li><strong>TAA 历史缓冲</strong>（<code>TemporalAAHistoryRT</code>）——时间抗锯齿需要上一帧颜色重投影累积。</li>
+    <li><strong>遮挡查询历史</strong>——UE 用异步遮挡查询（GPU 查询结果延迟一两帧返回），结果存在 ViewState。</li>
+    <li><strong>Eye Adaptation（自动曝光）历史</strong>——按前几帧平均亮度平滑调整曝光，必须跨帧积累。</li>
+    <li><strong>Screen Space Reflections 历史</strong>、<strong>SSGI 历史</strong>等屏幕空间效果的时间积累缓冲。</li>
+  </ul>
+
+  <p>如果没有持久 ViewState（例如截图渲染），这些效果的历史帧数据会丢失，TAA 第一帧会"抖"、自动曝光会"闪"——这正是打开 <code>stat rendertargets</code> 能看到 TAA history texture 的原因：它在 ViewState 里跨帧活着。</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body">
+      <code>ULocalPlayer::CalcSceneView</code> → <code>FSceneViewInitOptions</code> → <code>new FSceneView</code> → 装入 <code>FSceneViewFamily</code><br>
+      <code>FSceneViewState</code> 由 ULocalPlayer 持有，注入 ViewInitOptions（跨帧持久）
+    </span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">
+      接收 <code>FSceneViewFamily</code> → <code>FSceneView</code> 上转为 <code>FViewInfo</code>（渲染器内部工作对象）<br>
+      InitViews 填充可见性位图、动态 MeshBatch 等中间数据<br>
+      TAA/曝光等效果读写 <code>FSceneViewState</code> 里的历史缓冲
+    </span></div>
+  </div>
+
+  <h2><span class="num">5</span>四个类对照表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>类名</th>
+        <th>层次</th>
+        <th>所属线程</th>
+        <th>生命周期</th>
+        <th>核心内容</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>FSceneView</code></td>
+        <td>跨模块接口（轻量）</td>
+        <td>游戏线程构造，渲染线程读</td>
+        <td>单帧（ViewFamily 持有）</td>
+        <td>视图/投影矩阵（<code>FViewMatrices</code>）、ViewRect、后处理设置、LOD 偏差、ViewState 指针</td>
+      </tr>
+      <tr>
+        <td><code>FSceneViewFamily</code></td>
+        <td>帧级容器</td>
+        <td>游戏线程构造，渲染线程读</td>
+        <td>单帧</td>
+        <td>本帧全部 View 列表、<code>EngineShowFlags</code>、渲染时间、场景指针</td>
+      </tr>
+      <tr>
+        <td><code>FViewInfo</code></td>
+        <td>渲染器内部（重量级）</td>
+        <td>渲染线程</td>
+        <td>单帧（Renderer 持有）</td>
+        <td>继承 FSceneView + 可见性位图、动态 MeshBatch、相关灯光、着色模型掩码等所有渲染中间数据</td>
+      </tr>
+      <tr>
+        <td><code>FSceneViewState</code></td>
+        <td>持久状态</td>
+        <td>渲染线程读写</td>
+        <td>与 ULocalPlayer / 编辑器视口共存亡（跨帧）</td>
+        <td>TAA 历史缓冲、遮挡查询历史、自动曝光历史、SSR/SSGI 历史等</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">为什么 UE 需要 <code>FSceneViewState</code>，而不是把 TAA 历史、遮挡历史都放在 <code>FViewInfo</code> 里？</p>
+    <button class="q-opt">因为 <code>FViewInfo</code> 存不下这么多渲染目标，显存不够</button>
+    <button class="q-opt">因为 <code>FSceneViewState</code> 在游戏线程，可以被蓝图直接访问，而 <code>FViewInfo</code> 不能</button>
+    <button class="q-opt">因为 <code>FViewInfo</code> 每帧新建、帧末销毁，无法持久保存跨帧效果所需的历史缓冲；<code>FSceneViewState</code> 与视口共存亡，专门承载跨帧状态</button>
+    <div class="q-feedback" data-ok="正确。FViewInfo 是单帧工作缓冲，帧结束即析构。TAA 需要上一帧颜色、遮挡查询结果延迟一两帧返回、自动曝光需要时间平滑——这些必须在帧外存活。FSceneViewState 正是为此存在的持久 View 状态容器。" data-no="再想：FViewInfo 单帧析构是根本原因。跨帧历史数据不能存在帧内对象里，必须放在与视口同生命周期的 FSceneViewState 里。显存大小和蓝图访问都不是正确理由。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>从 <code>ULocalPlayer</code> 开始，不看笔记说出 View 体系四个类的构造顺序、所属线程和各自核心职责。</summary>
+    <div class="answer">
+      <strong>① 游戏线程：</strong><code>ULocalPlayer::CalcSceneView</code> 用 <code>FSceneViewInitOptions</code>（含 <code>FSceneViewState*</code>）构造 <code>FSceneView</code>，装入 <code>FSceneViewFamily</code>。<code>FSceneView</code> 携带视图/投影矩阵（<code>FViewMatrices</code>）、视口 Rect、后处理设置，是跨模块轻量接口。<code>FSceneViewFamily</code> 是帧级容器，存本帧全部 View 和 <code>EngineShowFlags</code>。<br>
+      <strong>② 渲染线程：</strong><code>FSceneView</code> 在渲染器内部被上转为 <code>FViewInfo</code>（<span class="file">SceneRendering.h</span>）——继承 FSceneView，追加可见性位图、动态 MeshBatch 等渲染中间数据，是渲染器真正的工作对象，单帧生命周期。<br>
+      <strong>③ 跨帧：</strong><code>FSceneViewState</code> 由 <code>ULocalPlayer</code> 持有（渲染线程读写），存 TAA 历史缓冲、遮挡查询历史、自动曝光历史等跨帧效果数据。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FSceneView</code>（<span class="file">SceneView.h</span>）：跨模块轻量接口，由 <code>ULocalPlayer::CalcSceneView</code> 构造，携带 <code>FViewMatrices</code> + ViewRect + 后处理设置。</li>
+      <li><code>FSceneViewFamily</code>：帧级容器，收本帧全部 View，携带 <code>EngineShowFlags</code> 和渲染时间；构造完即触发渲染线程工作。</li>
+      <li><code>FViewInfo</code>（<span class="file">SceneRendering.h</span>）：渲染器内部工作对象，继承 <code>FSceneView</code>，单帧生命周期；<code>InitViews</code> 填充可见性位图、动态 MeshBatch 等中间数据。</li>
+      <li><code>FSceneViewState</code>（<span class="file">ScenePrivate.h</span>）：唯一跨帧持久的 View 状态，由 <code>ULocalPlayer</code> 持有，存 TAA 历史、遮挡历史、自动曝光历史——无此对象则时间积累效果失效。</li>
+      <li>"轻 vs 重"的设计原则：对外接口保持轻量（<code>FSceneView</code>），渲染器内部随意扩展（<code>FViewInfo</code>），持久状态单独隔离（<code>FSceneViewState</code>）。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a>（"Render thread"与"Scene proxies"节）——直接提到 FSceneView 与 ViewFamily 的设计意图。配套：Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>，其中 InitViews 段落展示了 FViewInfo 在剔除过程中如何被填充。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："<code>FViewMatrices</code> 里的 <code>PrevViewMatrix</code> 怎么被 TAA 用来重投影？""<code>FSceneViewState</code> 里遮挡查询历史的延迟是几帧、为什么？""分屏时 <code>FSceneViewFamily</code> 里有几个 View，渲染线程怎么并行处理它们？" 我是你的老师，随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0010-proxy-creation-addtoscene-enqueue.html"><span class="nav-dir">← 上一课</span>0010 · 代理的创建与更新：AddToScene 与渲染命令入队</a>
+    <a class="next" href="0012-render-command-queue-sync.html"><span class="nav-dir">下一课 →</span>0012 · 渲染命令队列与线程同步</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 2 游戏线程 · View 体系是渲染器感知"从哪看"的全部信息来源，Part 4 可见性剔除与 Part 6 后处理都依赖它。</footer>
+  </article>
+</div>
+</body>
+</html>

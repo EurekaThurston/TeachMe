@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0016 · RDG 进阶：资源生命周期、屏障自动化、异步计算、Pass 剔除</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 3 · 渲染线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 3 · 渲染线程 · Lesson 0016</p>
+  <h1>RDG 进阶：资源生命周期、屏障自动化、异步计算、Pass 剔除</h1>
+  <p class="subtitle">0015 讲了 RDG 的三步模型和基本 API。这节课进入编译期：RDG 编译器如何自动管理资源生命周期与内存别名、如何推导屏障、如何把标记了 AsyncCompute 的 Pass 调度到独立队列、如何剔除无用 Pass。这几项能力叠加在一起，解释了为什么"迁移到 RDG"在 4.26 之后是渲染性能优化的标准动作。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~25 分钟</span>
+    <span><b>前置</b> 0015（RDG 入门）、0002（异步计算）、0003（资源屏障）</span>
+    <span><b>产出</b> 能解释 RDG 如何自动管理资源生命周期/屏障、做内存别名、调度异步计算、剔除无用 Pass</span>
+  </div>
+
+  <p class="lead">把 0015 的三步模型记在脑子里：Recording → Compile → Execute。这节课聚焦 <strong>Compile 阶段</strong>——RDG 编译器在 <code>Execute()</code> 内部做了哪四件高价值的事，以及你作为 Pass 编写者如何利用它们。</p>
+
+  <h2><span class="num">1</span>资源生命周期与内存别名（Resource Aliasing）</h2>
+  <p>编译阶段第一件事：对图中每一个 <code>FRDGTexture</code>/<code>FRDGBuffer</code>，确定它的<strong>存活区间</strong>——从第一个写它的 Pass，到最后一个读它的 Pass。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">Pass A</span><span class="s-sub">写 Tex1</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Pass B</span><span class="s-sub">读 Tex1<br>写 Tex2</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">Pass C</span><span class="s-sub">读 Tex2<br>写 Tex3</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Pass D</span><span class="s-sub">读 Tex3</span></div>
+  </div>
+  <p class="marginnote">Tex1 的生命周期：[PassA, PassB]；Tex2 的生命周期：[PassB, PassC]。两者不重叠——RDG 让它们共用同一块物理显存（内存别名）。</p>
+
+  <p>在上面这个例子里，Tex1 在 Pass B 读完后就"死了"，Tex2 的分配可以复用那块显存——这叫<span class="term">内存别名（Resource Aliasing）</span>，在 glossary ⑤ 有定义。对于帧内大量临时纹理（SSAO 中间图、模糊 Buffer、TAA 历史等），别名优化能把峰值显存开销压低 20–40%。</p>
+
+  <div class="callout knowledge">
+    <span class="label">瞬态资源池（Transient Allocator）</span>
+    <p>RDG 内部对瞬态资源（即"只在本帧内存活、不跨帧"的资源）使用一个专属分配器。相比通用 <code>GRenderTargetPool</code>，瞬态分配器能做更激进的别名，因为 RDG 知道整帧所有资源的全局依赖图。<code>GRenderTargetPool</code> 是旧有的运行时池，4.26 中与 RDG 并存；新 Pass 优先用 RDG 瞬态资源。</p>
+  </div>
+
+  <h2><span class="num">2</span>屏障自动化</h2>
+  <p>回顾 0003：在 D3D12/Vulkan 下，每次一个资源从"渲染目标"切换到"着色器只读"都要显式插 <code>ResourceBarrier</code>（状态转换），否则 GPU 缓存不一致、读到旧数据。手写这些屏障是错误高发区。</p>
+
+  <p>RDG 的屏障自动化逻辑：</p>
+  <ol>
+    <li>每个 Pass 的 <code>BEGIN_SHADER_PARAMETER_STRUCT</code> 告诉 RDG：这个资源作为 RTV、UAV 还是 SRV 使用（对应 D3D12 的不同资源状态）。</li>
+    <li>编译时，RDG 对相邻 Pass 之间的每对（资源，状态变化）生成一次状态转换命令。</li>
+    <li>RDG 还会<strong>合并（batch）</strong>多个 Pass 边界处的屏障，让多个资源转换尽量打包进一次 API 调用——D3D12 的 <code>ResourceBarrier</code> 支持数组参数，批量提交显著减少命令开销。</li>
+  </ol>
+
+  <pre><code><span class="cmt">// 典型的读写状态变化：Pass B 把 Tex1 从 RTV 状态切到 SRV 状态</span>
+<span class="cmt">// 你不写任何 Barrier 代码——RDG 根据 Param 声明自动插入</span>
+
+<span class="typ">BEGIN_SHADER_PARAMETER_STRUCT</span>(FPassBParams, )
+    <span class="cmt">// 这里标注 SRV，RDG 知道 Pass B 读它</span>
+    <span class="typ">SHADER_PARAMETER_RDG_TEXTURE</span>(Texture2D, Tex1)
+    <span class="cmt">// 这里标注 RTV，RDG 知道 Pass B 写它</span>
+    <span class="typ">RENDER_TARGET_BINDING_SLOTS</span>()
+<span class="typ">END_SHADER_PARAMETER_STRUCT</span>()</code></pre>
+
+  <div class="callout warn">
+    <span class="label">Pass 里绕过 RDG 直接用 RHI 操作资源——屏障将丢失</span>
+    <p>如果你在 <code>AddPass</code> 的 lambda 里，用 <code>RHICmdList.TransitionResource</code> 手动转换一个 RDG 管理的资源状态，会破坏 RDG 的状态追踪，导致之后的自动屏障失效。RDG 管理的资源必须完全走 RDG 声明路径——不要绕过它手动插屏障。若确实需要特殊屏障，用 <code>GraphBuilder.UseExternalAccessMode</code> 或 <code>Pass Flags</code> 通知 RDG。</p>
+  </div>
+
+  <h2><span class="num">3</span>异步计算调度</h2>
+  <p>给 <code>AddPass</code> 的 <code>ERDGPassFlags</code> 加上 <code>AsyncCompute</code>：</p>
+
+  <pre><code>GraphBuilder.<span class="fn">AddPass</span>(
+    <span class="fn">RDG_EVENT_NAME</span>(<span class="str">"SSAO_AsyncCompute"</span>),
+    Params,
+    <span class="typ">ERDGPassFlags</span>::AsyncCompute,   <span class="cmt">// ← 这一行</span>
+    [Params](<span class="typ">FRHICommandList</span>&amp; RHICmdList) { <span class="cmt">/* ... */</span> });</code></pre>
+
+  <p>RDG 编译时识别到这个标记，把该 Pass 的命令路由到独立的<strong>计算队列</strong>（Async Compute Queue）。计算队列与图形队列在物理上是 GPU 内部不同的引擎，可以真正并行——在 GCN/RDNA/Maxwell 以上的 GPU 上，图形光栅化的空隙可以被计算工作填满（呼应 0002 讲的"白嫖性能"）。</p>
+
+  <p>RDG 还自动插入计算队列与图形队列之间的<strong>同步围栏</strong>：如果后续图形 Pass 依赖 AsyncCompute Pass 的输出，RDG 在图形队列上插一个等待，确保计算结果可见后才继续。</p>
+
+  <div class="callout insight">
+    <span class="label">典型 AsyncCompute 候选 Pass</span>
+    <p>SSAO（纯计算、不依赖光栅结果）、GTAO、光照剔除的 Light Grid 计算、部分 RayTracing Dispatch，以及延迟光照里的 Clustered 计算——这些 Pass 与同一帧的 GBuffer 写入没有数据依赖，可以并发。4.26 源码里搜 <code>ERDGPassFlags::AsyncCompute</code> 即可找到引擎已标记的 Pass。</p>
+  </div>
+
+  <h2><span class="num">4</span>Pass 剔除（Culling）</h2>
+  <p>如果一个 Pass 的所有输出资源在之后的任何 Pass 里都没有被读取，RDG 编译时会把它从执行队列里删除——它的 lambda 不运行，资源不分配。</p>
+
+  <p>典型触发场景：</p>
+  <ul>
+    <li>用 <code>r.SSR 0</code> 关闭 SSR 时，依赖 SSR 输出的 Pass 链整条被剔除。</li>
+    <li>编辑器里切换 Debug View Mode，大量正常渲染 Pass 的输出不再被后处理读取。</li>
+    <li>某些 Pass 只在特定 CVars 或 Feature 开启时有意义，关闭时 RDG 自动不执行。</li>
+  </ul>
+
+  <p>强制保留一个 Pass（即使其输出没被引用）可以用 <code>ERDGPassFlags::NeverCull</code>，或把其输出资源标为 Extracted（<code>GraphBuilder.QueueTextureExtraction</code>），告诉 RDG "我要在 Execute 外面用这个结果"。</p>
+
+  <h2><span class="num">5</span>编译期优化全景</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">拓扑排序</span><span class="s-sub">依赖图按读写<br>自动确定顺序</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Pass 剔除</span><span class="s-sub">无引用输出的<br>Pass 删除</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">生命周期分析</span><span class="s-sub">每个资源的<br>首写→末读</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">内存别名</span><span class="s-sub">不重叠区间<br>共用物理显存</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">屏障生成</span><span class="s-sub">状态转换命令<br>批量打包</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">AsyncCompute</span><span class="s-sub">路由到计算队列<br>自动插围栏</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">执行</span><span class="s-sub">按序调用 lambda<br>向 RHICmdList 录命令</span></div>
+  </div>
+
+  <h2><span class="num">6</span>调试工具</h2>
+  <p>RDG 内置了几个调试手段，帮助排查屏障缺失、Pass 意外剔除、资源别名冲突等问题：</p>
+  <table>
+    <thead><tr><th>手段</th><th>启用方式</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.RDG.Debug 1</code></td><td>CVar 运行时</td><td>输出每个 Pass 的资源状态转换日志，确认屏障是否按预期生成</td></tr>
+      <tr><td><code>r.RDG.CullPasses 0</code></td><td>CVar 运行时</td><td>禁用 Pass 剔除，排查"Pass 消失"问题</td></tr>
+      <tr><td><code>r.RDG.AsyncCompute 0</code></td><td>CVar 运行时</td><td>禁用异步计算路由，所有 Pass 走图形队列，方便与 RenderDoc 配合</td></tr>
+      <tr><td><code>RDG_GPU_STAT_SCOPE</code></td><td>宏，代码内</td><td>在 GPU 时间线上划分命名区域，RenderDoc 和 UE Insights 可见</td></tr>
+      <tr><td><code>GRenderTargetPool.VisualizeTexture</code></td><td>命令行/编辑器</td><td>在视口查看任意 RT 内容（旧式 Pool 资源；RDG 瞬态资源需 <code>r.RDG.Debug</code> 配合）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">RDG 能对生命周期不重叠的两个瞬态纹理做内存别名，根本原因是什么？</p>
+    <button class="q-opt">构图阶段 FRDGTextureRef 只是虚拟句柄，真实显存延迟到编译期分配，RDG 此时已知全帧依赖关系可做别名</button>
+    <button class="q-opt">RDG 调用了 D3D12 的 PlacedResource API，物理内存由驱动自动复用</button>
+    <button class="q-opt">FRDGTexture 内部持有引用计数，引用计数归零时自动归还显存给下一个纹理</button>
+    <div class="q-feedback" data-ok="对。正因为 CreateTexture 只是虚拟句柄，Execute 编译期才分配显存，RDG 能在那时看到整帧所有资源的生命周期区间，选出不重叠对做别名——这是延迟分配模型带来的核心收益之一。" data-no="再想：别名的前提是"知道谁和谁不会同时活着"——而这要求看到整帧依赖图。RDG 的延迟分配让编译期能做这个全局分析。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>解释 ERDGPassFlags::AsyncCompute 对 GPU 调度的影响，包括：路由到哪个队列、与图形队列如何同步、哪类 Pass 适合标记。</summary>
+    <div class="answer">
+      <p>标记 <code>AsyncCompute</code> 的 Pass 在 Execute 时，RDG 把它的命令录制到独立的<strong>计算队列</strong>而不是图形队列。计算队列与图形队列在 GPU 内部并行（独立引擎），可同时运行，填满光栅化空隙。</p>
+      <p>同步：若后续图形 Pass 依赖该 AsyncCompute Pass 的输出，RDG 在图形队列插入等待计算队列围栏的命令，确保结果可见后才继续。围栏由 RDG 自动插入，程序员不需手动写。</p>
+      <p>适合标记的 Pass：纯计算、与同帧 GBuffer 写入没有数据依赖的工作——如 SSAO、GTAO、Light Grid 计算、部分 RayTracing Dispatch。不适合：依赖当前帧光栅阶段写入结果、或输出要立刻给光栅 Pass 读的 Pass。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>内存别名</strong>：生命周期不重叠的瞬态资源共用同一块物理显存——前提是延迟分配（FRDGTextureRef 是虚拟句柄）。</li>
+      <li><strong>屏障自动化</strong>：Pass 参数结构体声明资源访问类型（RTV/UAV/SRV）→ RDG 编译时推导状态转换 → 批量打包生成 D3D12 <code>ResourceBarrier</code>；绕过 RDG 手动操作 RDG 资源会破坏追踪。</li>
+      <li><strong>异步计算</strong>：<code>ERDGPassFlags::AsyncCompute</code> 把 Pass 路由到计算队列并行执行；RDG 自动插队列间围栏保证同步；适合纯计算、无光栅依赖的 Pass。</li>
+      <li><strong>Pass 剔除</strong>：输出无引用的 Pass 自动不执行；用 <code>NeverCull</code> 或 <code>QueueTextureExtraction</code> 强制保留。</li>
+      <li><strong>调试</strong>：<code>r.RDG.Debug</code>（屏障日志）、<code>r.RDG.CullPasses 0</code>（禁剔除）、<code>r.RDG.AsyncCompute 0</code>（禁异步）、<code>RDG_GPU_STAT_SCOPE</code>（GPU 时间线标注）。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.26/en-US/ProgrammingAndScripting/Rendering/RenderDependencyGraph">Render Dependency Graph (RDG) — UE 4.26 Docs</a>；<a href="https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/main/Render%20Dependency%20Graph%20(RDG).md">staticJPL RDG 深度笔记</a>（含 Triangle Shader 完整实例）。源码：<span class="file">Engine/Source/Runtime/RenderCore/Private/RenderGraphBuilder.cpp</span>（<code>Compile()</code> 与 <code>Execute()</code> 实现）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："如果两个 AsyncCompute Pass 互相依赖，RDG 能处理吗？""内存别名在 D3D12 底层是用 PlacedResource 还是 HeapAlias 做的？""Pass 剔除和 AsyncCompute 的判定顺序是什么？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0015-rdg-intro.html"><span class="nav-dir">← 上一课</span>0015 · RDG 入门：为什么要图、如何构图</a>
+    <a class="next" href="0017-visibility-culling-hzb.html"><span class="nav-dir">下一课 →</span>0017 · 可见性剔除与 HZB</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 3 渲染线程 · RDG 进阶完结，Part 3 终点。Part 4 进入可见性与几何处理。</footer>
+  </article>
+</div>
+</body>
+</html>

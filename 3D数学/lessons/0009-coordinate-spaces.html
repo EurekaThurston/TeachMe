@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 9 课 · 坐标空间:Local / World / View / Tangent</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 9 课 · 模块 2 空间与变换</div>
+<h1>坐标空间:同一个点,好几个地址</h1>
+<p class="subtitle">「东西显示在错的位置 / 朝向歪了 / 法线贴图发黑」——TA 八成的翻车都在这。根因只有一句话:<strong>同一个点,在不同坐标空间里有不同坐标</strong>。这一课先把这个概念彻底讲清,后面矩阵才有意义。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清:一个<strong>坐标空间 = 一套「原点 + 基」</strong>;同一个物理点在 Local / World / View / Tangent 等不同空间里,坐标值不同。并知道:把数从一个空间搬到另一个空间叫<strong>变换</strong>;<strong>只有同一空间的向量才能直接比较、相加</strong>。
+</div>
+
+<h2>回到第 1 课那句种子</h2>
+<p>
+第 1 课说过:<strong>坐标不是点本身,而是点相对于某套规则的地址</strong>。现在把它兑现。一个 3D 场景里,同一个物理点(比如角色右手的指尖)可以被<strong>好几套规则同时编号</strong>,每套给出一组不同的数。每套规则,就是一个<strong>坐标空间</strong>。
+</p>
+<p>
+打个生活类比:你家这个位置,可以说「客厅东北角」(相对你家)、也可以说「某街 12 号」(相对城市)、还可以说「我前方 3 米」(相对你站的地方)。<strong>同一个地点,三个地址,都对</strong>——取决于你以谁为原点、用哪套轴。坐标空间就是这么回事。
+</p>
+
+<h2>TA 每天打交道的几个空间</h2>
+<table class="tbl">
+  <tr><th>空间</th><th>原点在哪</th><th>谁的坐标住在这</th></tr>
+  <tr><td><strong>Local / Object</strong> 物体空间</td><td>模型自己的轴心(pivot)</td><td>网格顶点、建模时的法线/UV</td></tr>
+  <tr><td><strong>World</strong> 世界空间</td><td>关卡全局原点</td><td>Actor 摆放位置、World 模式的粒子</td></tr>
+  <tr><td><strong>View / Camera</strong> 视图空间</td><td>相机</td><td>「离相机多远」「在屏幕左右」</td></tr>
+  <tr><td><strong>Tangent</strong> 切线空间</td><td>表面上每个点,贴着表面</td><td>法线贴图里存的法线(第 14 课)</td></tr>
+  <tr><td><strong>Clip / Screen</strong></td><td>屏幕</td><td>最终像素位置</td></tr>
+</table>
+<p>
+顶点从「Local 出生」一路被变换到「屏幕上的像素」,中间经过 World → View → Clip,这条链叫<strong>变换管线</strong>。每一步都是「换一套原点和轴重新编号同一个点」。你在材质里见到的 <code>TransformPosition</code>、<code>Transform Vector</code> 节点,干的就是这件事。
+</p>
+
+<h2>为什么混空间 = 灾难</h2>
+<p>
+向量只有在<strong>同一个空间</strong>里才能直接比较或相加(回忆第 5 课最后那个坑)。把 Local 空间的速度直接加到 World 位置上,就像把「客厅东北角」和「某街 12 号」这两组数硬加起来——数能算,但毫无意义,结果乱飞。
+</p>
+<div class="callout callout-warn">
+  <span class="label">三个经典翻车,全是空间错配</span>
+  <ul style="margin:0.3rem 0 0">
+    <li><strong>位置错</strong>:把 Local 坐标当 World 用,物体出现在原点附近 / 跟着父物体乱跑。</li>
+    <li><strong>朝向歪</strong>:在错误空间里算方向,粒子朝向不对、风往错的方向吹。</li>
+    <li><strong>法线发黑</strong>:法线贴图存的是<strong>切线空间</strong>法线,不转到 World 就和世界光照对不上,出现死黑或诡异明暗(第 14 课专讲)。</li>
+  </ul>
+</div>
+
+<h2>接回引擎:Niagara 的 Local vs World</h2>
+<p>
+Niagara 发射器有个开关 <strong>Local Space</strong>:
+</p>
+<ul>
+  <li><strong>勾上(Local)</strong>:粒子坐标相对发射器自身原点。发射器移动/旋转,整团粒子<strong>跟着走、跟着转</strong>——适合「跟随角色的光环」「武器拖尾」。</li>
+  <li><strong>不勾(World)</strong>:粒子一出生就落在世界坐标里,<strong>不再被发射器后续移动影响</strong>——适合「拖在身后的烟」「掉在地上的火星」。</li>
+</ul>
+<p>
+「我的烟雾跟着角色瞬移」或「拖尾不拖了、黏在原地」——多半就是这个开关选错,本质是<strong>粒子住在了错误的坐标空间</strong>。材质里同理:World Position、Object Position、Camera Vector 是不同空间的量,要转到同一空间才能正确运算。
+</p>
+<pre><code><span class="cmt">// 材质里把一个世界方向转进切线空间,才能和法线贴图比较</span>
+<span class="kw">float3</span> L_tangent = <span class="fn">TransformWorldToTangent</span>(lightDirWorld);
+<span class="cmt">// 或反过来:把法线贴图的切线空间法线转到世界,再做光照</span>
+<span class="kw">float3</span> N_world   = <span class="fn">TransformTangentToWorld</span>(normalMap);
+</code></pre>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>以为坐标是绝对的。</strong> 没有「这个点的坐标」,只有「这个点在某空间里的坐标」。问坐标先问:哪个空间?</li>
+  <li><strong>跨空间直接加 / 比较。</strong> Local + World、Tangent 和 World 法线直接 dot——都是错配。先变换到同一空间。</li>
+  <li><strong>Niagara Local/World 选反。</strong> 跟随类效果用 Local,遗留类(烟、火星)用 World。选错就「跟错了 / 不跟了」。</li>
+  <li><strong>把方向也当位置变换。</strong> 位置变换含平移,方向不该被平移(下一课基向量、第 11 课齐次坐标 w 会解释)。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz9"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://gamemath.com/book/multiplespaces.html" target="_blank">《3D Math Primer》第 3 章 — Multiple Coordinate Spaces</a>
+  —— 把 Local/World/相机等多空间、以及「为什么需要多个空间」讲得非常透。本课的权威完整版。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我帮你判断某个效果该用 Niagara Local 还是 World?或者 debug「法线贴图发黑 / 物体位置不对」是不是空间错配?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>基向量</strong>——一个空间到底由什么定义?答案是「原点 + 几根轴向量」。理解了基,矩阵就不再是神秘数表。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz9", [
+  {
+    q: "一个坐标空间由什么定义?",
+    options: ["一个原点加一组基向量(轴)", "一台相机和一束光", "一张贴图和一组 UV", "一个网格和一个材质球"],
+    correct: 0,
+    why: "空间 = 原点(从哪算起)+ 基向量(几根带方向和刻度的轴)。换原点或换基,就是换了空间。"
+  },
+  {
+    q: "「同一个物理点在不同空间坐标不同」这句话?",
+    options: ["对,坐标永远相对某个空间", "错,点的坐标是唯一的", "只在 2D 成立", "只有相机移动才会变"],
+    correct: 0,
+    why: "就像同一地点有「客厅角落 / 街道门牌 / 我前方3米」多个地址。问坐标必先问:哪个空间?"
+  },
+  {
+    q: "法线贴图里存的法线,住在哪个空间?",
+    options: ["切线空间 Tangent", "世界空间 World", "视图空间 View", "裁剪空间 Clip"],
+    correct: 0,
+    why: "法线贴图存的是切线空间法线(所以整体偏蓝)。要和世界光照比较,必须先转到同一空间——否则发黑。"
+  },
+  {
+    q: "把 Local 空间的速度直接加到 World 位置上,会?",
+    options: ["空间错配,结果无意义", "完全正确,没问题", "只是稍微慢一点", "自动转换后相加"],
+    correct: 0,
+    why: "只有同空间向量能直接相加。跨空间相加像把两个不同坐标系的地址硬加,数能算但乱飞。"
+  },
+  {
+    q: "想做「永远跟随角色、跟着转」的光环,Niagara 该?",
+    options: ["勾选 Local Space", "关闭 Local Space(用 World)", "随便,无区别", "必须用两个发射器"],
+    correct: 0,
+    why: "Local 让粒子相对发射器原点,发射器移动旋转时整团跟着走。World 则粒子出生即落世界、不再跟随。"
+  },
+  {
+    q: "「拖在身后的烟、掉地上的火星」更适合?",
+    options: ["World 空间(不跟随发射器后续移动)", "Local 空间(跟着发射器走)", "Tangent 空间", "View 空间"],
+    correct: 0,
+    why: "遗留型效果要留在世界里,用 World。若误用 Local,烟会黏在发射器上跟着瞬移,不拖尾。"
+  }
+]);
+</script>
+</body>
+</html>

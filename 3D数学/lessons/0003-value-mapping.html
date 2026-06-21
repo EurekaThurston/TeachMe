@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 课 · 数值管道:lerp / clamp / saturate / smoothstep / frac</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .bar { height: 2rem; border-radius: 4px; border:1px solid var(--rule); margin:0.5rem 0; }
+  .graph { background:var(--panel); border:1px solid var(--rule); border-radius:6px; }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 3 课 · 模块 0 地基</div>
+<h1>数值管道:把一个数变成另一个数</h1>
+<p class="subtitle">TA 每天的工作,一大半是「把一个数(时间、距离、UV)映射成另一个数(强度、透明度、混合)」。这一课把五个最常用的映射函数一次讲透,做软边渐变从此不靠瞎调。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  掌握五个基本映射工具的几何含义:<strong>lerp</strong>(按比例混合)、<strong>clamp / saturate</strong>(限制范围)、<strong>smoothstep</strong>(平滑过渡 / 软边)、<strong>frac</strong>(取小数 / 重复)。看到它们能立刻在脑里画出输入→输出的曲线。
+</div>
+
+<h2>lerp:一切混合的母函数</h2>
+<p>
+<strong>lerp(a, b, t)</strong>(linear interpolation,线性插值)是这一切的核心。它在 a 和 b 之间按比例 t 取一个值:
+</p>
+<div class="formula">lerp(a, b, t) = a + (b − a) · t　　t=0 → a　,　t=1 → b　,　t=0.5 → 正中间</div>
+<p>拖滑块感受:t 就是「从 a 走到 b 走了百分之几」。这条规则对数、对颜色、对向量、对位置全部通用——混合、淡入淡出、A 到 B 的过渡,底层都是它。</p>
+<div class="lab">
+  <div class="dials">
+    <label for="tL">t</label>
+    <input type="range" id="tL" min="0" max="100" value="35">
+    <span class="out" id="tLout">0.35</span>
+  </div>
+  <div class="bar" id="lerpBar"></div>
+  <div class="readout" id="lerpRead"></div>
+</div>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  Niagara 的颜色/大小曲线、材质的 <code>Lerp</code> 节点,本质都是这一个函数。粒子「从生到死颜色由白变红」= <code>lerp(白, 红, Age/Lifetime)</code>。你拖的那条曲线,只是把直线 t 换成了弯的 t。
+</div>
+
+<h2>clamp 与 saturate:别越界</h2>
+<p>
+映射出来的数常常会冲出你想要的范围(比如算出 1.4 的透明度、−0.2 的强度)。<strong>clamp(x, lo, hi)</strong> 把 x 摁回 [lo, hi]:小于 lo 给 lo,大于 hi 给 hi。shader 里 99% 的情况是夹到 [0,1],所以有个专用简写 <strong>saturate(x) = clamp(x, 0, 1)</strong>。
+</p>
+<pre><code><span class="kw">float</span> a = <span class="fn">saturate</span>(rawAlpha);   <span class="cmt">// 把任意值锁进 [0,1],当 alpha 安全</span>
+<span class="kw">float</span> d = <span class="fn">clamp</span>(dist, <span class="num">0.0</span>, <span class="num">5.0</span>); <span class="cmt">// 距离最多算到 5</span>
+</code></pre>
+<p>
+saturate 在 GPU 上几乎免费(常和别的运算合并),所以放心用它兜底。<strong>凡是要当颜色/透明度/遮罩用的中间结果,先 saturate 一下</strong>,能挡掉一大票「超亮溢出、负值变怪」的 bug。</p>
+
+<h2>smoothstep:软边的灵魂</h2>
+<p>
+lerp 是<strong>硬</strong>的直线过渡。但特效要的常是<strong>软</strong>的:边缘羽化、渐隐、能量场的柔和外沿。这就是 <strong>smoothstep(edge0, edge1, x)</strong>:当 x 从 edge0 升到 edge1,输出从 0 平滑爬到 1,而且<strong>两端是平的(导数为 0)</strong>,所以没有生硬的折角。
+</p>
+<svg viewBox="0 0 320 160" class="graph" role="img" aria-label="lerp 直线 vs smoothstep 曲线">
+  <line x1="30" y1="130" x2="300" y2="130" stroke="#b9b8b0"/>
+  <line x1="30" y1="130" x2="30" y2="15" stroke="#b9b8b0"/>
+  <text x="6" y="22" font-size="11" fill="#6a6c74">1</text><text x="10" y="134" font-size="11" fill="#6a6c74">0</text>
+  <line x1="30" y1="130" x2="290" y2="20" stroke="#c0712a" stroke-width="2" stroke-dasharray="5 4"/>
+  <path d="M30,130 C120,130 180,20 290,20" fill="none" stroke="#3a55b4" stroke-width="2.5"/>
+  <text x="150" y="120" font-size="12" fill="#c0712a">lerp(线性)</text>
+  <text x="180" y="55" font-size="12" fill="#3a55b4">smoothstep(S 形)</text>
+</svg>
+<p>
+区别一眼可见:直线匀速到顶、两端有折角;S 形<strong>起步慢、中间快、收尾慢</strong>,两端平滑接住。眼睛觉得 smoothstep「更自然、更高级」,正是因为它没有突变。做遮罩软边、光晕外沿、消融过渡,默认用它。
+</p>
+<pre><code><span class="cmt">// 用距离场做一个软边圆(配合后面 SDF 课)</span>
+<span class="kw">float</span> mask = <span class="fn">smoothstep</span>(<span class="num">0.5</span>, <span class="num">0.48</span>, dist); <span class="cmt">// 注意 edge0&gt;edge1 → 内部=1 外部=0</span>
+</code></pre>
+<div class="callout callout-hlsl">
+  <span class="label">HLSL 速记</span>
+  <code>smoothstep(a, b, x)</code>:x≤a→0,x≥b→1,中间走平滑 S。<strong>a 和 b 的间距 = 软边的宽度</strong>,差得越小边越硬、越接近 step。把 a、b 反过来写(a&gt;b),输出就反向(内部 1、外部 0),做遮罩常这么用。
+</div>
+
+<h2>frac:把任何数折回 [0, 1)</h2>
+<p>
+<strong>frac(x)</strong> 取小数部分:<code>frac(3.7) = 0.7</code>、<code>frac(12.25) = 0.25</code>。几何上它把整条数轴<strong>切成一段段长度为 1 的格子,再叠在一起</strong>——任何输入都被折回 [0, 1)。这是 UV 平铺(贴图无缝重复)、做周期图案、以及第 20 课随机/噪声的基石。
+</p>
+<pre><code>uv = <span class="fn">frac</span>(uv * <span class="num">3.0</span>);  <span class="cmt">// 把一张贴图在 0..1 里平铺成 3×3</span>
+</code></pre>
+<p>
+把 frac 和 lerp 配在一起,你就能造「锯齿波」:<code>frac(Time)</code> 是一条从 0 爬到 1、到顶瞬间归零再爬的信号——和上一课的 sin(平滑往返)互补,sin 给「呼吸」,frac 给「扫描/重置」。两者是程序化动画的两块基石。
+</p>
+
+<h2>把管道接起来:一个真实例子</h2>
+<p>一个「从中心扩散、边缘柔和」的能量环,就是几个映射串联:</p>
+<pre><code><span class="kw">float</span> d    = <span class="fn">length</span>(uv - <span class="num">0.5</span>);          <span class="cmt">// 到中心的距离(第 6 课)</span>
+<span class="kw">float</span> ring = <span class="fn">smoothstep</span>(<span class="num">0.30</span>, <span class="num">0.28</span>, d)   <span class="cmt">// 外沿软边</span>
+            - <span class="fn">smoothstep</span>(<span class="num">0.20</span>, <span class="num">0.18</span>, d); <span class="cmt">// 内沿软边,相减得环</span>
+ring = <span class="fn">saturate</span>(ring);                  <span class="cmt">// 兜底锁进 [0,1]</span>
+color = <span class="fn">lerp</span>(bgColor, ringColor, ring);  <span class="cmt">// 用遮罩混合两色</span>
+</code></pre>
+<p>读懂这五行,你就读懂了一大半程序化材质——它们全是「数值管道」的拼接。后面模块四会把这套玩法推到 SDF、噪声、动画。</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>忘了 clamp/saturate 兜底。</strong> 算出来的遮罩/强度越界(>1 或 <0)会导致溢出发白、反相发黑。当颜色/alpha 用之前先 saturate。</li>
+  <li><strong>该软边时用了 lerp / step。</strong> 生硬的边缘多半是用了线性或硬阶跃。要羽化就上 smoothstep,用 edge 间距控制软硬。</li>
+  <li><strong>smoothstep 的两个 edge 写反还不自知。</strong> a&lt;b 是「升」,a&gt;b 是「降」。做遮罩想要「内部亮」却写成 a&lt;b,结果整个反掉。</li>
+  <li><strong>以为 lerp 的 t 必须在 [0,1]。</strong> 公式对任何 t 都算(t=2 会外推到 b 之外)。要安全就先 saturate(t)。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz3"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://thebookofshaders.com/05/" target="_blank">The Book of Shaders — Shaping Functions(第 5 章)</a>
+  —— 用可交互图像讲 step、smoothstep、以及如何把一个数塑形成另一个数。和本课完全同主题,边读边拖参数,数值管道的手感一下就有了。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把你某个材质里的「一串 lerp/smoothstep/saturate」逐节点翻译成它在做什么映射?或者想要一张「输入→输出曲线」图来对照?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>模块 0 到此打完地基。下一课进入<strong>模块 1 · 向量</strong>:<strong>向量是什么——位置 vs 方向</strong>。3D 数学的心脏,从这里开始慢慢嚼透。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/math-tools.js"></script>
+<script>
+wireLerp({ tId: "tL", outId: "tLout", readoutId: "lerpRead", a: 10, b: 50, onUpdate: function(t){
+  var bar = document.getElementById("lerpBar");
+  bar.style.background = "linear-gradient(90deg, #3a55b4, #c0392b)";
+  bar.style.width = (20 + t*80) + "%";
+}});
+renderQuiz("quiz3", [
+  {
+    q: "lerp(a, b, t) 在 t = 0 时返回?",
+    options: ["a 本身", "b 本身", "a 与 b 的中点", "总是 0"],
+    correct: 0,
+    why: "lerp = a + (b−a)·t。t=0 给 a,t=1 给 b,t=0.5 给中点。它是一切混合/过渡的母函数。"
+  },
+  {
+    q: "saturate(x) 等价于?",
+    options: ["clamp(x, 0, 1)", "x 的小数部分", "把 x 平滑到 1", "x 乘以 0.5"],
+    correct: 0,
+    why: "saturate 就是 clamp 到 [0,1] 的专用简写,GPU 上几乎免费。当颜色/alpha 用的中间值先 saturate 兜底。"
+  },
+  {
+    q: "想要一条「两端平滑、没有折角」的渐变遮罩,应该用?",
+    options: ["smoothstep", "lerp 线性", "frac", "clamp"],
+    correct: 0,
+    why: "smoothstep 输出 S 形、两端导数为 0,所以无折角。lerp 是直线(有折角),frac 是锯齿,clamp 只限范围。"
+  },
+  {
+    q: "smoothstep 的两个 edge 间距变小,会怎样?",
+    options: ["过渡变硬,趋近硬阶跃", "过渡变软,边更宽", "输出整体反相", "和 lerp 完全一样"],
+    correct: 0,
+    why: "edge0 与 edge1 的间距就是软边宽度。间距越小,过渡越陡、越接近 step;间距越大,边越柔。"
+  },
+  {
+    q: "frac(3.7) 的结果是?",
+    options: ["0.7", "3.0", "4.0", "0.3"],
+    correct: 0,
+    why: "frac 取小数部分 x−floor(x)。frac(3.7)=0.7。它把任意数折回 [0,1),是 UV 平铺与随机/噪声的基石。"
+  },
+  {
+    q: "下面哪个组合最适合做「平滑往返呼吸」?",
+    options: ["sin(Time) 再映射到 [0,1]", "frac(Time) 直接当强度", "clamp(Time,0,1)", "lerp(0,1,Time) 不夹"],
+    correct: 0,
+    why: "sin 给平滑往返(呼吸),frac 给锯齿(扫描/重置),两者互补。呼吸用 sin*0.5+0.5 映射到 [0,1]。"
+  }
+]);
+</script>
+</body>
+</html>

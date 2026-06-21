@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0006 · 多线程渲染：帧流水线与"渲染线程落后一帧"</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 1 · 骨架</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 1 · 骨架 · Lesson 0006</p>
+  <h1>多线程渲染：帧流水线与"渲染线程落后一帧"</h1>
+  <p class="subtitle">UE 4.26 不是单线程顺序画帧的——三条 CPU 侧线程加 GPU，同时各跑不同的帧。这节课拆透这个错位：为什么这样设计、由什么机制保证不出乱、以及 <code>stat unit</code> 的四个数字分别在量谁。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0004（CPU/GPU 协作、流水线与延迟）、0005（一帧的生命周期总览）</span>
+    <span><b>产出</b> 能解释 GameThread / RenderThread / RHIThread / GPU 的流水线关系、各落后一帧的原因，并正确解读 stat unit 的 Game / Draw / GPU / RHIT 四个数字</span>
+  </div>
+
+  <p class="lead">0004 证明了"流水线是提高吞吐的正确姿势"，0005 画出了四角色接力的全景图。这节课回答那张图里被一笔带过的问题：<strong>游戏线程在帧 N、渲染线程在帧 N-1、GPU 在帧 N-2 ——这件事到底是怎么实现的？谁在"锁"谁、锁在哪里？</strong> 弄清这个机制，<code>stat unit</code> 的每一行才有意义，帧率瓶颈才能被准确定位。</p>
+
+  <h2><span class="num">1</span>三线程 + GPU：四条并行轨道</h2>
+  <p>UE 4.26 在 PC 默认开启三条 CPU 线程各司其职，加上 GPU 作为独立执行单元，共四条轨道同时推进。它们不是顺序排队，而是<strong>流水线错位并行</strong>的——某一帧在游戏线程上是"帧 N"，在渲染线程上同时处理的是"帧 N-1"，在 RHI 线程是"帧 N-2"，GPU 则在画"帧 N-3"（实际错位因配置略有不同，最常见是 1–2 帧差）。</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程<br><code>GameThread</code></span><span class="lane-body">处理 <b>帧 N</b>：Tick Actor/Physics/Animation，更新 <code>UWorld</code> 状态，通过 <code>ENQUEUE_RENDER_COMMAND</code> 把变化投递给渲染线程。由 <code>FTaskGraphInterface</code> 驱动。</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程<br><code>RenderThread</code></span><span class="lane-body">处理 <b>帧 N-1</b>：消费游戏线程上一帧的入队，跑可见性剔除、组织 Pass、用 RDG 录制 RHI 命令列表。写 <code>FRHICommandList</code>，不直接调图形 API。</span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程<br><code>RHIThread</code> (<code>GRHIThread</code>)</span><span class="lane-body">处理 <b>帧 N-2</b>：<code>FRHICommandListExecutor</code> 把渲染线程录的平台无关命令翻译成 D3D12 调用并提交 GPU 队列。</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body">处理 <b>帧 N-3</b>（约）：执行命令列表——光栅化、Pass、后处理——最后 Present 上屏。</span></div>
+  </div>
+  <figure>
+    <figcaption>四轨道流水线错位示意。横向为时间，纵向为各轨道；每一列相当于"同一时刻"各线程在做什么。CPU 侧最多领先 GPU 约 2–3 帧，吞吐最大化，代价是输入延迟（输入到上屏至少 2–3 帧）。</figcaption>
+  </figure>
+
+  <h2><span class="num">2</span>帧流水线：错位的同步栅栏</h2>
+  <p>四轨道并行，若无同步则游戏线程会无限领先渲染线程，内存里堆积无穷多帧的待处理数据。UE 用两道栅栏把领先幅度锁死：</p>
+
+  <table>
+    <thead><tr><th>栅栏</th><th>类型</th><th>控制什么</th></tr></thead>
+    <tbody>
+      <tr><td><code>FFrameEndSync</code></td><td>帧同步栅栏</td><td>游戏线程帧末，检查渲染线程是否已消化到"当前帧 − 最大落后帧数"；若未消化则游戏线程<strong>阻塞等待</strong>。</td></tr>
+      <tr><td><code>FRenderCommandFence</code></td><td>渲染命令围栏</td><td>游戏线程往渲染线程投递命令后，可选择插入围栏等待某批命令执行完毕（<code>BeginFence / Wait</code>），用于需要同步的单次操作。</td></tr>
+    </tbody>
+  </table>
+
+  <p>决定"游戏线程最多领先几帧"的是控制台变量 <strong><code>r.OneFrameThreadLag</code></strong>（默认值 <code>1</code>，即开启）。开启时游戏线程最多领先渲染线程 1 帧；若强制关闭（设为 0），游戏线程每帧都要等渲染线程追上，帧率受两线程中较慢者瓶颈，等于退化成单流水线，吞吐显著下降。</p>
+
+  <div class="callout knowledge">
+    <span class="label">为什么"落后一帧"是吞吐最优解</span>
+    <p>0004 课推导过：CPU 和 GPU 同时跑不同帧，两者的忙等时间被重叠掉，帧率由<strong>最慢的那条轨道</strong>决定，而不是各段串行相加。<code>r.OneFrameThreadLag=1</code> 就是这个原理的直接开关——用 1 帧的输入延迟代价，换两条 CPU 线程并行满跑的吞吐。对于 60 Hz 游戏，这 1 帧约 16 ms 的延迟通常远低于玩家感知阈值；电竞低延迟场景可通过其他机制（如 NVIDIA Reflex）补偿。</p>
+  </div>
+
+  <h2><span class="num">3</span>任务图驱动：FTaskGraphInterface</h2>
+  <p>三条线程之所以能有条不紊地并行，是因为它们都跑在 UE 的<strong>任务图（Task Graph）</strong>系统上，而不是各自持有一个原始 OS 线程并靠睡眠/唤醒协调。<code>FTaskGraphInterface</code> 是任务图的全局接口，负责把"任务节点"分发给底层线程池中的工作线程，并管理节点间的依赖（前置完成才触发后续）。</p>
+  <p>游戏线程和渲染线程是任务图里两个<strong>命名线程</strong>（Named Thread），它们各有专属队列；RHI 线程同样如此。<code>ENQUEUE_RENDER_COMMAND</code> 宏本质上是把一个 lambda 包装成任务节点投进渲染线程队列——任务图保证它在渲染线程上顺序执行，游戏线程无需知道底层细节。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 渲染线程"阻塞"不是真 OS 阻塞</span>
+    <p><code>FFrameEndSync</code> 让游戏线程等待时，实际上游戏线程在任务图里自旋或让出，而不是调 OS 的 <code>Sleep</code>——这样一旦渲染线程的任务完成，游戏线程能以极低延迟被唤醒，避免 OS 调度抖动。理解这一点能解释为什么 UE 的线程开销比"朴素多线程"低得多。</p>
+  </div>
+
+  <h2><span class="num">4</span>RHI 线程：GRHIThread 与 Bypass 模式</h2>
+  <p>渲染线程录制的 <code>FRHICommandList</code> 是平台无关的——它存的是"绑定这个 PSO""SetRenderTarget 到这张纹理""DrawIndexed 1200 个顶点"这类抽象指令。真正的 D3D12 / Vulkan / Metal 调用由 <strong>RHI 线程</strong>完成：<code>FRHICommandListExecutor</code> 在 RHI 线程上消费命令列表，调用具体平台的实现（如 <code>D3D12RHI</code> 模块），把命令写入 D3D12 <code>ID3D12GraphicsCommandList</code>，最后提交到 GPU 队列。</p>
+  <p>RHI 线程由全局布尔 <code>GRHIThread</code>（以及 <code>GRHISupportsParallelRHIExecute</code>）标记是否启用。若平台不支持或主动关闭（控制台变量 <strong><code>r.RHICmdBypass 1</code></strong>），则走 <strong>bypass 模式</strong>：渲染线程直接在自身线程上执行 RHI 命令，没有单独 RHI 线程，命令列表被跳过。Bypass 便于调试（单线程易断点），但代价是渲染线程和 RHI 录制串行，帧率下降。</p>
+
+  <div class="callout warn">
+    <span class="label">Bypass 模式是调试工具，不是性能优化</span>
+    <p><code>r.RHICmdBypass 1</code> 会让渲染线程承担所有 RHI 翻译工作，帧时间通常明显上升。只在排查"是否某个 RHI 命令顺序问题导致 Bug"时使用，正式发布绝不开启。</p>
+  </div>
+
+  <h2><span class="num">5</span>帧错位全景：N / N-1 / N-2 / N-3</h2>
+  <p>把上面几节合并成一张时间轴图，是理解 <code>stat unit</code> 的关键。下图横轴是时间（每格约一帧），纵轴是四条轨道：</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">GameThread</span><span class="lane-body">
+      <b>帧 N</b>：Tick → 变化入队 → <code>FFrameEndSync</code> 检查 →（若渲染线程未追上则等待）
+    </span></div>
+    <div class="lane render"><span class="lane-name">RenderThread</span><span class="lane-body">
+      <b>帧 N-1</b>：收上帧入队 → InitViews → RDG → 录 <code>FRHICommandList</code> → 触发 RHI 线程消费
+    </span></div>
+    <div class="lane rhi"><span class="lane-name">RHIThread</span><span class="lane-body">
+      <b>帧 N-2</b>：<code>FRHICommandListExecutor</code> 翻译 → D3D12 命令列表 → <code>ExecuteCommandList</code> 提交 GPU 队列
+    </span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body">
+      <b>帧 N-3</b>（约）：执行 D3D12 命令列表 → 各 Pass → Present
+    </span></div>
+  </div>
+  <figure>
+    <figcaption>同一时刻，四条轨道各在处理不同帧号的工作。<code>r.OneFrameThreadLag=1</code> 把游戏线程对渲染线程的领先锁定在最多 1 帧；RHI 线程对 GPU 的错位则由 GPU 围栏（<code>Fence</code>）控制资源复用安全窗口。</figcaption>
+  </figure>
+
+  <h2><span class="num">6</span>stat unit：四个数字，四条轨道</h2>
+  <p>在 UE 编辑器或开发版 build 中输入 <code>stat unit</code>，可以看到四行计时：</p>
+
+  <table>
+    <thead><tr><th>stat unit 行</th><th>量的是</th><th>对应轨道</th><th>瓶颈特征</th></tr></thead>
+    <tbody>
+      <tr><td><b>Game</b></td><td>游戏线程当前帧 Tick 耗时</td><td>GameThread</td><td>Game 高 → Gameplay / Physics / Animation 太慢</td></tr>
+      <tr><td><b>Draw</b></td><td>渲染线程当前帧录制耗时</td><td>RenderThread</td><td>Draw 高 → 可见性剔除 / RDG 录制 / 绘制命令数太多</td></tr>
+      <tr><td><b>GPU</b></td><td>GPU 执行当前帧所有命令的耗时</td><td>GPU</td><td>GPU 高 → 着色器 / 像素数 / 带宽瓶颈</td></tr>
+      <tr><td><b>RHIT</b></td><td>RHI 线程翻译耗时</td><td>RHIThread</td><td>RHIT 高 → draw call 太多或平台 RHI 驱动开销大</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>帧率由四条线中最慢的那条决定</strong>——这是流水线的铁律（同 CPU 流水线的最长级理论）。若 GPU = 20 ms、其余 &lt; 10 ms，则帧率上限约 50 fps，CPU 轨道再快也毫无意义，要优化就从 GPU 入手。反之若 Game = 25 ms 但 GPU = 8 ms，GPU 在等游戏线程，优化 Gameplay Tick 才有收益。</p>
+
+  <div class="callout insight">
+    <span class="label">Draw 高 ≠ GPU 慢</span>
+    <p><code>Draw</code>（渲染线程）和 <code>GPU</code> 是两条独立轨道。Draw 高意味着 CPU 侧的渲染组织太慢（比如数万个 <code>FMeshDrawCommand</code> 录制），GPU 未必是瓶颈。反过来 GPU 高时 Draw 可以很低。把这两个数混淆是初学者最常见的性能诊断错误。</p>
+  </div>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text"><code>r.OneFrameThreadLag 1</code>（默认开）对渲染管线的主要作用是什么？</p>
+    <button class="q-opt">强制游戏线程与渲染线程同步，每帧等待对方完成后才推进，消除输入延迟</button>
+    <button class="q-opt">让渲染线程的 RHI 命令直接在游戏线程上执行，跳过 RHI 线程</button>
+    <button class="q-opt">允许游戏线程最多领先渲染线程一帧并行执行，最大化两线程的吞吐，代价是约一帧的输入延迟</button>
+    <div class="q-feedback" data-ok="对。OneFrameThreadLag 就是"一帧流水线领先"的开关——两线程错开执行，吞吐最大化，但输入到上屏多了约 1 帧延迟。" data-no="再想：这个 cvar 的名字本身就是答案——"One Frame Thread Lag"，它允许游戏线程领先渲染线程 1 帧，不是禁止领先也不是影响 RHI bypass。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看笔记，说出 stat unit 的 Game / Draw / GPU / RHIT 四个数字各对应哪条轨道、以及如何用它们定位帧率瓶颈。</summary>
+    <div class="answer"><strong>Game</strong> = 游戏线程（Tick 耗时）；<strong>Draw</strong> = 渲染线程（录制 RHI 命令列表耗时）；<strong>GPU</strong> = GPU 执行耗时；<strong>RHIT</strong> = RHI 线程翻译耗时。帧率由四者中最大值决定。定位瓶颈：看哪个数字最大，那条轨道是瓶颈；Game 高查 Gameplay/物理/动画，Draw 高查绘制命令数量/剔除效率，GPU 高查着色器复杂度/像素数/带宽，RHIT 高查 draw call 数量或驱动开销。特别注意：Draw 高和 GPU 高是两件不同的事，不要混淆 CPU 侧录制和 GPU 侧执行。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>UE 4.26 有三条 CPU 侧线程：<strong>GameThread</strong>（Tick）→ <strong>RenderThread</strong>（录制）→ <strong>RHIThread</strong>（翻译提交）+ GPU，四者流水线并行、各处理不同帧号。</li>
+      <li>帧同步由 <strong><code>FFrameEndSync</code></strong> 和 <code>FRenderCommandFence</code> 控制；<strong><code>r.OneFrameThreadLag=1</code></strong>（默认）允许游戏线程最多领先渲染线程一帧，换吞吐代价是输入延迟。</li>
+      <li>三线程和 GPU 都跑在 <strong><code>FTaskGraphInterface</code></strong> 任务图上；命令投递用 <code>ENQUEUE_RENDER_COMMAND</code>。</li>
+      <li><strong>RHI 线程</strong>（<code>GRHIThread</code>）靠 <code>FRHICommandListExecutor</code> 把平台无关命令翻成 D3D12 调用；<strong><code>r.RHICmdBypass 1</code></strong> 退化到渲染线程直接执行，仅用于调试。</li>
+      <li><code>stat unit</code> 的 Game / Draw / GPU / RHIT 对应四条轨道，<strong>帧率由最慢一条决定</strong>；Draw 高和 GPU 高是两个独立问题。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a>——线程模型、RHI 线程、命令列表的权威概述。配套：Kostas Anagnostou <a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>，第一节即为线程模型与 stat unit 的实测分析。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："FTaskGraphInterface 和普通线程池有什么本质区别？""FRHICommandListExecutor 是单线程消费队列还是可以多线程？""r.OneFrameThreadLag 关掉后 stat unit 的四个数字会怎么变化？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0005-frame-lifecycle-overview.html"><span class="nav-dir">← 上一课</span>0005 · 一帧的生命周期</a>
+    <a class="next" href="0007-renderer-module-map.html"><span class="nav-dir">下一课 →</span>0007 · 渲染模块地图</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 1 骨架 · 本课建立多线程帧流水线心智模型，下一课拆 Renderer 各模块职责。</footer>
+  </article>
+</div>
+</body>
+</html>

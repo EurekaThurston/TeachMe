@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0022 · Depth Prepass（Early-Z）</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0022</p>
+  <h1>Depth Prepass（Early-Z）</h1>
+  <p class="subtitle">在 BasePass 运行任何像素着色器之前，UE 先跑一遍只写深度的 Prepass，把深度缓冲填满。代价：一次额外的几何遍历。收益：后续所有 Pass 的 Early-Z 几乎消灭 overdraw。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~14 分钟</span>
+    <span><b>前置</b> 0001（Early-Z / overdraw / OM 阶段）、0014（FDeferredShadingSceneRenderer）</span>
+    <span><b>产出</b> 能解释 Prepass 如何用 Early-Z 消除 overdraw，并知道 r.EarlyZPass 各档含义</span>
+  </div>
+
+  <p class="lead">0001 讲过 Early-Z：只要像素着色器不修改深度且不丢弃片元，GPU 可在 PS 之前做深度测试，把被遮挡片元直接丢掉。问题在于：第一个不透明 Pass 到来时深度缓冲是空的，Early-Z 无从比较。Depth Prepass 解决这个引导问题——先用极简着色器只写深度，建立完整深度缓冲，之后 BasePass 开启 Early-Z 就能对每个片元精确判断"它真的可见吗"，把不可见片元的昂贵材质着色器调用彻底跳过。</p>
+
+  <h2><span class="num">1</span>代码入口：RenderPrePass</h2>
+  <p><code>FDeferredShadingSceneRenderer::RenderPrePass</code>（<code>DepthRendering.cpp</code>）是 Prepass 的调度函数，在 <code>Render()</code> 序列里位于 BasePass 之前。它向 RDG 注册一个写入 SceneDepth 的 Pass，然后遍历所有不透明图元，经由 <code>FDepthPassMeshProcessor</code> 生成 <code>FMeshDrawCommand</code>。</p>
+
+  <pre><code><span class="cmt">// DepthRendering.cpp（架构示意）</span>
+<span class="kw">void</span> <span class="typ">FDeferredShadingSceneRenderer</span>::<span class="fn">RenderPrePass</span>(
+    <span class="typ">FRDGBuilder</span>&amp; GraphBuilder,
+    <span class="typ">FRDGTextureRef</span> SceneDepthTexture)
+{
+    <span class="cmt">// 为每个 View 录制 DepthOnly draw calls</span>
+    <span class="fn">AddRenderTargetSetupPass</span>(GraphBuilder, SceneDepthTexture);
+    <span class="fn">DrawPrePass</span>(GraphBuilder, ...); <span class="cmt">// → FDepthPassMeshProcessor</span>
+}</code></pre>
+
+  <p><code>FDepthPassMeshProcessor</code> 给每个图元选择 <strong>DepthOnly</strong> 变体着色器——顶点着色器做最小变换（只输出 <code>SV_Position</code>），像素着色器为空或极简（opaque 物体甚至可以不挂 PS）。这是整条管线里最"轻"的绘制调用。</p>
+
+  <div class="callout knowledge">
+    <span class="label">DepthOnly 着色器在哪里</span>
+    <p><code>Engine/Shaders/Private/DepthOnlyPixelShader.usf</code> 是 Depth Prepass 的 PS；对于完全不透明、无裁剪需求的物体，PS 可直接为空（硬件不运行 PS，只写深度）。顶点侧使用通用 BasePassVertexShader.usf 的 DepthOnly 变体，经 Vertex Factory 读取几何数据——这样骨骼网格、静态网格都能走同一套 MeshProcessor，只换着色器变体。</p>
+  </div>
+
+  <h2><span class="num">2</span>Early-Z 收益示意</h2>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">Prepass</span><span class="s-sub">只写 SceneDepth<br>无材质开销</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">SceneDepth</span><span class="s-sub">完整深度缓冲<br>建立 Early-Z</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">BasePass</span><span class="s-sub">片元 Early-Z 测试<br>被遮挡 → 丢弃</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">可见片元</span><span class="s-sub">运行材质 PS<br>写 GBuffer</span></div>
+  </div>
+
+  <p>收益的量级取决于场景的 overdraw 程度。在物体密集、后向深度排序差的场景里，overdraw 可以轻松超过 4–8×——即同一像素被画 4–8 次，Prepass 把这 4–8 次材质 PS 调用降为 1 次。代价是所有不透明几何额外跑一遍顶点着色器，通常比材质 PS 便宜 1–2 个数量级。</p>
+
+  <h2><span class="num">3</span>r.EarlyZPass 的各档含义</h2>
+  <p>cvar <code>r.EarlyZPass</code> 控制 Prepass 覆盖哪些几何（<code>RendererSettings.cpp</code>）：</p>
+
+  <table>
+    <thead><tr><th>值</th><th>含义</th><th>适用场景</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>关闭 Prepass，不运行 Early-Z（仅前向路径或极简场景调试用）</td><td>几乎不用</td></tr>
+      <tr><td><code>1</code></td><td>仅对设置了"遮挡体（occluder）"标记的不透明物体运行 Prepass</td><td>overdraw 中等、想节省 Prepass 本身开销时</td></tr>
+      <tr><td><code>2</code></td><td>对所有不透明物体运行 Prepass（<b>UE 4.26 默认</b>）</td><td>通用 PC 延迟着色路径</td></tr>
+      <tr><td><code>3</code></td><td>对所有不透明物体运行 Prepass，并在 Prepass 之后紧接着做遮挡查询</td><td>高度 occluder-优化的场景</td></tr>
+    </tbody>
+  </table>
+
+  <p>关联 cvar：<code>r.EarlyZPassMovable</code>（是否把可移动物体也纳入 Prepass）。可移动物体的 Prepass 会增加每帧更新代价，但在城市场景等大量动态物体高度重叠时值得。</p>
+
+  <div class="callout insight">
+    <span class="label">何时全 Prepass 划算</span>
+    <p>判断标准：当场景是 <strong>GPU-bound 且 PS 密集</strong>（复杂材质 + 高 overdraw）时，Prepass 总是划算的——额外的顶点开销远小于省掉的 PS 调用。当场景是 <strong>VS-bound 或几何极简</strong>时（如粒子系统主导的屏幕，几乎无不透明遮挡），Prepass 反而浪费了一次顶点遍历。用 <code>r.EarlyZPass=1</code> 搭配手动标记 occluder 是一种折中。</p>
+  </div>
+
+  <h2><span class="num">4</span>Prepass 对 Occlusion Culling 的额外作用</h2>
+  <p>Prepass 填充 SceneDepth 后，UE 随即用它构建 <span class="term">HZB</span>（Hierarchical Z Buffer，层级深度缓冲）。HZB 在后续帧（和当前帧的遮挡查询路径）被用来进行 GPU 端遮挡剔除——判断一个包围盒是否完全被当前深度缓冲遮挡。SceneDepth 因此是 Prepass 的双重产出：Early-Z（同帧）+ HZB（下帧剔除）。</p>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">r.EarlyZPass=2 时，Depth Prepass 的像素着色器对完全不透明物体做什么？</p>
+    <button class="q-opt">运行完整材质着色器并同时写深度和 GBufferA</button>
+    <button class="q-opt">使用 DepthOnly 变体，PS 为空或极简，只写 SceneDepth，不运行材质逻辑</button>
+    <button class="q-opt">运行光照函数并把结果写入 SceneColor</button>
+    <div class="q-feedback" data-ok="对。DepthOnly 变体的 PS 对不透明物体可以为空，硬件只写深度。这是 Prepass 比 BasePass 便宜一两个数量级的原因。" data-no="再想：Prepass 的全部目的是填充 SceneDepth，它不需要也不应该运行材质逻辑——那是 BasePass 的事。DepthOnly 着色器以最低开销只输出深度值。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看文章，解释：若 r.EarlyZPass=0（关闭 Prepass），BasePass 的 overdraw 会怎样？在什么硬件/场景条件下，关闭 Prepass 反而性能更好？</summary>
+    <div class="answer">若关闭 Prepass，BasePass 开始时深度缓冲为空，Early-Z 无法在 PS 之前剔除被遮挡片元（只能在 PS 之后做深度测试），每个像素可能被多个重叠三角形的材质 PS 都运行一遍——overdraw 全部变成实际着色开销，GPU 时间与 overdraw 倍数成正比飙升。反而性能更好的条件：场景几乎无不透明重叠（outdoor 空旷场景、粒子主导）、几何极为简单（顶点 transform 也很贵时没必要跑两遍）、或当前是 VS-bound 而非 PS-bound。这时 Prepass 的顶点遍历开销大于其省掉的 PS 调用，关掉更合算。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>Depth Prepass 用 <code>FDepthPassMeshProcessor</code> + DepthOnly 着色器只写 SceneDepth，PS 对不透明物体可为空——这是管线里开销最低的绘制 Pass。</li>
+      <li>Prepass 的核心收益：建立完整深度缓冲，使 BasePass 能全程利用 <strong>Early-Z</strong> 丢弃被遮挡片元，消除 overdraw。</li>
+      <li><code>r.EarlyZPass</code>：0=关，1=仅遮挡体，<strong>2=全不透明（默认）</strong>，3=全不透明+遮挡查询；配套 <code>r.EarlyZPassMovable</code>。</li>
+      <li>Prepass 还填充 HZB，为下帧 GPU 端遮挡剔除提供深度数据。</li>
+      <li>全 Prepass 在 GPU-bound / 高 overdraw / PS 密集场景划算；VS-bound 或几何极简场景可酌情降档。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>——Prepass / Early-Z 在抓帧中的体现。引擎源码：<code>Engine/Source/Runtime/Renderer/Private/DepthRendering.cpp</code>（RenderPrePass / FDepthPassMeshProcessor）、<code>Engine/Shaders/Private/DepthOnlyPixelShader.usf</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："HZB 的层级结构具体怎么构建？""r.EarlyZPassMovable 的判断逻辑在哪？""Prepass 里蒙皮网格如何处理（VS 跑 skinning 吗）？"随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0021-deferred-shading-gbuffer-layout.html"><span class="nav-dir">← 上一课</span>0021 · 延迟着色总览与 GBuffer 布局</a>
+    <a class="next" href="0023-base-pass.html"><span class="nav-dir">下一课 →</span>0023 · Base Pass：写 GBuffer 与速度</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 0022 Prepass 是整条延迟路径的性能基石。</footer>
+  </article>
+</div>
+</body>
+</html>

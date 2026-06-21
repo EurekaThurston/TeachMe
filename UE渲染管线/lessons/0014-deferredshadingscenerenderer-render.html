@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0014 · 总调度：FDeferredShadingSceneRenderer::Render() 全景</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 3 · 渲染线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 3 · 渲染线程 · Lesson 0014</p>
+  <h1>总调度：FDeferredShadingSceneRenderer::Render() 全景</h1>
+  <p class="subtitle"><code>FDeferredShadingSceneRenderer::Render()</code> 是整条 GPU 管线的总编排者——它不直接画一个像素，它决定"以什么顺序、用什么参数"把每一个 Pass 送上 GPU。理解它的宏观结构，等于掌握了后面七个 Part 的目录索引。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0005（帧全景）、0013（渲染入口）</span>
+    <span><b>产出</b> 能复述 Render() 的宏观执行顺序，并知道每段对应后面哪个 Part</span>
+  </div>
+
+  <p class="lead"><code>Render(FRHICommandListImmediate&amp;)</code> 定义在 <span class="file">Engine/Source/Runtime/Renderer/Private/DeferredShadingRenderer.cpp</span>，在 UE 4.26 源码里超过 1000 行。你不需要现在读完它——你需要的是知道它的<strong>骨架</strong>：哪几段、以什么顺序、调什么函数。这节课就是那张骨架图。</p>
+
+  <h2><span class="num">1</span>Render() 的宏观顺序（UE 4.26 延迟路径）</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">InitViews</span><span class="s-sub">可见性/剔除/GPU Scene<br>生成 MeshDrawCommand<br>Part 4</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Prepass</span><span class="s-sub">RenderPrePassAndVelocity<br>只写深度/Early-Z<br>0022</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">Base Pass</span><span class="s-sub">RenderBasePass<br>写 GBuffer<br>0023</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">遮挡查询</span><span class="s-sub">BeginOcclusionTests<br>HZB 更新</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Light Grid</span><span class="s-sub">ComputeLightGrid<br>光照剔除<br>0024</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">ShadowDepths</span><span class="s-sub">RenderShadowDepthMaps<br>CSM/局部光阴影<br>0026</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">延迟光照</span><span class="s-sub">RenderLights<br>Deferred Lighting<br>0025</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">反射/SSR</span><span class="s-sub">RenderReflections<br>SSR/反射捕获<br>0027/0028</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">半透明</span><span class="s-sub">RenderTranslucency<br>0029</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">后处理</span><span class="s-sub">AddPostProcessingPasses<br>Part 6</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">Present</span><span class="s-sub">交换链/上屏<br>Part 7</span></div>
+  </div>
+
+  <p class="marginnote">顺序以 UE 4.26 <span class="file">DeferredShadingRenderer.cpp</span> 为准。UE5 重构了大量细节（Nanite、Lumen），标注为超纲。</p>
+
+  <h2><span class="num">2</span>第一段：InitViews ——"画什么"</h2>
+  <p><code>InitViews(FRHICommandListImmediate&amp;, ...)</code> 定义在 <span class="file">SceneVisibility.cpp</span>。它是 <code>Render()</code> 里最先运行、也是 CPU 开销最重的一段，负责回答"这帧要画哪些物体"。主要工作：</p>
+  <ul>
+    <li><strong>视锥剔除（Frustum Culling）</strong>：快速排除不在视锥内的图元。</li>
+    <li><strong>遮挡剔除（Occlusion Culling）</strong>：HZB/硬件遮挡查询（从上帧结果读取）。</li>
+    <li><strong>GPU Scene 更新</strong>：把当帧新增/修改的图元变换上传到 <code>GPUScene</code> 缓冲（<span class="file">GPUScene.cpp</span>）。</li>
+    <li><strong>生成 FMeshDrawCommand</strong>：为每个可见图元的每个 Pass 调用对应的 <code>FMeshPassProcessor</code>，把 <code>FMeshBatch</code> 转成缓存好的 <code>FMeshDrawCommand</code>（Part 4 精读）。</li>
+    <li><strong>动态阴影初始化</strong>：为这一帧的光源确定阴影 Cascade 分配。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">InitViews 完成后，整帧"画什么"已完全确定</span>
+    <p>从 InitViews 返回时，每个 Pass 的 <code>FMeshDrawCommand</code> 列表已就绪，GPU Scene 已同步。后续所有 Pass 只是消费这些命令——它们不会再改变"画什么"的决策。这条分界线是理解 UE 渲染 CPU 开销分布的关键：InitViews 通常占 CPU 渲染侧 30–50% 的耗时。</p>
+  </div>
+
+  <h2><span class="num">3</span>RDG 在 Render() 里的位置</h2>
+  <p>在 UE 4.26 中，<code>Render()</code> 函数体早期就构造了 RDG 构建器：</p>
+
+  <pre><code><span class="cmt">// DeferredShadingRenderer.cpp — 简化示意</span>
+<span class="kw">void</span> <span class="typ">FDeferredShadingSceneRenderer</span>::<span class="fn">Render</span>(<span class="typ">FRHICommandListImmediate</span>&amp; RHICmdList)
+{
+    <span class="fn">InitViews</span>(RHICmdList, <span class="cmt">/* ... */</span>);
+
+    <span class="cmt">// 4.26 起越来越多 Pass 迁移到 RDG</span>
+    <span class="typ">FRDGBuilder</span> <span class="fn">GraphBuilder</span>(RHICmdList);
+
+    <span class="fn">RenderPrePassAndVelocity</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+    <span class="fn">RenderBasePass</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+    <span class="fn">ComputeLightGrid</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+    <span class="fn">RenderShadowDepthMaps</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+    <span class="fn">RenderLights</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+    <span class="fn">RenderTranslucency</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+    <span class="fn">AddPostProcessingPasses</span>(GraphBuilder, <span class="cmt">/* ... */</span>);
+
+    GraphBuilder.<span class="fn">Execute</span>();   <span class="cmt">// 编译图、分配资源、执行所有 Pass</span>
+}</code></pre>
+
+  <p>注意 <code>FRDGBuilder GraphBuilder(RHICmdList)</code> 构造在函数靠前处，多数 Pass 以 <code>GraphBuilder</code> 为参数调用——它们只是向图里 <em>声明</em> Pass，并不立即执行。直到 <code>GraphBuilder.Execute()</code>，整帧的 RDG 图才被编译、优化、按依赖序执行（见 0015/0016）。</p>
+
+  <h2><span class="num">4</span>各 Pass 段与后续课程的对应</h2>
+  <table>
+    <thead><tr><th>Render() 里的函数</th><th>描述</th><th>后续课程</th></tr></thead>
+    <tbody>
+      <tr><td><code>InitViews</code></td><td>可见性、剔除、FMeshDrawCommand 生成、GPU Scene</td><td>Part 4（0017–0020）</td></tr>
+      <tr><td><code>RenderPrePassAndVelocity</code></td><td>Depth Prepass + Velocity Pass，建 Early-Z</td><td>0022</td></tr>
+      <tr><td><code>RenderBasePass</code></td><td>材质着色写 GBuffer（MRT）</td><td>0023</td></tr>
+      <tr><td><code>ComputeLightGrid</code></td><td>把光源分配到 3D Cluster，为延迟光照做准备</td><td>0024</td></tr>
+      <tr><td><code>RenderShadowDepthMaps</code></td><td>方向光 CSM + 局部光阴影深度图</td><td>0026</td></tr>
+      <tr><td><code>RenderLights</code></td><td>延迟光照：读 GBuffer、按 Light Grid 着色</td><td>0025</td></tr>
+      <tr><td><code>RenderReflections</code></td><td>SSR + 反射捕获合并</td><td>0027/0028</td></tr>
+      <tr><td><code>RenderTranslucency</code></td><td>半透明物体前向着色（顺序依赖，不进 GBuffer）</td><td>0029</td></tr>
+      <tr><td><code>AddPostProcessingPasses</code></td><td>TAA、Bloom、Tonemap、UI 合并</td><td>Part 6（0031–0035）</td></tr>
+      <tr><td>SwapChain Present</td><td>提交后缓冲、扫描输出</td><td>Part 7（0036–0039）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">这张表就是你的学习路线图</span>
+    <p>后面每个 Part、每节课，都是在把上面这张表里的某一行放大 10 倍。当你在任意一节课迷失时，翻回这里定位：你现在在 Render() 的哪一段？它的输入来自哪里、输出给谁？这个问题的答案永远在这里。</p>
+  </div>
+
+  <h2><span class="num">5</span>几个重要的全局状态</h2>
+  <p>在进入各 Pass 之前，<code>Render()</code> 还设置几个全局影响后续的状态：</p>
+  <ul>
+    <li><code>GIsRenderingThreadSuspended</code>：调试用标志，正常渲染时为 false。</li>
+    <li><code>bIsWireframe</code> / <code>ViewModeIndex</code>：由编辑器视口决定，影响各 Pass 是否跳过或改写着色器。</li>
+    <li><code>FGlobalDynamicIndexBuffer</code> / <code>FGlobalDynamicVertexBuffer</code>：帧内临时几何（粒子、UI、Debug 图元）的内存池，在帧末 Reset。</li>
+  </ul>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">在 Render() 的宏观顺序中，InitViews 位于哪个位置？它在所有 Pass 之前还是之后？</p>
+    <button class="q-opt">最先执行，在所有 Pass 之前；完成后才生成各 Pass 所需的 FMeshDrawCommand</button>
+    <button class="q-opt">在 BasePass 之后、光照之前；因为需要先知道 GBuffer 内容</button>
+    <button class="q-opt">与各 Pass 并行执行，边剔除边录制命令</button>
+    <div class="q-feedback" data-ok="对。InitViews 是 Render() 里最先运行的大段，它确定可见性并生成所有 Pass 的绘制命令列表，完成后各 Pass 才有数据可用。" data-no="再想：InitViews 回答"画什么"，Pass 回答"怎么画"。逻辑上必须先知道"画什么"，才能开始录制 Pass 命令。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>按顺序说出 Render() 的主要阶段及其对应函数名（至少 8 个），并指出哪个阶段最先执行、哪里调用 GraphBuilder.Execute()。</summary>
+    <div class="answer">
+      <p>顺序：① <code>InitViews</code>（SceneVisibility.cpp，最先执行）→ ② <code>FRDGBuilder GraphBuilder(RHICmdList)</code>（RDG 构建器构造）→ ③ <code>RenderPrePassAndVelocity</code> → ④ <code>RenderBasePass</code> → ⑤ BeginOcclusionTests（遮挡查询）→ ⑥ <code>ComputeLightGrid</code> → ⑦ <code>RenderShadowDepthMaps</code> → ⑧ <code>RenderLights</code> → ⑨ <code>RenderReflections</code>（SSR）→ ⑩ <code>RenderTranslucency</code> → ⑪ <code>AddPostProcessingPasses</code> → ⑫ <code>GraphBuilder.Execute()</code>（在函数末尾，编译并执行整帧 RDG 图）。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FDeferredShadingSceneRenderer::Render()</code>（<span class="file">DeferredShadingRenderer.cpp</span>）是整条 GPU 管线的总编排——它不画像素，它决定顺序与参数。</li>
+      <li>第一段 <code>InitViews</code> 决定"画什么"（剔除 + FMeshDrawCommand 生成），之后所有 Pass 只是消费结果。</li>
+      <li>4.26 起大量 Pass 迁移到 <code>FRDGBuilder</code>：先声明、后 <code>Execute()</code>——整帧一次性编译执行（0015 展开）。</li>
+      <li>这张宏观顺序表是课程 Part 4–7 的目录：每一行对应一节或几节课，方向迷失时回来对照。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>；<a href="https://github.com/donaldwuid/unreal_source_explained/blob/master/main/rendering.md">donaldwuid Unreal Source Explained — rendering 章</a>（顺着函数调用链讲 Render() 内部）。源码：<span class="file">Engine/Source/Runtime/Renderer/Private/DeferredShadingRenderer.cpp</span>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："Render() 函数里的 RHICmdList 和 GraphBuilder 是同一条命令流吗？""遮挡查询的结果是当帧还是上帧的？""InitViews 里剔除是 CPU 还是 GPU 做的？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0013-scenerenderer-entry-beginrendering.html"><span class="nav-dir">← 上一课</span>0013 · 场景渲染入口</a>
+    <a class="next" href="0015-rdg-intro.html"><span class="nav-dir">下一课 →</span>0015 · RDG 入门：为什么要图、如何构图</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 3 渲染线程 · Render() 是课程的总目录，之后每节课都是在放大它的某一段。</footer>
+  </article>
+</div>
+</body>
+</html>

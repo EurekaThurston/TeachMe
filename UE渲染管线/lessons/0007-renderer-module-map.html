@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0007 · 渲染模块地图：Engine / Renderer / RHI / RenderCore / D3D12RHI</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 1 · 骨架</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 1 · 骨架 · Lesson 0007</p>
+  <h1>渲染模块地图：Engine / Renderer / RHI / RenderCore / D3D12RHI</h1>
+  <p class="subtitle">UE 4.26 的渲染相关代码分散在五个以上的模块里，职责各异、依赖有向无环。弄清楚"这个类在哪个模块、这个模块能被谁 include"，是读源码、写插件、调试崩溃的基础。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~18 分钟</span>
+    <span><b>前置</b> 0005（一帧生命周期）、0006（三线程流水线）</span>
+    <span><b>产出</b> 能说出 Engine / Renderer / RHI / RenderCore / D3D12RHI 各自的职责、关键类放在哪个模块、以及依赖方向；理解为何不能直接 include Renderer</span>
+  </div>
+
+  <p class="lead">你刚看完三线程如何接力，现在要落地到源码目录：游戏线程的 <code>UWorld</code> 在 Engine 模块，<code>FDeferredShadingSceneRenderer</code> 在 Renderer 模块，<code>FRHICommandList</code> 在 RHI 模块，<code>FShader</code> 在 RenderCore 模块，真正的 D3D12 调用在 D3D12RHI 模块。这五个模块的依赖方向是<strong>单向有向图</strong>，打破任何一条箭头都会编译失败。这节课把这张地图印进大脑。</p>
+
+  <h2><span class="num">1</span>五大模块一览</h2>
+
+  <table>
+    <thead><tr><th>模块</th><th>源码路径</th><th>核心职责</th><th>代表类 / 文件</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Engine</b></td>
+        <td><code>Engine/Source/Runtime/Engine/</code></td>
+        <td>游戏世界的对象模型。持有 <code>UWorld</code>、<code>AActor</code>、<code>UPrimitiveComponent</code>，以及把场景推送给渲染线程的接口（<code>UGameViewportClient::Draw</code>、<code>FSceneInterface</code>）。<strong>这里是游戏线程的地盘。</strong></td>
+        <td><code>UWorld</code>、<code>AActor</code>、<code>UStaticMeshComponent</code>、<code>FSceneInterface</code></td>
+      </tr>
+      <tr>
+        <td><b>Renderer</b></td>
+        <td><code>Engine/Source/Runtime/Renderer/</code></td>
+        <td>场景渲染逻辑的全部实现：可见性剔除、Pass 组织、<code>FDeferredShadingSceneRenderer</code>、阴影、光照、RDG Pass 录制。<strong>这是渲染线程的核心执行地点。</strong>该模块声明为 <em>private</em>，外部代码不能直接 include 其头文件。</td>
+        <td><code>FDeferredShadingSceneRenderer</code>、<code>FScene</code>、<code>FPrimitiveSceneProxy</code>、<code>FSceneRenderer</code></td>
+      </tr>
+      <tr>
+        <td><b>RHI</b></td>
+        <td><code>Engine/Source/Runtime/RHI/</code></td>
+        <td>平台无关的图形 API 抽象层：命令录制接口 <code>FRHICommandList</code>，资源基类 <code>FRHIResource</code>（纹理、缓冲、Shader、PSO……），以及 RHI 初始化接口。具体图形 API 的实现<strong>不在这里</strong>，在平台 RHI 模块。</td>
+        <td><code>FRHICommandList</code>、<code>FRHITexture</code>、<code>FRHIBuffer</code>、<code>FRHIComputeShader</code>、<code>FRHIRenderPassInfo</code></td>
+      </tr>
+      <tr>
+        <td><b>RenderCore</b></td>
+        <td><code>Engine/Source/Runtime/RenderCore/</code></td>
+        <td>着色器基础设施（<code>FShader</code>、<code>FGlobalShader</code>、着色器编译管线）、渲染资源基类（<code>FRenderResource</code>、<code>FVertexBuffer</code>、<code>FIndexBuffer</code>），以及 <strong>RDG（Render Dependency Graph）</strong>。被 Renderer、Engine、插件广泛共享。</td>
+        <td><code>FShader</code>、<code>FGlobalShader</code>、<code>FRenderResource</code>、<code>FRDGBuilder</code>、<code>FRDGTexture</code>、<code>FRDGBuffer</code></td>
+      </tr>
+      <tr>
+        <td><b>D3D12RHI</b>（平台 RHI）</td>
+        <td><code>Engine/Source/Runtime/D3D12RHI/</code><br><code>…/D3D12RHI/Private/Windows/</code></td>
+        <td>RHI 接口的 Direct3D 12 具体实现：把 <code>FRHICommandList</code> 里的命令翻成 <code>ID3D12GraphicsCommandList</code> 调用，管理描述符堆、PSO 缓存、资源状态追踪、命令队列提交。类似地，Vulkan 路径走 <code>VulkanRHI/</code>，D3D11 走 <code>D3D11RHI/</code>。</td>
+        <td><code>FD3D12CommandContext</code>、<code>FD3D12DynamicRHI</code>、<code>FD3D12Resource</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">2</span>依赖方向：单向有向图</h2>
+  <p>模块间的 <code>#include</code> 和链接依赖形成一张<strong>有向无环图（DAG）</strong>。在 UE 的 Build.cs 中，模块 A 能依赖 B 当且仅当 B 在 A 的 <code>PublicDependencyModuleNames</code> 或 <code>PrivateDependencyModuleNames</code> 里声明。箭头方向：依赖方 → 被依赖方。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">Engine</span><span class="s-sub">游戏对象层<br>UWorld / Actor</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">Renderer</span><span class="s-sub">场景渲染逻辑<br>private 模块</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage fixed"><span class="s-name">RHI</span><span class="s-sub">平台无关抽象<br>FRHICommandList</span></div>
+    <span class="flow-arrow">←实现←</span>
+    <div class="stage gpu"><span class="s-name">D3D12RHI</span><span class="s-sub">D3D12 具体实现<br>运行时加载</span></div>
+  </div>
+  <figure>
+    <figcaption>主依赖链：Engine → Renderer → RHI ← D3D12RHI（运行时实现，反向依赖）。<strong>RenderCore</strong> 作为横向共享层，被 Renderer、Engine、插件广泛引用，图中未画全部箭头以保持清晰。</figcaption>
+  </figure>
+
+  <div class="callout knowledge">
+    <span class="label">RenderCore：横向共享层</span>
+    <p><code>RenderCore</code> 不在主依赖链上，而是被多个模块共同引用。<code>FShader</code>/<code>FGlobalShader</code> 在这里，<code>FRenderResource</code>（顶点缓冲、索引缓冲的基类）在这里，<strong>RDG 的 <code>FRDGBuilder</code>/<code>FRDGTexture</code>/<code>FRDGBuffer</code> 也在这里</strong>。如果你在写插件时想用 RDG 但不想依赖 Renderer，RenderCore 就是正确的依赖目标。</p>
+  </div>
+
+  <h2><span class="num">3</span>Renderer 是 Private 模块：这意味着什么</h2>
+  <p>Renderer 模块在其 <code>Renderer.Build.cs</code> 中没有导出公开头文件（不设 <code>PublicIncludePaths</code>），即声明为 <strong>private</strong>。这意味着：</p>
+  <ul>
+    <li>外部代码（包括你自己的游戏模块、插件）<strong>无法直接 <code>#include "DeferredShadingRenderer.h"</code></strong> 或调用 <code>FDeferredShadingSceneRenderer</code> 的任何方法。</li>
+    <li>扩展渲染行为通常要走引擎提供的<strong>钩子接口</strong>（如 <code>IRendererModule</code>、Scene Extension、自定义 Pass Processor），而不是直接调渲染器内部类。</li>
+    <li>若你确实需要修改 Renderer 内部（如添加新 Pass），必须修改<strong>引擎源码</strong>——这正是为什么很多引擎级渲染特性都要拉 source build 的根本原因。</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">为什么不把 Renderer 做成公开模块</span>
+    <p>渲染逻辑高度内聚，内部类之间互依赖复杂，<code>FDeferredShadingSceneRenderer</code> 的 <code>Render()</code> 在一个函数里调用了数十个内部子系统。若对外暴露，任何外部代码都能依赖这些实现细节，版本间重构就会破坏大量下游——Epic 选择"完全私有 + 有限公开接口"来保持模块内聚和演进自由。UE5 中 Renderer 扩展性进一步通过 <code>ISceneExtension</code> 等机制增强，但 private 原则未变（UE5 特性，超纲）。</p>
+  </div>
+
+  <h2><span class="num">4</span>着色器系统在 RenderCore：FShader 与 .usf</h2>
+  <p>HLSL 着色器在 UE 里有一套完整的 C++ 封装，全部住在 <code>RenderCore</code>：</p>
+
+  <table>
+    <thead><tr><th>C++ 类</th><th>职责</th><th>对应 .usf 用法</th></tr></thead>
+    <tbody>
+      <tr><td><code>FShader</code></td><td>所有着色器的基类，持有编译产物的引用、参数绑定信息</td><td>每个 .usf 入口函数对应一个 <code>FShader</code> 子类</td></tr>
+      <tr><td><code>FGlobalShader</code></td><td><code>FShader</code> 的子类，单例式：整个引擎只有一个实例，不依赖 Material 参数</td><td>后处理、屏幕空间 Pass（TAA、Bloom、Tonemap）的着色器全用 <code>FGlobalShader</code></td></tr>
+      <tr><td><code>FMaterialShader</code></td><td>依赖 Material 的排列，每个 Material×VertexFactory×Pass 有各自的编译实例</td><td>Base Pass 的材质着色器；在 Renderer 模块使用，但基类在 RenderCore</td></tr>
+    </tbody>
+  </table>
+
+  <p>实际的 HLSL 代码写在 <strong><code>Engine/Shaders/Private/*.usf</code></strong>（<code>.usf</code> = Unreal Shader File，本质是带 UE 宏扩展的 HLSL）。编译流程在 RenderCore 的着色器编译器（<code>ShaderCompiler.cpp</code>）里管理，最终产物被缓存到 <code>DerivedDataCache</code>。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · FGlobalShader vs FMaterialShader</span>
+    <p>后处理链所有的 Pass（TAA、Bloom、Tonemap、SSAO…）都用 <code>FGlobalShader</code>——因为它们不依赖材质参数，整个引擎只编译一份。而 Base Pass 每个材质要编译 N 个排列（不同 VertexFactory × 光照模型 × 着色模式的叉积），代价高、量大，这就是 UE 着色器编译慢的根本原因。你在 HLSL 里写的每一个 <code>if defined()</code> 宏分支，都可能倍增排列数。</p>
+  </div>
+
+  <h2><span class="num">5</span>平台 RHI 如何在运行时插入</h2>
+  <p><code>D3D12RHI</code>（以及 <code>VulkanRHI</code>、<code>D3D11RHI</code>）并不被 Renderer 或 RHI 静态链接。它们在引擎启动时根据平台/配置<strong>动态加载</strong>，调用 <code>RHIInit</code> 把一个 <code>FDynamicRHI</code> 的派生实例（如 <code>FD3D12DynamicRHI</code>）注册为全局 RHI 实现。此后所有 <code>FRHICommandList</code> 上的命令，最终都通过这个全局实例分发到平台代码。</p>
+  <p>这就是为什么切换 D3D11/D3D12/Vulkan 不需要重新编译游戏代码——抽象层（RHI）和实现层（平台 RHI）在运行时才绑定。源码锚点：<code>Engine/Source/Runtime/D3D12RHI/Private/D3D12RHI.cpp</code> 中的 <code>FD3D12DynamicRHI::Init()</code>。</p>
+
+  <h2><span class="num">6</span>模块依赖全图（含 RenderCore）</h2>
+  <p>把五个模块和依赖箭头完整画出来：</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">Engine</span><span class="s-sub">UWorld/Actor<br>游戏线程</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">Renderer</span><span class="s-sub">FDeferredShading<br>SceneRenderer<br><em>private</em></span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage fixed"><span class="s-name">RHI</span><span class="s-sub">FRHICommandList<br>FRHIResource</span></div>
+    <span class="flow-arrow">←</span>
+    <div class="stage gpu"><span class="s-name">D3D12RHI</span><span class="s-sub">FD3D12DynamicRHI<br>运行时注入</span></div>
+  </div>
+  <div class="pipeline" style="margin-top:.5rem;">
+    <div class="stage fixed" style="min-width:14rem;"><span class="s-name">RenderCore</span><span class="s-sub">FShader / FGlobalShader / FRenderResource / FRDGBuilder<br>← 被 Engine / Renderer / 插件广泛引用</span></div>
+  </div>
+  <figure>
+    <figcaption>依赖方向：上层 → 下层（Engine 依赖 Renderer，Renderer 依赖 RHI）；D3D12RHI 在运行时实现 RHI 接口（反向注入，不是编译时依赖）。RenderCore 是横向共享层，被多方引用，自身只依赖少量基础设施。</figcaption>
+  </figure>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">你想在自己的游戏插件里使用 RDG（<code>FRDGBuilder</code>）来组织一个自定义后处理 Pass，应该在 Build.cs 的 <code>PrivateDependencyModuleNames</code> 里添加哪个模块？</p>
+    <button class="q-opt">RenderCore，因为 FRDGBuilder 定义在该模块，且该模块是公开可依赖的</button>
+    <button class="q-opt">Renderer，因为所有渲染 Pass 逻辑都在 Renderer 模块</button>
+    <button class="q-opt">RHI，因为 RDG 最终生成 RHI 命令所以属于 RHI 模块</button>
+    <div class="q-feedback" data-ok="对。FRDGBuilder / FRDGTexture / FRDGBuffer 定义在 RenderCore，且该模块是公开可依赖的（不像 Renderer 是 private）。外部插件通过依赖 RenderCore 就能合法使用 RDG，无需触碰 Renderer 内部。" data-no="再想：Renderer 是 private 模块，外部无法直接依赖；RHI 里没有 RDG 相关类。RDG 的 FRDGBuilder 住在 RenderCore——这是横向共享层，专门供外部安全使用。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看表格，说出 Renderer 模块为何是 private、以及这对想扩展渲染管线的开发者意味着什么。</summary>
+    <div class="answer">Renderer 是 private 模块，意味着外部代码（游戏模块、插件）无法直接 <code>#include</code> 其头文件或调用 <code>FDeferredShadingSceneRenderer</code> 等内部类。原因是渲染逻辑高度内聚、内部互依赖复杂，公开会导致任何重构都破坏外部依赖。对开发者的影响：扩展渲染行为要走 <code>IRendererModule</code>、Scene Extension、自定义 Pass Processor 等公开钩子，而不能直接调内部函数；若必须修改 Renderer 内部（如新增 Pass），需要拉取引擎源码（source build），是真正的引擎修改而非插件扩展。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>Engine</strong>：游戏对象层（<code>UWorld/Actor/Component</code>），游戏线程的地盘；路径 <code>Runtime/Engine/</code>。</li>
+      <li><strong>Renderer</strong>：场景渲染逻辑（<code>FDeferredShadingSceneRenderer</code>、Pass、可见性），<strong>private 模块，外部不能 include</strong>；路径 <code>Runtime/Renderer/</code>。</li>
+      <li><strong>RHI</strong>：平台无关图形 API 抽象（<code>FRHICommandList</code>、<code>FRHIResource</code>）；路径 <code>Runtime/RHI/</code>。</li>
+      <li><strong>RenderCore</strong>：着色器基础设施（<code>FShader</code>/<code>FGlobalShader</code>）+ 渲染资源（<code>FRenderResource</code>）+ RDG（<code>FRDGBuilder</code>）；横向共享层，路径 <code>Runtime/RenderCore/</code>；着色器 .usf 在 <code>Engine/Shaders/Private/</code>。</li>
+      <li><strong>D3D12RHI</strong>：RHI 接口的 D3D12 具体实现，运行时动态注入，不是编译时静态依赖；路径 <code>Runtime/D3D12RHI/</code>。</li>
+      <li>依赖方向：<code>Engine → Renderer → RHI ← D3D12RHI（运行时）</code>；RenderCore 横向被多方依赖。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a>——模块划分、线程角色、着色器系统的权威官方总览，本课内容直接对应其"Module Overview"与"Shader System"章节。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："FMaterialShader 的排列爆炸具体是怎么发生的？""IRendererModule 能做到什么程度的扩展？""D3D12RHI 的 PSO 缓存是怎么工作的？""VulkanRHI 和 D3D12RHI 的 FDynamicRHI 子类在哪初始化？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0006-multithreaded-rendering-pipelining.html"><span class="nav-dir">← 上一课</span>0006 · 多线程渲染：帧流水线</a>
+    <a class="next" href="0008-engineloop-tick-world-tick.html"><span class="nav-dir">下一课 →</span>0008 · FEngineLoop::Tick 深入</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 1 骨架 · 本课建立模块地图，后续每节课都能定位"相关代码在哪个模块的哪个路径"。</footer>
+  </article>
+</div>
+</body>
+</html>

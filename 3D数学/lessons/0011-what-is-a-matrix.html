@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 11 课 · 矩阵是什么:装着基向量的盒子</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 11 课 · 模块 2 空间与变换</div>
+<h1>矩阵是什么:一个装着「变换后基向量」的盒子</h1>
+<p class="subtitle">矩阵不是神秘数表。上一课你掰动了 î 和 ĵ——矩阵就是<strong>把变换后的 î、ĵ(、k̂)按列装进一个盒子</strong>。矩阵 × 向量,就是「拿这套新基,重新组装这个向量」。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能读懂:矩阵的<strong>每一列就是一个基向量变换后的去处</strong>。<strong>M × v</strong> 的几何意义=「用 M 里的新基,按 v 的分量做加权和」,从而把 v 搬到新空间。并理解 3D 用 <strong>4×4 + 齐次坐标 w</strong>,是为了让<strong>平移</strong>也能塞进矩阵乘法。
+</div>
+
+<h2>矩阵 = 按列摆放的基向量</h2>
+<p>
+上一课的变换由两根新基 î、ĵ 决定。把它们<strong>竖着摆成列</strong>,就是一个 2×2 矩阵:
+</p>
+<div class="formula">M = [ <span class="vecA">î.x</span>　<span class="vecB">ĵ.x</span> ;　<span class="vecA">î.y</span>　<span class="vecB">ĵ.y</span> ]　　第 1 列 = 变换后的 î,第 2 列 = 变换后的 ĵ</div>
+<p>
+就这么简单。一个 2×2 矩阵 = 两个基向量;一个 3×3 矩阵 = 三个基向量。<strong>读一个矩阵,就读它的列:每列告诉你一根轴被搬到哪</strong>。第一列是 î 的新去处,第二列是 ĵ 的,以此类推。下面的画布:拖 î、ĵ,右边 readout 实时把它们拼成矩阵 M。
+</p>
+<div class="lab">
+  <canvas id="mat11"></canvas>
+  <div class="readout" id="read11"></div>
+  <p style="font-size:0.85rem;color:var(--muted);margin:0.6rem 0 0">拖 î、ĵ 看矩阵 M 怎么变;橙点 (2,1) 经 M 变换后落在哪、det 是面积缩放。</p>
+</div>
+
+<h2>矩阵 × 向量 = 按新基重新组装</h2>
+<p>
+现在「M 乘以向量 v」就有了画面。v=(x, y) 的意思是「x 份 î + y 份 ĵ」(上一课)。M×v 就是用<strong>变换后的</strong> î、ĵ 做同样的加权和:
+</p>
+<div class="formula">M × v = x · (M 第 1 列) + y · (M 第 2 列) = x·î' + y·ĵ'</div>
+<p>
+所以矩阵乘向量<strong>不是死记的行列相乘口诀,而是「拿 v 的分量当配方,去组合矩阵的列」</strong>。结果就是 v 被搬到新位置后的坐标。这和上一课「换基掰动点」是同一件事的两种说法——一个用画面,一个用算式。
+</p>
+<pre><code><span class="cmt">// HLSL:用一个 3x3 旋转/缩放矩阵变换一个方向向量</span>
+<span class="kw">float3</span> v2 = <span class="fn">mul</span>(M, v);   <span class="cmt">// = v.x*列1 + v.y*列2 + v.z*列3</span>
+</code></pre>
+<div class="callout callout-hlsl">
+  <span class="label">HLSL 的乘法顺序小坑</span>
+  HLSL 里 <code>mul(M, v)</code> 和 <code>mul(v, M)</code> 含义不同(把 v 当列向量还是行向量)。UE 材质里的矩阵约定、以及行优先/列优先(row/column-major)会影响该写哪个。<strong>结果转置 / 朝向反了,先怀疑乘法顺序</strong>。记住几何含义,出问题就两种都试一下看哪个对。
+</div>
+
+<h2>det 行列式:一眼看出缩放与翻面</h2>
+<p>
+画布里那个 <strong>det(行列式)</strong> 有直观含义:它是<strong>面积的缩放倍率</strong>(3D 里是体积)。det=1 面积不变(纯旋转),det=2 面积翻倍,<strong>det 为负</strong>表示空间被<strong>翻面</strong>(镜像,手性反转——回忆第 1 课/第 8 课),<strong>det=0</strong> 表示空间被压扁成一条线(基向量共线,信息丢失、不可逆)。你不用会手算,但看到 det<0「翻面」、det=0「压扁退化」要能反应过来。
+</p>
+
+<h2>为什么 3D 要 4×4:把平移塞进来</h2>
+<p>
+旋转、缩放、剪切都能用 3×3 矩阵表达——因为它们都让原点不动(0 配方=原点)。但<strong>平移(整体挪一段)做不到</strong>:3×3 矩阵永远把原点映射回原点,而平移要把原点也挪走。
+</p>
+<p>
+解决办法叫<strong>齐次坐标 homogeneous coordinates</strong>:给向量补<strong>第 4 维 w</strong>,用 <strong>4×4 矩阵</strong>。诀窍在 w:
+</p>
+<table class="tbl">
+  <tr><th>w</th><th>当作</th><th>受平移影响吗</th></tr>
+  <tr><td><strong>w = 1</strong></td><td>位置(点)</td><td>是 —— 点要被挪</td></tr>
+  <tr><td><strong>w = 0</strong></td><td>方向(向量)</td><td>否 —— 方向不该被挪</td></tr>
+</table>
+<p>
+这一手同时解决了第 4 课、第 9 课埋的那个钩子:<strong>为什么位置和方向要区分</strong>。补上 w,矩阵第 4 列放平移量,乘法时 w=1 的点会吃到平移、w=0 的方向自动忽略平移。于是<strong>旋转+缩放+平移全部统一成一次 4×4 乘法</strong>——这就是渲染管线里 Model / View / Projection 矩阵的形态。
+</p>
+<pre><code><span class="kw">float4</span> posH = <span class="fn">mul</span>(WorldMatrix, <span class="kw">float4</span>(localPos, <span class="num">1.0</span>)); <span class="cmt">// 点:w=1,吃平移</span>
+<span class="kw">float3</span> dirW = <span class="fn">mul</span>((<span class="kw">float3x3</span>)WorldMatrix, localDir);     <span class="cmt">// 方向:用 3x3 部分,不要平移</span>
+</code></pre>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>把矩阵当成一堆乱码数字。</strong> 它是「变换后基向量按列排好」。读矩阵就读它的列。</li>
+  <li><strong>死背行列相乘、丢了几何。</strong> M×v = 拿 v 的分量去组合 M 的列。记住这个就不会算反。</li>
+  <li><strong>乘法顺序 / 行列优先搞混。</strong> mul(M,v) vs mul(v,M)、row vs column-major 会让结果转置。朝向反了先查这个。</li>
+  <li><strong>方向向量用了带平移的变换。</strong> 方向要用 3×3 部分(或 w=0),否则会被平移污染、长度/朝向出错。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz11"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=kYB8IZa5AuE" target="_blank">3Blue1Brown — Linear transformations and matrices(第 3 章)</a>
+  —— 「矩阵的列就是变换后的基向量、矩阵乘向量就是线性组合」这套直觉,这一集讲到了天花板。本课的灵魂参考。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把一个具体的旋转/缩放矩阵逐列读给你听、或解释你材质里 mul 顺序为什么反了?或者齐次坐标 w 哪里没绕明白?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>TRS 与乘法顺序</strong>——平移/旋转/缩放各自的矩阵长什么样,为什么 <code>T·R·S</code> 顺序不能换、为什么变换链要「从右往左读」。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/matrix-tools.js"></script>
+<script>
+MatrixGrid("mat11", {
+  draggable: true,
+  point: { x: 2, y: 1 },
+  readoutId: "read11",
+  i: { x: 1.5, y: 0.5 }, j: { x: -0.5, y: 1 }
+});
+renderQuiz("quiz11", [
+  {
+    q: "一个 2×2 矩阵的两列,几何上代表?",
+    options: ["变换后的 î 和 ĵ 两根基向量", "两个待相加的标量", "矩阵的宽和高", "两个点的坐标差"],
+    correct: 0,
+    why: "矩阵=按列摆放的变换后基向量。第 1 列是 î 的新去处,第 2 列是 ĵ 的。读矩阵就读它的列。"
+  },
+  {
+    q: "M × v 的几何含义是?",
+    options: ["拿 v 的分量去加权组合 M 的列", "求 M 和 v 的夹角", "把 v 归一化", "把 M 转置"],
+    correct: 0,
+    why: "v=(x,y) 是「x份î+y份ĵ」。M×v 用变换后的基做同样配方 = x·列1 + y·列2,得到 v 的新位置。"
+  },
+  {
+    q: "矩阵的行列式 det 为负,意味着?",
+    options: ["空间被翻面(镜像/手性反转)", "面积变成 0", "矩阵不可乘", "向量被归一化"],
+    correct: 0,
+    why: "det 是面积/体积缩放倍率。负=翻面(镜像),0=压扁成线(退化不可逆),1=面积不变(纯旋转)。"
+  },
+  {
+    q: "为什么 3D 变换常用 4×4 矩阵而不是 3×3?",
+    options: ["为了把平移也塞进矩阵乘法", "为了渲染更快", "为了存颜色", "4×4 更省内存"],
+    correct: 0,
+    why: "3×3 永远把原点映射回原点,表达不了平移。补第 4 维 w、用 4×4,才能让平移统一进矩阵乘法。"
+  },
+  {
+    q: "齐次坐标里,一个「方向向量」的 w 应取?",
+    options: ["w = 0,这样不受平移影响", "w = 1,和点一样", "w = 任意值", "方向没有 w"],
+    correct: 0,
+    why: "点用 w=1(要被平移挪),方向用 w=0(不该被平移)。这正式区分了第 4 课埋的「位置 vs 方向」。"
+  },
+  {
+    q: "材质里变换出来的朝向整体反了/转置了,最该先查?",
+    options: ["mul 的乘法顺序与行/列优先约定", "贴图分辨率", "粒子数量", "材质混合模式"],
+    correct: 0,
+    why: "mul(M,v) 与 mul(v,M)、row/column-major 不同会让结果转置。几何含义不变,顺序两种都试看哪个对。"
+  }
+]);
+</script>
+</body>
+</html>

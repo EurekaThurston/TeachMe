@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0038 · 交换链与 Present</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 7 · RHI 与显示</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 7 · RHI 与显示 · Lesson 0038</p>
+  <h1>交换链与 Present</h1>
+  <p class="subtitle">后处理链结束后，最终的像素还在 GPU 内存里。<code>Present()</code> 才是让它出现在显示器上的那个调用。本课拆开 UE 4.26 里 <code>FD3D12Viewport</code>、DXGI 翻转模型（Flip Model）、VSync、<code>RHIEndDrawingViewport</code> 的完整路径。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0037（D3D12 RHI 后端）、0003（图形 API 契约）</span>
+    <span><b>产出</b> 能说清交换链后缓冲轮转逻辑、翻转模型与旧 Blit 模型的区别、VSync 对 Present 的影响，以及 RHIEndDrawingViewport 在 UE 代码里的位置</span>
+  </div>
+
+  <p class="lead">渲染管线的最后一个 CPU 动作是 <code>IDXGISwapChain::Present()</code>。在此之前，你需要理解：GPU 写的是哪块缓冲、DXGI 的翻转模型如何实现零拷贝、VSync 标志如何改变 Present 的阻塞行为。这一切都封装在 UE 的 <code>FD3D12Viewport</code> 里。</p>
+
+  <h2><span class="num">1</span>FD3D12Viewport：UE 对 IDXGISwapChain 的封装</h2>
+  <p><code>FD3D12Viewport</code>（<span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12Viewport.h</span>）是 UE 4.26 中一个可显示视口的完整表达，持有：</p>
+  <ul>
+    <li><code>IDXGISwapChain3*</code>——DXGI 交换链接口（3 版本支持 HDR 颜色空间查询）。</li>
+    <li>后缓冲数组 <code>BackBuffers[]</code>——每个元素是一个 <code>FD3D12Texture2D</code>，对应交换链的一个 <code>ID3D12Resource</code>。</li>
+    <li>当前后缓冲索引 <code>CurrentBackBufferIndex</code>，由 <code>IDXGISwapChain3::GetCurrentBackBufferIndex()</code> 查询。</li>
+    <li>Present 计数器和最后一次 Present 的 VBlank 时间戳（用于帧率统计）。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">为什么是 IDXGISwapChain3 而不是 1 或 4</span>
+    <p>SwapChain1 引入了 Flip Model 和 <code>Present1()</code>（Windows 8+）。SwapChain3 在此基础上增加了 <code>GetCurrentBackBufferIndex()</code> 和 HDR 颜色空间支持（<code>SetColorSpace1()</code>），UE 4.26 的 HDR 输出路径依赖后者。SwapChain4 的 HDR Metadata API 在 4.26 中为可选扩展，核心路径仍以 SwapChain3 为基础。</p>
+  </div>
+
+  <h2><span class="num">2</span>后缓冲轮转：三缓冲的逻辑</h2>
+  <p>DXGI Flip Model 下交换链持有 N 个后缓冲（UE 默认 3 个，对应 <code>NumSwapChainBuffers</code>）。三缓冲的轮转状态：</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">后缓冲 0</span><span class="s-sub">GPU 正在写<br>（当前帧）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">后缓冲 1</span><span class="s-sub">已 Present<br>等待扫描输出</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">后缓冲 2</span><span class="s-sub">已显示完毕<br>可被下帧写入</span></div>
+  </div>
+
+  <p>每次 <code>Present()</code> 后，DXGI 把"当前后缓冲"推进显示队列，并把"下一个可用后缓冲"的索引告知应用。UE 通过 <code>GetCurrentBackBufferIndex()</code> 在每帧开始时拿到新索引，把对应的 <code>FD3D12Texture2D</code> 设为当前帧的渲染目标。</p>
+
+  <h2><span class="num">3</span>翻转模型：DXGI_SWAP_EFFECT_FLIP_DISCARD</h2>
+  <p>UE 4.26 在 Windows 10 上使用 <code>DXGI_SWAP_EFFECT_FLIP_DISCARD</code>（Flip Discard 模型）创建交换链。与旧的 <code>DXGI_SWAP_EFFECT_DISCARD</code>（Blit 模型）相比：</p>
+
+  <table>
+    <thead><tr><th>特性</th><th>旧 Blit 模型</th><th>翻转模型（Flip Discard）</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Present 操作</b></td>
+        <td>把后缓冲内容<b>复制</b>到前缓冲（或 DWM 合成缓冲）；复制有 GPU 开销和延迟。</td>
+        <td>直接<b>翻转缓冲指针</b>——把后缓冲"提升"为前缓冲，零拷贝，延迟更低。</td>
+      </tr>
+      <tr>
+        <td><b>缓冲所有权</b></td>
+        <td>Present 后应用仍拥有缓冲，可继续写；但 DWM 可能同时读——需要额外同步。</td>
+        <td>Present 后该缓冲归 DXGI/DWM 所有直到显示完毕（"Discard"语义）；不得再写。</td>
+      </tr>
+      <tr>
+        <td><b>Windows 10 DWM 集成</b></td>
+        <td>DWM 每帧强制合成，独占全屏也走 DWM（Vista+），额外延迟一个 VBlank。</td>
+        <td>独占全屏 Flip 绕过 DWM 合成，直接写显示控制器扫描缓冲——最低延迟路径。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 为什么"独占全屏"延迟最低</span>
+    <p>窗口模式下，DXGI 翻转的后缓冲仍须经过 DWM（Desktop Window Manager）与其他窗口合成；独占全屏时，DWM 把桌面合成权交给游戏，翻转直接到达显示控制器的扫描缓冲——跳过了 DWM 合成的一个 VBlank 延迟。这是竞技游戏追求"独占全屏"的核心原因。UE 的 <code>r.FullscreenMode 0</code>（独占全屏）与 <code>1</code>（无边框窗口）之间的延迟差异，本质就来自这里。</p>
+  </div>
+
+  <h2><span class="num">4</span>VSync 与 Present 的阻塞语义</h2>
+  <p>DXGI 的 <code>IDXGISwapChain::Present(SyncInterval, Flags)</code> 第一个参数 <code>SyncInterval</code> 控制 VSync 行为：</p>
+  <ul>
+    <li><code>SyncInterval = 0</code>：立即呈现，不等 VBlank——可能产生撕裂，但延迟最低。</li>
+    <li><code>SyncInterval = 1</code>：等待下一个 VBlank 后呈现——无撕裂，帧率上限为刷新率，延迟增加 0–16ms（60Hz 时）。</li>
+    <li><code>SyncInterval = 2</code>：每两个 VBlank 才呈现一次——相当于 30fps 锁定（60Hz 显示器）。</li>
+  </ul>
+
+  <p>UE 4.26 的控制台变量 <code>r.VSync</code>（默认 0）映射到这个参数：</p>
+
+  <pre><code><span class="cmt">// D3D12Viewport.cpp — 概念简化</span>
+<span class="typ">uint32</span> SyncInterval = <span class="fn">RHIConsoleVariables::bSyncWithDWM</span> ? 1 : 0;
+<span class="cmt">// r.VSync=1 → SyncInterval=1；r.VSync=0 → SyncInterval=0</span>
+<span class="typ">HRESULT</span> hr = SwapChain-&gt;<span class="fn">Present</span>(SyncInterval, PresentFlags);</code></pre>
+  <p class="code-cap"><span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12Viewport.cpp</span> — Present 调用的 SyncInterval 选择</p>
+
+  <div class="callout warn">
+    <span class="label">r.VSync=0 + 无帧率上限 = CPU/GPU 空转</span>
+    <p>关闭 VSync 且不设帧率上限时，游戏和渲染线程会以 CPU 最高速度提交帧，可能达到数百帧/秒。GPU 工作量极重、温度上升，且输入延迟并未因为"帧率高"而随之等比降低（受限于显示器刷新率和扫描时序）。实践中配合 <code>t.MaxFPS</code> 或 NVIDIA Reflex / AMD CHILL 做帧率封顶更合理。</p>
+  </div>
+
+  <h2><span class="num">5</span>RHIEndDrawingViewport：UE 侧的 Present 入口</h2>
+  <p>UE 4.26 渲染线程在帧末调用 <code>RHIEndDrawingViewport()</code>（通过 <code>FRHICommandListImmediate</code> 录制成 RHI 命令，RHI 线程执行），最终到达 <code>FD3D12DynamicRHI::RHIEndDrawingViewport()</code>。其内部流程：</p>
+
+  <ol>
+    <li>确保当前后缓冲处于 <code>D3D12_RESOURCE_STATE_PRESENT</code> 状态（插必要的 ResourceBarrier）。</li>
+    <li>刷新命令队列（提交当前帧所有录制的命令列表到 D3D12 命令队列）。</li>
+    <li>调用 <code>IDXGISwapChain::Present(SyncInterval, PresentFlags)</code>。</li>
+    <li>更新 <code>CurrentBackBufferIndex</code>（<code>GetCurrentBackBufferIndex()</code>），准备下帧。</li>
+    <li>在命令队列上 Signal 一个围栏值，供下帧开始时检查"上帧 GPU 工作是否完成"（防止写入 GPU 还在使用的后缓冲）。</li>
+  </ol>
+
+  <div class="lanes">
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">录制最后一帧命令 → <b>RHIEndDrawingViewport(录制成命令节点)</b></span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程</span><span class="lane-body">执行命令链表 → 插 Present Barrier → 提交 D3D12 命令队列 → <b>IDXGISwapChain::Present()</b> → Signal Fence</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body">执行命令队列（异步）→ 完成后 Signal 围栏 → DXGI 把后缓冲送显示队列</span></div>
+  </div>
+
+  <h2><span class="num">6</span>帧等待与后缓冲复用保护</h2>
+  <p>三缓冲理论上允许 CPU 比 GPU 超前 2 帧提交工作，但必须在写入新一轮后缓冲之前确认 GPU 已经用完上一轮该缓冲。UE D3D12RHI 在每帧开始时（<code>RHIBeginDrawingViewport()</code>）等待对应后缓冲的上一次使用围栏：</p>
+
+  <pre><code><span class="cmt">// D3D12Viewport.cpp — 概念示意</span>
+<span class="kw">void</span> <span class="typ">FD3D12Viewport</span>::<span class="fn">BeginDrawing</span>()
+{
+    <span class="typ">uint32</span> BackBufferIdx = SwapChain-&gt;<span class="fn">GetCurrentBackBufferIndex</span>();
+    <span class="cmt">// 等待此后缓冲对应的上帧围栏（若 GPU 尚未完成则 CPU 在此阻塞）</span>
+    BackBufferFences[BackBufferIdx].<span class="fn">WaitForFence</span>(
+        BackBufferFenceValues[BackBufferIdx]);
+}</code></pre>
+  <p class="code-cap"><span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12Viewport.cpp</span> — 后缓冲 Fence 等待（概念示意）</p>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">DXGI_SWAP_EFFECT_FLIP_DISCARD 和旧 Blit 模型（DXGI_SWAP_EFFECT_DISCARD）的核心区别是什么？</p>
+    <button class="q-opt">Flip 模型只能用于 DirectX 12，Blit 模型兼容 DirectX 11 和更早版本</button>
+    <button class="q-opt">Flip 模型允许多个后缓冲，而 Blit 模型只有一个</button>
+    <button class="q-opt">Flip 模型通过翻转缓冲指针实现零拷贝呈现，独占全屏时可绕过 DWM 直接扫描输出，延迟更低；Blit 模型需把后缓冲内容复制到前缓冲</button>
+    <div class="q-feedback" data-ok="正确。Flip Model 的本质是指针交换而非数据拷贝，独占全屏 Flip 还能绕过 DWM 合成，是 UE 4.26 Windows 10 配置下的默认选择。" data-no="再想：关键词是'零拷贝'和'DWM 绕过'——Blit 有一次复制开销，Flip 没有。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>r.VSync=0 时 Present 的 SyncInterval 是多少？这会带来哪些利弊？</summary>
+    <div class="answer">
+      <p><code>r.VSync=0</code> 时 <code>SyncInterval=0</code>，Present 立即返回不等 VBlank。<b>好处</b>：帧率不受显示器刷新率限制，当 GPU 帧时间&lt;刷新周期时，输入延迟降低（新帧立刻呈现，不用排队等下一个 VBlank）。<b>坏处</b>：若帧切换发生在扫描输出进行中，显示器上半部分显示旧帧、下半部分显示新帧——即<b>撕裂（Tearing）</b>。此外，无帧率上限时 CPU/GPU 空转、功耗和温度上升，需配合 <code>t.MaxFPS</code> 等机制封顶。NVIDIA G-Sync 和 AMD FreeSync 可以在关闭 VSync 的同时避免撕裂（下节课 0039 详述）。</p>
+    </div>
+  </details>
+
+  <details class="recall">
+    <summary>UE 的 RHIEndDrawingViewport 在 GPU 侧的后缓冲"资源状态"要求是什么？如果不满足会发生什么？</summary>
+    <div class="answer">
+      <p>Present 前，后缓冲必须处于 <code>D3D12_RESOURCE_STATE_PRESENT</code>（也写作 <code>D3D12_RESOURCE_STATE_COMMON</code>）状态。整个渲染过程中后缓冲被用作渲染目标（<code>D3D12_RESOURCE_STATE_RENDER_TARGET</code>），最后一条绘制完成后，D3D12RHI 的 <code>RHIEndDrawingViewport</code> 会插入一个 <code>ResourceBarrier(RT → Present)</code> 过渡命令，然后才调用 <code>IDXGISwapChain::Present</code>。若不做这个过渡，D3D12 调试层会报验证错误，驱动行为未定义（可能崩溃或产生黑屏）。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FD3D12Viewport</code> 持有 <code>IDXGISwapChain3*</code> 和后缓冲数组；每帧通过 <code>GetCurrentBackBufferIndex()</code> 确定本帧写入哪个后缓冲。</li>
+      <li>UE 4.26 Windows 10 默认使用 <code>DXGI_SWAP_EFFECT_FLIP_DISCARD</code>——指针翻转、零拷贝、独占全屏可绕过 DWM，延迟最低。</li>
+      <li><code>r.VSync 1</code> 让 <code>SyncInterval=1</code>（等 VBlank，无撕裂）；<code>r.VSync 0</code> 让 <code>SyncInterval=0</code>（立即呈现，可能撕裂，延迟更低）。</li>
+      <li><code>RHIEndDrawingViewport</code>：插 Present Barrier（RT→Present）→ 刷新命令队列 → 调用 <code>IDXGISwapChain::Present()</code> → Signal Fence。</li>
+      <li>每帧开始时等待上一轮同一后缓冲的 GPU Fence，防止 CPU 超前覆写 GPU 还在使用的缓冲。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>源码：<span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12Viewport.h/.cpp</span>（FD3D12Viewport、Present 路径）。DXGI 文档：<a href="https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-flip-model">Microsoft Docs — DXGI Flip Model</a>。UE 帧流程参考：<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">How Unreal Renders a Frame Part 3 — Kostas Anagnostou</a>（后处理与上屏部分）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："IDXGISwapChain3 的 GetCurrentBackBufferIndex() 在三缓冲下什么时候会跳索引？""独占全屏和无边框窗口模式的 Present 路径在代码里有什么分支？""Present Flags 里 DXGI_PRESENT_ALLOW_TEARING 是怎么用的？""UE 如何在后缓冲上实现 HDR 颜色空间转换？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0037-d3d12rhi-pso-descriptors.html"><span class="nav-dir">← 上一课</span>0037 · D3D12 RHI 后端：PSO 缓存与描述符堆</a>
+    <a class="next" href="0039-gpu-timeline-scanout.html"><span class="nav-dir">下一课 →</span>0039 · GPU 执行时间线与扫描输出</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 7 RHI 与显示 · Present() 是 CPU 侧工作的终点——从这一刻起，像素的命运交给 DXGI、显示控制器和物理显示器。</footer>
+  </article>
+</div>
+</body>
+</html>

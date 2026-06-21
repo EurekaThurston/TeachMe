@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 数学 for VFX TA · 课程总纲</title>
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .mod { margin-top: 2.6rem; }
+  .mod-head { display: flex; align-items: baseline; gap: 0.6rem; }
+  .mod-head h2 { border: none; margin-bottom: 0.2rem; }
+  .mod-tag { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  ol.lessons { list-style: none; padding: 0; margin: 0.6rem 0; counter-reset: l; }
+  ol.lessons li { counter-increment: l; padding: 0.6rem 0.2rem 0.6rem 2.6rem; position: relative; border-bottom: 1px solid var(--rule); }
+  ol.lessons li::before {
+    content: counter(l, decimal-leading-zero); position: absolute; left: 0; top: 0.6rem;
+    font-family: monospace; font-size: 0.85rem; color: #fff; background: var(--accent);
+    width: 1.9rem; height: 1.6rem; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  }
+  ol.lessons li.done::before { background: var(--good); }
+  ol.lessons li.todo::before { background: #b9b8b0; }
+  .l-title { font-weight: 600; }
+  .l-title a { border: none; }
+  .l-win { display: block; font-size: 0.92rem; color: var(--muted); margin-top: 0.15rem; }
+  .l-anchor { font-size: 0.78rem; font-family: monospace; }
+  .anchor-hlsl { color: var(--hlsl); } .anchor-vfx { color: var(--vfx); }
+  .legend { font-size: 0.88rem; color: var(--muted); margin: 0.4rem 0 0; }
+  .pill { display:inline-block; font-size:0.72rem; padding:0.05rem 0.4rem; border-radius:3px; background:var(--accent-soft); color:var(--accent); margin-left:0.4rem; }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX TA</div>
+<h1>课程总纲 · 从零到能自己推</h1>
+<p class="subtitle">为 Unreal/Niagara 特效 TA 设计。几何直觉优先,代码锚点 HLSL + Niagara 并重。一条从「坐标是什么」直达「SDF / 四元数 / 切线空间」的路。</p>
+
+<div class="callout callout-key">
+  <span class="label">怎么用这份总纲</span>
+  按顺序学,每节是一个独立 HTML、十几分钟读完 + 一组即时反馈测验。<span style="color:var(--good)">■ 绿色=已出可学</span>,<span style="color:#9a9990">■ 灰色=规划中</span>。
+  每课都标了它服务的场景:<span class="anchor-hlsl">◆HLSL</span> 偏材质/shader、<span class="anchor-vfx">◆Niagara</span> 偏粒子矢量。术语统一见
+  <a href="reference/glossary.html">术语表</a>。
+</div>
+
+<div class="mod">
+  <div class="mod-head"><h2>模块 0 · 地基</h2><span class="mod-tag">坐标 / 角度 / 数值管道</span></div>
+  <p class="legend">在碰向量之前,先把三件「天天见但没人正经讲」的地板补平:空间怎么编号、sin/cos 到底是什么、shader 里那些 lerp/saturate/frac 是什么。</p>
+  <ol class="lessons">
+    <li class="done"><span class="l-title"><a href="lessons/0001-coordinate-systems.html">坐标系与空间</a></span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:能说清「一个点 = 原点 + 几条带刻度的轴」,看懂 UE 左手系 X前Y右Z上,UV 是 2D 坐标。</span></li>
+    <li class="done"><span class="l-title"><a href="lessons/0002-angles-trig.html">角度与三角:sin/cos 与单位圆</a></span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:在单位圆上看懂 sin=y、cos=x,弧度 vs 度,理解 shader 里的波动/脉冲为何全是 sin。</span></li>
+    <li class="done"><span class="l-title"><a href="lessons/0003-value-mapping.html">数值管道:lerp / clamp / saturate / smoothstep / frac</a></span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:掌握把一个数映射成另一个数的五个基本工具——TA 每天写的「数值管道」。</span></li>
+  </ol>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><h2>模块 1 · 向量</h2><span class="mod-tag">一切的心脏</span></div>
+  <p class="legend">向量是 3D 数学的核心。点、方向、速度、法线、颜色——全是向量。这一模块是后面所有内容的地基,慢慢嚼透。</p>
+  <ol class="lessons">
+    <li class="done"><span class="l-title"><a href="lessons/0004-what-is-a-vector.html">向量是什么:位置 vs 方向</a></span> <span class="l-anchor anchor-vfx">◆Niagara</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:同一组数 (x,y,z) 何时是「点」何时是「箭」,float2/3/4 与 swizzle。</span></li>
+    <li class="done"><span class="l-title"><a href="lessons/0005-vector-add-scale.html">加减与缩放:位移、速度×dt</a></span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:向量加=首尾相接,减=指向差,标量乘=伸缩;看懂 Position += Velocity·dt。</span></li>
+    <li class="done"><span class="l-title"><a href="lessons/0006-length-normalize.html">长度与归一化:纯方向</a></span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:length 是勾股定理,normalize 给长度=1 的纯方向;明白法线/光向为何必须归一化。</span></li>
+    <li class="done"><span class="l-title"><a href="lessons/0007-dot-product.html">点积 dot:同向程度与光照</a></span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:dot=|a||b|cosθ,读懂 N·L 兰伯特光照、菲涅尔、用 dot 判同向/垂直。shader 的灵魂。</span></li>
+    <li class="done"><span class="l-title"><a href="lessons/0008-cross-product.html">叉积 cross:垂直与法线</a></span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:cross 给同时垂直的向量、长度=面积;算三角面法线、建正交基、判手性。</span></li>
+  </ol>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><h2>模块 2 · 坐标空间与变换</h2><span class="mod-tag">TA 最常翻车处</span></div>
+  <p class="legend">「东西显示在错的位置 / 朝向歪了 / 法线贴图发黑」——根因几乎都在坐标空间和矩阵。这一模块把它们彻底讲穿。</p>
+  <ol class="lessons">
+    <li class="todo"><span class="l-title">坐标空间:Local / World / View / Tangent</span> <span class="l-anchor anchor-vfx">◆Niagara</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:同一个点在不同空间有不同坐标;Niagara 的 Local vs World、材质里的空间转换节点。</span></li>
+    <li class="todo"><span class="l-title">基向量:一个空间 = 原点 + 三根轴</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:任何向量都是基的线性组合——这是理解矩阵的钥匙。</span></li>
+    <li class="todo"><span class="l-title">矩阵是什么:装着变换后基向量的盒子</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:矩阵×向量=换空间;4×4 与齐次坐标(为什么要第 4 维 w)。</span></li>
+    <li class="todo"><span class="l-title">TRS 与乘法顺序:变换链</span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:平移/旋转/缩放矩阵,为什么乘序不能换、为什么从右往左读。</span></li>
+    <li class="todo"><span class="l-title">法线为什么用逆转置矩阵</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:非均匀缩放下法线会歪——inverse-transpose 的由来。TA 高频坑。</span></li>
+    <li class="todo"><span class="l-title">切线空间与法线贴图:TBN</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:法线贴图为什么是蓝的、世界空间 vs 切线空间法线、TBN 矩阵怎么搭。</span></li>
+  </ol>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><h2>模块 3 · 旋转</h2><span class="mod-tag">朝向与四元数</span></div>
+  <p class="legend">让粒子朝向运动方向、让物体平滑转向、避免万向锁——旋转是 TA 绕不开的硬骨头。用前面的 sin/cos 与 cross 一步步搭上去。</p>
+  <ol class="lessons">
+    <li class="todo"><span class="l-title">2D 旋转与旋转矩阵:转 UV</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:用 sin/cos 推 2D 旋转矩阵,在材质里旋转贴图/UV。</span></li>
+    <li class="todo"><span class="l-title">3D 旋转、欧拉角与万向锁</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:pitch/yaw/roll、轴序的坑、万向锁到底锁了什么。</span></li>
+    <li class="todo"><span class="l-title">四元数:紧凑、无锁、好插值</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:四元数是「轴+角」的编码,为什么用它,slerp 平滑过渡朝向,UE 的 FQuat。</span></li>
+    <li class="todo"><span class="l-title">Look-at:从方向向量构造朝向</span> <span class="l-anchor anchor-vfx">◆Niagara</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:用 cross 建正交基,让粒子/物体看向目标——把模块 1 和 3 接起来。</span></li>
+  </ol>
+</div>
+
+<div class="mod">
+  <div class="mod-head"><h2>模块 4 · 程序化 / shader 数学</h2><span class="mod-tag">把前面全用起来</span></div>
+  <p class="legend">收口模块:UV、噪声、SDF、时间波动、缓动曲线——把向量、三角、数值管道全部组合成真实的程序化特效。学完能读懂 Quilez / Book of Shaders。</p>
+  <ol class="lessons">
+    <li class="todo"><span class="l-title">UV 与采样的数学:平铺 / 偏移 / 极坐标</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:tiling、frac 重复、旋转 UV、极坐标做径向/旋涡。</span></li>
+    <li class="todo"><span class="l-title">噪声与随机:hash、value、Perlin 直觉</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:为什么 frac(sin·大数) 是随机,噪声怎么做扰动/消融/烟火。</span></li>
+    <li class="todo"><span class="l-title">SDF 有向距离场:形状即函数</span> <span class="l-anchor anchor-hlsl">◆HLSL</span>
+      <span class="l-win">收获:圆/盒 SDF、smoothstep 软边、min/max 布尔、smooth min。读懂 Inigo Quilez。</span></li>
+    <li class="todo"><span class="l-title">时间、波与脉冲:用 sin 做动画</span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:相位/频率/振幅、呼吸与脉冲、panner、time 驱动的运动。</span></li>
+    <li class="todo"><span class="l-title">曲线与缓动收尾:把数值管道串成动画</span> <span class="l-anchor anchor-hlsl">◆HLSL</span> <span class="l-anchor anchor-vfx">◆Niagara</span>
+      <span class="l-win">收获:ease 家族、smoothstep 再访、Bezier 直觉,串起一条完整的程序化动画管线。</span></li>
+  </ol>
+</div>
+
+<div class="ask-teacher">
+  <strong>这是「现阶段目标」的完整地图。</strong> 模块 0、1 已经出好(8 课),可以直接开学。学到哪、想先跳到哪个场景(比如急用切线空间或 SDF),随时跟我说,我按你的节奏继续成批产出后面的模块。有任何不懂的,直接在对话里问我——我是你的老师。
+</div>
+
+<div class="lesson-footer">
+  <p><a href="reference/glossary.html">术语表</a> · <a href="RESOURCES.md">资源清单</a> · <a href="MISSION.md">我的使命</a></p>
+</div>
+</body>
+</html>

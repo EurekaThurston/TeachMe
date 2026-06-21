@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 12 课 · TRS 与乘法顺序:变换链</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 12 课 · 模块 2 空间与变换</div>
+<h1>TRS 与乘法顺序:为什么先后不能换</h1>
+<p class="subtitle">平移、旋转、缩放各是一个矩阵,组合起来就是物体的世界变换。但<strong>顺序错一下,结果天差地别</strong>——「先转再移」和「先移再转」会把物体送到完全不同的地方。这一课讲透组合与读法。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能区分三种基本变换 <strong>T(平移)、R(旋转)、S(缩放)</strong>,并理解:把它们组合是<strong>矩阵相乘</strong>;<strong>矩阵乘法不可交换</strong>(AB ≠ BA),所以顺序决定结果;在「列向量」约定下,变换链 <code>T·R·S·v</code> 要<strong>从右往左读</strong>:先缩放、再旋转、最后平移。
+</div>
+
+<h2>三块积木</h2>
+<table class="tbl">
+  <tr><th>变换</th><th>对基 / 点做什么</th><th>典型用途</th></tr>
+  <tr><td><strong>S 缩放 Scale</strong></td><td>把基向量拉长/压短(沿轴伸缩)</td><td>放大物体、各向异性拉伸</td></tr>
+  <tr><td><strong>R 旋转 Rotate</strong></td><td>把基向量转个角度(长度不变)</td><td>朝向、转动(模块 3 详讲)</td></tr>
+  <tr><td><strong>T 平移 Translate</strong></td><td>把原点整体挪走(需 4×4 + w=1)</td><td>摆放位置</td></tr>
+</table>
+<p>
+S 和 R 都让原点不动(纯线性变换,3×3 就够);T 要挪原点,必须靠上一课的 4×4 齐次坐标。一个物体在世界里的最终位姿,通常就是这三者的组合,简称 <strong>TRS</strong>——这正是 UE Transform 面板里的 <strong>Location / Rotation / Scale</strong> 三行。
+</p>
+
+<h2>顺序为什么要紧:一个会翻车的例子</h2>
+<p>
+矩阵乘法<strong>不可交换</strong>:A·B 一般不等于 B·A。具体到变换:
+</p>
+<ul>
+  <li><strong>先旋转,再平移</strong>(R 然后 T):物体在原地转好朝向,再整体挪到目标点。✅ 通常是你想要的。</li>
+  <li><strong>先平移,再旋转</strong>(T 然后 R):物体先挪到远处,再<strong>绕世界原点</strong>转——结果物体<strong>绕着原点画大圆飞走了</strong>。😱</li>
+</ul>
+<p>
+同样两块积木,顺序一换,一个「在原地朝向某方向」,一个「绕原点公转」。「我的模型一旋转就飞到天边 / 绕着某个点转圈」——几乎都是 TRS 顺序错了。
+</p>
+<div class="formula">同样 R 和 T:　T·R　≠　R·T　　（一个原地转后平移,一个平移后绕原点转)</div>
+
+<h2>标准顺序:Scale → Rotate → Translate</h2>
+<p>
+绝大多数引擎(含 UE)构造物体世界矩阵的标准顺序是:<strong>先缩放,再旋转,最后平移</strong>。直觉上很合理:
+</p>
+<ol>
+  <li><strong>S</strong>:在原点把物体调到正确大小(此时还在原点,缩放不会把它推走)。</li>
+  <li><strong>R</strong>:在原点把它转到正确朝向(绕自己的轴心转,干净)。</li>
+  <li><strong>T</strong>:最后把这个已经「大小对、朝向对」的物体整体搬到目标位置。</li>
+</ol>
+<p>
+如果先平移再旋转,物体就不是绕自己轴心、而是绕世界原点转了;如果先平移再缩放,缩放还会把平移量也一起放大。所以 <strong>S → R → T</strong> 是让每一步都「在原点干净地做、最后再搬走」的顺序。
+</p>
+
+<h2>为什么写出来要「从右往左读」</h2>
+<p>
+在最常见的<strong>列向量</strong>约定里(向量是一列,矩阵在左边乘),把变换作用到点 v 上写成:
+</p>
+<div class="formula">v' = <span class="vec">T</span> · <span class="vec">R</span> · <span class="vec">S</span> · v</div>
+<p>
+看起来 T 在最前,但<strong>离 v 最近的先生效</strong>。括号一下就看明白:<code>T·(R·(S·v))</code> —— v 先被 S 缩放,结果再被 R 旋转,再被 T 平移。所以<strong>读变换链要从右往左、从离向量最近的开始读</strong>。写在左边的矩阵,反而是<strong>最后</strong>作用的、且作用在<strong>更外层(更全局)</strong>的空间里。
+</p>
+<div class="callout callout-warn">
+  <span class="label">注意:UE/HLSL 可能是行向量约定</span>
+  如果用<strong>行向量</strong>约定(向量是一行,矩阵在右边:<code>v' = v · S · R · T</code>),顺序就<strong>反过来从左往右读</strong>,矩阵书写顺序也变成 S·R·T。UE 内部多用行向量/行优先。<strong>别背死「左乘右乘」,记住几何意图「先缩放、再旋转、最后平移」</strong>,再按你所在环境的约定落地——朝向/位置不对时,顺序倒过来试。
+</div>
+
+<h2>层级变换:父子关系也是矩阵相乘</h2>
+<p>
+变换链还能往外套。子物体的世界矩阵 = <strong>父物体世界矩阵 · 子物体局部矩阵</strong>。武器挂在手上、手挂在手臂上、手臂挂在角色身上——一路矩阵相乘,就把局部坐标一层层送到世界。这就是骨骼/挂点(socket)/粒子跟随的数学本质,也是 Niagara Local Space(第 9 课)背后的机制:Local 粒子的世界位置 = 发射器世界矩阵 · 粒子局部位置。
+</p>
+<pre><code><span class="cmt">// 概念:把局部位置一路变换到世界</span>
+worldPos = <span class="fn">mul</span>(ParentWorld, <span class="fn">mul</span>(ChildLocal, localPos));
+</code></pre>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>以为顺序无所谓。</strong> 矩阵乘法不可交换,T·R ≠ R·T。顺序错 → 物体绕原点飞 / 缩放把位置也放大。</li>
+  <li><strong>背「左乘右乘」却不管约定。</strong> 列向量从右往左读、行向量从左往右读。记几何意图(SRT),按环境落地。</li>
+  <li><strong>缩放放错位置。</strong> 非均匀缩放要在旋转之前(在原点做),否则会沿世界轴而非物体轴拉伸,还会牵连法线(下一课)。</li>
+  <li><strong>层级里漏乘父矩阵。</strong> 子物体只用自己局部矩阵会停在父物体原点附近。世界位姿要 父·子 连乘。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz12"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=XkY2DOUCWMU" target="_blank">3Blue1Brown — Matrix multiplication as composition(第 4 章)</a>
+  —— 把「矩阵相乘=变换的串联」「为什么不可交换、为什么从右往左」讲到直观见底。本课的核心参考。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我 debug「物体一转就飞走 / 缩放后位置也被放大」是不是 TRS 顺序错?或者把你的挂点/跟随写成父子矩阵连乘?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>法线为什么用逆转置矩阵</strong>——非均匀缩放下,直接用模型矩阵变换法线会让它歪掉、不再垂直于表面。这是 TA 的高频隐形坑。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz12", [
+  {
+    q: "把多个变换组合,对应的运算是?",
+    options: ["矩阵相乘", "矩阵相加", "矩阵求行列式", "向量点积"],
+    correct: 0,
+    why: "组合变换=矩阵相乘。每个 T/R/S 是一个矩阵,串起来就是连乘。"
+  },
+  {
+    q: "为什么 T·R 和 R·T 结果不同?",
+    options: ["矩阵乘法不可交换", "矩阵乘法没定义", "T 和 R 大小不同", "其实它们相同"],
+    correct: 0,
+    why: "矩阵乘法不可交换(AB≠BA)。先转后移=原地转好再搬走;先移后转=被搬远后绕原点公转。"
+  },
+  {
+    q: "构造物体世界矩阵的标准顺序(几何意图)是?",
+    options: ["先缩放,再旋转,最后平移", "先平移,再旋转,最后缩放", "三者顺序随意", "先旋转,再平移,最后缩放"],
+    correct: 0,
+    why: "S→R→T:在原点把大小、朝向调好(干净),最后再整体搬到目标位置。"
+  },
+  {
+    q: "列向量约定下 v' = T·R·S·v,作用顺序是?",
+    options: ["从右往左:先 S 再 R 再 T", "从左往右:先 T 再 R 再 S", "同时作用", "只有 T 生效"],
+    correct: 0,
+    why: "离 v 最近的先生效:T·(R·(S·v))。所以从右往左读。行向量约定则相反,记几何意图最稳。"
+  },
+  {
+    q: "物体一旋转就「绕着远处某点画圈飞走」,最可能是?",
+    options: ["先平移后旋转,绕世界原点转了", "贴图错了", "粒子太多", "缩放为 0"],
+    correct: 0,
+    why: "正确应先旋转(绕自身轴心)再平移。先平移再旋转会让它绕世界原点公转,画大圈飞走。"
+  },
+  {
+    q: "子物体的世界矩阵怎么得到?",
+    options: ["父世界矩阵 · 子局部矩阵", "只用子局部矩阵", "父矩阵 + 子矩阵 相加", "子矩阵 · 父矩阵 的逆"],
+    correct: 0,
+    why: "层级变换=父·子连乘,把局部坐标一层层送到世界。挂点/骨骼/Niagara Local 跟随都是这个机制。"
+  }
+]);
+</script>
+</body>
+</html>

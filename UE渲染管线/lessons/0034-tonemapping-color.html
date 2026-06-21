@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0034 · 色调映射与颜色分级</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 6 · 后处理</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 6 · 后处理 · Lesson 0034</p>
+  <h1>色调映射与颜色分级</h1>
+  <p class="subtitle">ACES 胶片色调映射曲线把 HDR 线性颜色压缩到显示器可呈现的 LDR；CombineLUTs 预合并颜色分级操作产生一个 3D LUT；色调映射 Pass 在单次着色器调用中完成曝光缩放、泛光叠加、LUT 查表和输出 gamma 编码。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0033（泛光与曝光）、0031（后处理概述）</span>
+    <span><b>产出</b> 能解释 ACES 曲线的作用、CombineLUTs 的工作机制、色调映射 Pass 的完整输入/输出，以及 sRGB 与 HDR 显示输出的区别</span>
+  </div>
+
+  <p class="lead">色调映射是整条渲染管线里最后一道"物理→感知"的门槛。到目前为止，SceneColor 持有的是物理上准确的 HDR 线性辐亮度——这些值中有超过 1.0 的高亮，有极小的暗部细节，跨越 5–6 个量级的动态范围。显示器只能显示 [0, 1] 的窄范围。色调映射的任务是把这个宽动态范围<strong>压缩</strong>成显示器可呈现的范围，同时在视觉上保持高光不焦糊、暗部不死黑、整体对比度自然——这正是 ACES 胶片曲线解决的问题。</p>
+
+  <h2><span class="num">1</span>ACES 胶片色调映射曲线</h2>
+  <p>UE 4.26 默认使用 <strong>ACES（Academy Color Encoding System）胶片色调映射器</strong>，它是一条 S 形曲线，在视觉上模拟电影胶片的曝光响应曲线：暗部保留细节（toe），中间调对比强烈（linear section），高光优雅过渡（shoulder）而不焦糊。</p>
+
+  <p>UE 4.26 实现的 ACES 曲线来自 Krzysztof Narkowicz 的拟合公式（在 <code class="file">PostProcessTonemap.usf</code> 中）：</p>
+
+  <pre><code><span class="cmt">// PostProcessTonemap.usf — ACES 胶片色调映射拟合</span>
+<span class="typ">float3</span> <span class="fn">ACESFilm</span>(<span class="typ">float3</span> x)
+{
+    <span class="typ">float</span> a = 2.51f;
+    <span class="typ">float</span> b = 0.03f;
+    <span class="typ">float</span> c = 2.43f;
+    <span class="typ">float</span> d = 0.59f;
+    <span class="typ">float</span> e = 0.14f;
+    <span class="kw">return</span> <span class="fn">saturate</span>((x*(a*x+b))/(x*(c*x+d)+e));
+}</code></pre>
+  <p class="code-cap">这是一个有理多项式拟合，输入输出均为 [0, ∞) → [0, 1]。系数由 Narkowicz 的 ACES RRT+ODT 近似拟合，在质量/性能间取得平衡。注意：这不是完整 ACES 标准的 RRT（Reference Rendering Transform），而是一个适合实时渲染的视觉近似。</p>
+
+  <div class="callout knowledge">
+    <span class="label">ACES 完整标准 vs. UE 实现</span>
+    <p>完整 ACES 流水线包含 IDT（Input Device Transform）、RRT（Reference Rendering Transform）、ODT（Output Device Transform），其中 RRT 是一个复杂的颜色空间变换和 S 形压缩，ODT 根据目标显示设备做 gamma、色域、亮度调整。UE 4.26 的 ACES 实现是一个视觉上对齐但计算简化的近似——它提供了 ACES 的"胶片感"，但不是 AMPAS 标准的参考实现。UE 4.26 也支持配置 <code>r.TonemapperGamut</code> 选择色域，但这都属于近似实现范畴。</p>
+  </div>
+
+  <p><code>FPostProcessSettings</code> 中的 ACES 参数允许美术调整曲线形状：</p>
+  <table>
+    <thead><tr><th>参数</th><th>对应曲线部分</th><th>默认值</th><th>效果</th></tr></thead>
+    <tbody>
+      <tr><td><code>FilmSlope</code></td><td>中间调斜率（对比度）</td><td>0.88</td><td>增大 → 对比更强</td></tr>
+      <tr><td><code>FilmToe</code></td><td>暗部曲线（toe）</td><td>0.55</td><td>增大 → 暗部更快压黑</td></tr>
+      <tr><td><code>FilmShoulder</code></td><td>高光过渡（shoulder）</td><td>0.26</td><td>增大 → 高光更早压白</td></tr>
+      <tr><td><code>FilmBlackClip</code></td><td>黑点截断</td><td>0.0</td><td>增大 → 黑部截断更早</td></tr>
+      <tr><td><code>FilmWhiteClip</code></td><td>白点截断</td><td>0.04</td><td>增大 → 白部截断更早</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">2</span>CombineLUTs：预合并颜色分级为 3D LUT</h2>
+  <p>颜色分级（Color Grading）是美术对画面颜色做最终调整的步骤——饱和度、色调偏移、色调曲线、白平衡等。如果每帧在色调映射着色器里逐参数计算这些操作，性能开销较高。UE 4.26 的解决方案是<strong>预合并 LUT（CombineLUTs）</strong>：</p>
+
+  <p>在色调映射 Pass 之前（但频率比每帧低，通常每帧只跑一次），运行一个小的 <strong>CombineLUTs Pass</strong>（<code class="file">PostProcessCombineLUTs.cpp</code>），它把所有颜色分级操作烘培成一张 <strong>32×32×32 的 3D LUT 纹理</strong>（<code>PF_A2B10G10R10</code> 或 <code>PF_FloatRGBA</code>）：</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">色调曲线</span><span class="s-sub">FilmSlope/Toe/...</span></div>
+    <span class="flow-arrow">+</span>
+    <div class="stage fixed"><span class="s-name">白平衡</span><span class="s-sub">ColorTemp</span></div>
+    <span class="flow-arrow">+</span>
+    <div class="stage fixed"><span class="s-name">颜色校正</span><span class="s-sub">Saturation<br>Contrast</span></div>
+    <span class="flow-arrow">+</span>
+    <div class="stage fixed"><span class="s-name">自定义 LUT</span><span class="s-sub">用户导入的<br>颜色分级纹理</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">CombineLUTs</span><span class="s-sub">一次 CS Pass<br>烘培为 32³ LUT</span></div>
+  </div>
+
+  <p>这张 LUT 把线性 HDR 域的颜色查询映射到最终 LDR 输出颜色。色调映射 Pass 主体 PS 里对每个像素只需做一次 3D 纹理查表（<code>Volume.SampleLevel</code>），就完成了所有颜色分级 + ACES 曲线 + gamma 编码——O(1) 查表替代了多步参数计算。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · LUT 的维度与精度权衡</span>
+    <p>32×32×32 = 32768 个查表点。每个颜色通道 5 bit 精度（32 级），三线性插值补偿中间值。这个精度对视觉无损：人眼对颜色的分辨率不高，3D LUT 的 5 bit 精度在绝大多数情况下看不出量化瑕疵，除非极端颜色分级（如高对比度调色）。如需更高精度，理论上可以升到 64³，但显存翻 8 倍，且 3D 纹理采样的带宽成本也随之增加。</p>
+  </div>
+
+  <h2><span class="num">3</span>色调映射 Pass 的完整着色器逻辑</h2>
+  <p>色调映射 Pass 是整条后处理链里工作最密集的单个 PS（<code class="file">PostProcessTonemap.usf</code>）。它在一个像素着色器调用里完成：</p>
+
+  <pre><code><span class="cmt">// PostProcessTonemap.usf — 主 Pass 逻辑（结构示意）</span>
+<span class="typ">float4</span> <span class="fn">TonemapPS</span>(...) : <span class="typ">SV_Target0</span>
+{
+    <span class="cmt">// 1. 读 SceneColor（已含曝光缩放）</span>
+    <span class="typ">float3</span> HDR = <span class="fn">SceneColorTexture.Sample</span>(Sampler, UV).rgb;
+    HDR *= ExposureScale; <span class="cmt">// 曝光倍数（来自 EyeAdaptation 1×1 缓冲）</span>
+
+    <span class="cmt">// 2. 加泛光</span>
+    <span class="typ">float3</span> Bloom = <span class="fn">BloomTexture.Sample</span>(Sampler, UV).rgb;
+    HDR += Bloom * BloomIntensity;
+
+    <span class="cmt">// 3. 镜头光晕（可选）</span>
+    <span class="cmt">// HDR += LensFlare * LensFlareIntensity;</span>
+
+    <span class="cmt">// 4. 查 3D LUT（已包含 ACES + 颜色分级 + gamma）</span>
+    <span class="cmt">// LUT 的 UV：把 HDR 值映射到 LUT 的查表坐标（对数映射）</span>
+    <span class="typ">float3</span> LUTCoord = <span class="fn">LinearToLUTSpace</span>(HDR);
+    <span class="typ">float3</span> LDR = <span class="fn">ColorGradingLUT.SampleLevel</span>(Sampler, LUTCoord, 0).rgb;
+
+    <span class="cmt">// 5. 输出到 LDR 渲染目标（sRGB gamma 由 RT 格式的 sRGB flag 自动处理，或在 PS 里做）</span>
+    <span class="kw">return</span> <span class="typ">float4</span>(LDR, 1.0);
+}</code></pre>
+  <p class="code-cap">输出格式为 <code>PF_B8G8R8A8</code>（若渲染目标开启 sRGB flag，硬件在写入时自动做线性→sRGB gamma 转换）或 <code>PF_A2B10G10R10</code>（10bit/channel 用于 HDR10 输出）。</p>
+
+  <h2><span class="num">4</span>FPostProcessSettings 颜色分级参数</h2>
+  <p>CombineLUTs 读取的颜色分级参数来自 <code>FPostProcessSettings</code>（按全局/Shadow/Midtones/Highlights 分段调整）：</p>
+  <table>
+    <thead><tr><th>参数组</th><th>字段前缀</th><th>作用域</th><th>常用参数</th></tr></thead>
+    <tbody>
+      <tr><td>全局色调</td><td><code>ColorGrading</code></td><td>全亮度范围</td><td>Saturation, Contrast, Gamma, Gain, Offset</td></tr>
+      <tr><td>阴影</td><td><code>ColorGradingShadows</code></td><td>暗部（≈0.0–0.3）</td><td>同上，但只影响暗区</td></tr>
+      <tr><td>中间调</td><td><code>ColorGradingMidtones</code></td><td>中间亮度（≈0.3–0.7）</td><td>同上</td></tr>
+      <tr><td>高光</td><td><code>ColorGradingHighlights</code></td><td>亮部（≈0.7–1.0）</td><td>同上</td></tr>
+      <tr><td>白平衡</td><td><code>WhiteTemp</code> / <code>WhiteTint</code></td><td>全局</td><td>色温（K）和色调偏移</td></tr>
+      <tr><td>色调曲线</td><td><code>FilmSlope</code>等</td><td>ACES 曲线形状</td><td>见第 1 节</td></tr>
+      <tr><td>自定义 LUT</td><td><code>ColorGradingLUT</code></td><td>替代/叠加内置计算</td><td>导入外部 .png/.exr LUT 纹理</td></tr>
+    </tbody>
+  </table>
+
+  <p><code>ColorGradingIntensity</code> 控制整体颜色分级的混合强度（0 = 不分级，1 = 完全应用）。这个值在 CombineLUTs 里作为参数影响 LUT 的生成，而不是在运行时混合两个 LUT。</p>
+
+  <h2><span class="num">5</span>输出设备：sRGB、Rec.709 与 HDR10</h2>
+  <p>色调映射的输出目标格式取决于显示设备：</p>
+  <table>
+    <thead><tr><th>输出设备</th><th>目标格式</th><th>gamma / OETF</th><th>色域</th></tr></thead>
+    <tbody>
+      <tr><td><b>普通 SDR 显示器</b></td><td><code>PF_B8G8R8A8</code>（sRGB flag）</td><td>sRGB（≈gamma 2.2）</td><td>Rec.709</td></tr>
+      <tr><td><b>HDR10 电视/显示器</b></td><td><code>PF_A2B10G10R10</code></td><td>PQ（ST2084）</td><td>Rec.2020（目标，可能裁剪）</td></tr>
+      <tr><td><b>scRGB（PC HDR）</b></td><td><code>PF_FloatRGBA</code>（R16G16B16A16F）</td><td>线性（scRGB 约定）</td><td>Rec.709 扩展</td></tr>
+    </tbody>
+  </table>
+
+  <p>UE 4.26 通过 <code>r.HDR.EnableHDROutput</code> 和 <code>r.HDR.Display.OutputDevice</code> 控制输出路径：</p>
+  <ul>
+    <li><code>OutputDevice = 0</code>（默认）：SDR sRGB，CombineLUTs 包含 sRGB gamma 编码；</li>
+    <li><code>OutputDevice = 3</code>：HDR10 PQ，CombineLUTs 改用 PQ OETF 替代 sRGB gamma；</li>
+    <li><code>OutputDevice = 5</code>：scRGB，输出线性值（交换链格式为 16F）。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">sRGB flag 与手动 gamma 的区别</span>
+    <p>D3D 的 sRGB 渲染目标（<code>DXGI_FORMAT_B8G8R8A8_UNORM_SRGB</code>）让硬件在 PS 写入时<strong>自动</strong>把线性值转换为 sRGB gamma——等效于 <code>pow(x, 1/2.2)</code> 的近似。如果在 PS 里手动做 <code>LinearToSRGB</code>，然后写入非 sRGB RT，效果相同但多一步 ALU 指令。UE 4.26 的 CombineLUTs 会根据目标 RT 格式是否带 sRGB flag 决定是否在 LUT 生成时内嵌 gamma 转换——查一次 LUT 就包含了 gamma，不用额外 PS 指令。</p>
+  </div>
+
+  <h2><span class="num">6</span>色调映射与颜色分级的执行位置：一张图</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">SceneColor HDR</span><span class="s-sub">线性，[0,∞)</span></div>
+    <span class="flow-arrow">×</span>
+    <div class="stage fixed"><span class="s-name">ExposureScale</span><span class="s-sub">1×1 曝光缓冲</span></div>
+    <span class="flow-arrow">+</span>
+    <div class="stage prog"><span class="s-name">Bloom</span><span class="s-sub">泛光纹理<br>加法叠加</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">LUT 查表</span><span class="s-sub">3D 32³ LUT<br>含 ACES+分级+gamma</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage fixed"><span class="s-name">SceneColor LDR</span><span class="s-sub">sRGB，[0,1]</span></div>
+  </div>
+
+  <p>注意：整个色调映射 Pass 是一次全屏 PS 调用，上图中"×ExposureScale"、"+Bloom"、"LUT 查表"全部在同一个像素着色器里连续执行，没有额外的 Pass 切换——这是 UE 4.26 把多个操作合并进一个 Pass 的典型优化（减少 RT 切换和带宽）。</p>
+
+  <div class="callout warn">
+    <span class="label">禁用 ACES 的代价</span>
+    <p><code>r.TonemapperFilm = 0</code> 会禁用 ACES 胶片曲线，改用一个简单的 Reinhard 色调映射（<code>x / (x + 1)</code>）。这会让画面高光更"平"（没有胶片感的 shoulder），整体对比度下降，但对需要完全线性颜色输出的应用（如合成管线、可视化）有时是必要的。CombineLUTs 在无 ACES 模式下仍然运行，颜色分级参数仍然有效。</p>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">CombineLUTs Pass 在 UE 4.26 中的作用是什么，它的输出是什么格式的数据？</p>
+    <button class="q-opt">每帧重新计算颜色分级的数学公式，输出一个参数结构体供色调映射 PS 读取</button>
+    <button class="q-opt">把所有颜色分级操作（白平衡、饱和度、ACES 曲线、gamma）预合并烘培进一张 32×32×32 的 3D LUT 纹理，色调映射 PS 只需对每像素做一次查表</button>
+    <button class="q-opt">把泛光纹理和 SceneColor 合并输出一张新的 HDR 纹理，供后续 Pass 读取</button>
+    <div class="q-feedback"
+      data-ok="对。CombineLUTs 的核心价值是把多步颜色操作预计算为一张 3D LUT，使实际的色调映射 PS 只需 O(1) 查表而不是逐参数计算，且所有操作包括 gamma 编码都在 LUT 里一并完成。"
+      data-no="再想想：CombineLUTs 是一个预计算步骤，它把美术在 PostProcessSettings 里设置的所有颜色参数烘培进一张固定大小的 3D LUT，不是每帧重算参数，也不负责合并泛光。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出色调映射 Pass 在一次 PS 调用里按顺序完成的所有操作，以及 CombineLUTs 为什么必须在色调映射主 Pass 之前运行。</summary>
+    <div class="answer">
+      <p><strong>色调映射 PS 的操作顺序：</strong></p>
+      <ol>
+        <li>读取 SceneColor HDR 像素颜色；</li>
+        <li>乘以 ExposureScale（来自 1×1 曝光缓冲）做曝光校正；</li>
+        <li>加上泛光纹理（BloomIntensity 权重），在线性 HDR 域叠加光晕；</li>
+        <li>把曝光后的 HDR 值映射到 3D LUT 的查表坐标（对数空间 UV）；</li>
+        <li>从 3D LUT 三线性插值采样，得到包含了 ACES + 颜色分级 + gamma 编码的最终 LDR 颜色；</li>
+        <li>输出到 LDR RT（sRGB 8bit 或 HDR10 10bit）。</li>
+      </ol>
+      <p><strong>CombineLUTs 为什么必须先跑：</strong>色调映射 PS 里的 LUT 查表假设 LUT 已经烘培完毕。CombineLUTs 把当前帧的颜色分级参数合并成 LUT，如果在色调映射之后跑，LUT 还未更新，PS 会读到上一帧的 LUT（或未初始化数据）。所以 CombineLUTs 是色调映射 Pass 的前置依赖，RDG 会把它放在更早的节点。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>ACES 胶片曲线</strong>是 UE 4.26 默认色调映射器：有理多项式 S 形，保暗部细节（toe）、压高光（shoulder）；系数可通过 <code>FilmSlope</code> 等参数调整。</li>
+      <li><strong>CombineLUTs</strong> 把所有颜色分级（白平衡、饱和度、曲线、用户 LUT、gamma）预合并为一张 <strong>32³ 3D LUT</strong>，使色调映射 PS 只需一次查表。</li>
+      <li>色调映射 PS 在单次调用里完成：ExposureScale 乘法 → Bloom 加法 → LUT 查表 → 输出 LDR。</li>
+      <li>输出格式取决于目标显示设备：SDR 用 <code>PF_B8G8R8A8</code>（sRGB），HDR10 用 <code>PF_A2B10G10R10</code>（PQ OETF），LUT 生成时已内嵌对应的 gamma/OETF 转换。</li>
+      <li>色调映射是整条后处理链里 HDR→LDR 的唯一转换点；之后的 UI 合成和 Present 在 LDR 空间工作。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》Part 3</a>——含色调映射 Pass 分析。源码：<code>Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessTonemap.cpp</code> 和 <code>PostProcessTonemap.usf</code>（ACES 实现），<code>PostProcessCombineLUTs.cpp</code>（LUT 合并）。延伸：Krzysztof Narkowicz，《ACES Filmic Tone Mapping Curve》——UE 使用的近似公式的来源。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："LUT 坐标映射函数 LinearToLUTSpace 具体怎么做？""HDR10 的 PQ OETF 和 sRGB gamma 有什么区别，从数学上推一下？""自定义 LUT 纹理的导入格式要求是什么？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0033-bloom-exposure.html"><span class="nav-dir">← 上一课</span>0033 · 泛光与自动曝光</a>
+    <a class="next" href="0035-motionblur-dof-composite.html"><span class="nav-dir">下一课 →</span>0035 · 动态模糊、景深与最终合成</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 6 后处理 · 色调映射是 HDR 物理世界与 LDR 显示世界的唯一关卡；CombineLUTs 用一次查表替代了多步颜色运算。</footer>
+  </article>
+</div>
+</body>
+</html>

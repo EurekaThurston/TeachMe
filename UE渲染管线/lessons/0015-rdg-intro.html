@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0015 · RDG 入门：为什么要图、如何构图</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 3 · 渲染线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 3 · 渲染线程 · Lesson 0015</p>
+  <h1>RDG 入门：为什么要图、如何构图</h1>
+  <p class="subtitle">RDG（Render Dependency Graph）把整帧 Pass 的录制和执行拆成两个阶段：先"描述"、后"执行"。这个延迟模型让引擎得以自动化一切屏障、资源分配和异步计算调度。理解这一对比，是读懂 4.26 之后任何渲染代码的门槛。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~25 分钟</span>
+    <span><b>前置</b> 0003（资源屏障）、0014（Render() 总览）</span>
+    <span><b>产出</b> 能说出 RDG 的"延迟录制→编译→执行"模型，并读懂一个最小 Pass 的声明</span>
+  </div>
+
+  <p class="lead">0003 讲了手动管理资源屏障的痛苦——每次资源用途改变（RT → ShaderReadOnly）都要精确插入 <code>ResourceBarrier</code>，漏插崩溃、多插性能损耗。RDG 的设计目标正是：让你描述"Pass 读写什么资源"，由图编译器自动推导并放置所有屏障。这不是语法糖，是根本性的抽象层变换。</p>
+
+  <h2><span class="num">1</span>命令式 vs 声明式：为什么需要"图"</h2>
+
+  <div class="lanes">
+    <div class="lane render"><span class="lane-name">命令式（旧方式）</span><span class="lane-body">Pass A → 手动插屏障(A→B) → Pass B → 手动插屏障(B→C) → Pass C → … 每个屏障由程序员在代码里精确放置，错位即 GPU 乱序读脏数据或 TDR。Pass 引用但实际不需要的资源也无法自动跳过。</span></div>
+    <div class="lane rhi"><span class="lane-name">声明式（RDG）</span><span class="lane-body">向 FRDGBuilder 声明 Pass：Pass 读哪些资源、写哪些资源。RDG 在 Execute() 编译时：① 推导所有屏障位置；② 合并相邻屏障；③ 推导资源生命周期；④ 对生命周期不重叠的资源做内存别名；⑤ 剔除无引用的 Pass。程序员只描述"做什么"，RDG 决定"怎么安全高效地做"。</span></div>
+  </div>
+
+  <div class="callout knowledge">
+    <span class="label">RDG 的三步模型</span>
+    <p><strong>1. 构图阶段（Recording）</strong>：渲染线程调用 <code>GraphBuilder.AddPass()</code> 把 Pass 描述加入图，此时 lambda 不运行，真实 GPU 命令不录制。<strong>2. 编译阶段（Compile）</strong>：<code>GraphBuilder.Execute()</code> 被调用，RDG 遍历图，推导依赖关系、资源生命周期、屏障位置、Pass 剔除、内存别名。<strong>3. 执行阶段（Execute）</strong>：按拓扑序依次调用各 Pass 的 lambda，向 <code>FRHICommandList</code> 录制真实命令，最终提交。</p>
+  </div>
+
+  <h2><span class="num">2</span>核心 API 逐一拆解</h2>
+
+  <h3>2.1 FRDGBuilder</h3>
+  <p>定义在 <span class="file">Engine/Source/Runtime/RenderCore/Public/RenderGraphBuilder.h</span>。构造时绑定一条 <code>FRHICommandListImmediate</code>：</p>
+
+  <pre><code><span class="typ">FRDGBuilder</span> <span class="fn">GraphBuilder</span>(RHICmdList);</code></pre>
+
+  <p><code>GraphBuilder</code> 的生命周期就是"描述整帧所有 Pass"的窗口。析构或 <code>Execute()</code> 时结束构图、触发编译执行。</p>
+
+  <h3>2.2 CreateTexture / CreateBuffer</h3>
+  <pre><code><span class="cmt">// 声明一张临时纹理——此刻不分配真实显存</span>
+<span class="typ">FRDGTextureDesc</span> Desc = <span class="typ">FRDGTextureDesc</span>::<span class="fn">Create2D</span>(
+    <span class="fn">FIntPoint</span>(Width, Height),
+    <span class="typ">PF_FloatRGBA</span>,
+    <span class="typ">FClearValueBinding</span>::<span class="fn">Black</span>(),
+    <span class="typ">TexCreate_RenderTargetable</span> | <span class="typ">TexCreate_ShaderResource</span>);
+
+<span class="typ">FRDGTextureRef</span> SceneColorTexture =
+    GraphBuilder.<span class="fn">CreateTexture</span>(Desc, <span class="str">TEXT("SceneColor")</span>);</code></pre>
+
+  <p><code>FRDGTextureRef</code> 是一个<strong>虚拟句柄</strong>（类似"图里的变量名"），不持有真实 <code>FRHITexture*</code>。真实显存在 Execute 的编译期才根据生命周期分配（或从瞬态池复用）。</p>
+
+  <h3>2.3 BEGIN_SHADER_PARAMETER_STRUCT</h3>
+  <p>每个 Pass 的输入输出用结构体宏声明：</p>
+
+  <pre><code><span class="typ">BEGIN_SHADER_PARAMETER_STRUCT</span>(FMyPassParameters, )
+    <span class="typ">SHADER_PARAMETER_RDG_TEXTURE</span>(Texture2D, InputTexture)
+    <span class="typ">SHADER_PARAMETER_RDG_TEXTURE_UAV</span>(RWTexture2D&lt;float4&gt;, OutputTexture)
+    <span class="typ">RENDER_TARGET_BINDING_SLOTS</span>()
+<span class="typ">END_SHADER_PARAMETER_STRUCT</span>()</code></pre>
+
+  <p>宏里每个 <code>RDG_TEXTURE_ACCESS</code>、<code>RDG_TEXTURE_UAV</code> 都告诉 RDG "这个 Pass 对这个资源的访问类型"。RDG 据此推导：这个资源在这个 Pass 之前应处于什么状态、之后变成什么状态——屏障就这样自动算出来。</p>
+
+  <h3>2.4 AddPass</h3>
+  <pre><code><span class="typ">FMyPassParameters</span>* Parameters =
+    GraphBuilder.<span class="fn">AllocParameters</span>&lt;<span class="typ">FMyPassParameters</span>&gt;();
+Parameters-&gt;InputTexture  = InputTexRef;
+Parameters-&gt;OutputTexture = GraphBuilder.<span class="fn">CreateUAV</span>(OutputTexRef);
+
+GraphBuilder.<span class="fn">AddPass</span>(
+    <span class="fn">RDG_EVENT_NAME</span>(<span class="str">"MyPass"</span>),
+    Parameters,
+    <span class="typ">ERDGPassFlags</span>::Compute,
+    [Parameters, LocalData](<span class="typ">FRHICommandList</span>&amp; RHICmdList)
+    {
+        <span class="cmt">// 这里才真正录制 RHI 命令——Execute() 时才运行</span>
+        <span class="typ">TShaderMapRef</span>&lt;<span class="typ">FMyComputeShader</span>&gt; ComputeShader(GetGlobalShaderMap(<span class="cmt">/* FeatureLevel */</span>));
+        <span class="fn">SetComputePipelineState</span>(RHICmdList, ComputeShader.<span class="fn">GetComputeShader</span>());
+        <span class="fn">SetShaderParameters</span>(RHICmdList, ComputeShader, ComputeShader.<span class="fn">GetComputeShader</span>(), *Parameters);
+        <span class="fn">DispatchComputeShader</span>(RHICmdList, ComputeShader, GroupsX, GroupsY, <span class="num">1</span>);
+    });</code></pre>
+
+  <div class="callout warn">
+    <span class="label">AddPass 的 lambda 里不能访问 RDG 资源的 RHI 句柄——除非用 GetPooledRDGTexture 先解包</span>
+    <p>在 <code>AddPass</code> 的 lambda 内，<code>FRDGTextureRef</code> 虚拟句柄已被 RDG 解析成真实 <code>FRHITexture*</code> 并绑定到 Parameters 里——直接使用 Parameters 里的字段即可。不要在 lambda 里对 <code>FRDGTextureRef</code> 直接调用 RHI 方法，那是构图阶段的对象，Execute 时它的"意义"已完成。</p>
+  </div>
+
+  <h3>2.5 Execute</h3>
+  <pre><code>GraphBuilder.<span class="fn">Execute</span>();
+<span class="cmt">// 之后 GraphBuilder 析构，所有 RDG 资源句柄失效</span></code></pre>
+
+  <p><code>Execute()</code> 做三件事：① 拓扑排序 + Pass 剔除；② 推导资源生命周期 + 分配/别名真实显存；③ 插入所有屏障并按序调用每个 Pass 的 lambda 向 RHICmdList 录制命令。从 Execute 返回后，命令已录入 <code>FRHICommandListImmediate</code>，等待 RHI 线程提交。</p>
+
+  <h2><span class="num">3</span>一个最小完整示例：SceneColor 后处理 Pass</h2>
+
+  <pre><code><span class="cmt">// 构图阶段（在 Render() 或某个 AddXxxPasses 函数里）</span>
+<span class="typ">FRDGBuilder</span> <span class="fn">GraphBuilder</span>(RHICmdList);
+
+<span class="cmt">// 声明输入输出纹理</span>
+<span class="typ">FRDGTextureRef</span> SceneColor = GraphBuilder.<span class="fn">RegisterExternalTexture</span>(
+    <span class="fn">GSceneRenderTargets</span>.<span class="fn">GetSceneColor</span>());   <span class="cmt">// 把已有 RHI 纹理注册进图</span>
+
+<span class="typ">FRDGTextureDesc</span> OutDesc = SceneColor-&gt;Desc;
+OutDesc.Flags |= <span class="typ">TexCreate_UAV</span>;
+<span class="typ">FRDGTextureRef</span> OutTexture = GraphBuilder.<span class="fn">CreateTexture</span>(OutDesc, <span class="str">TEXT("PP_Out")</span>);
+
+<span class="cmt">// 填充参数</span>
+<span class="kw">auto</span>* Params = GraphBuilder.<span class="fn">AllocParameters</span>&lt;<span class="typ">FMyPostProcessPassParams</span>&gt;();
+Params-&gt;InputTexture  = SceneColor;
+Params-&gt;OutputTexture = GraphBuilder.<span class="fn">CreateUAV</span>(OutTexture);
+
+<span class="cmt">// 声明 Pass（此时不运行 lambda）</span>
+GraphBuilder.<span class="fn">AddPass</span>(
+    <span class="fn">RDG_EVENT_NAME</span>(<span class="str">"MyPostProcess"</span>),
+    Params,
+    <span class="typ">ERDGPassFlags</span>::Compute,
+    [Params](<span class="typ">FRHICommandList</span>&amp; RHICmdList)
+    {
+        <span class="cmt">// Execute() 时才运行，此处是真正录制 GPU 命令</span>
+        <span class="cmt">// ... Dispatch compute shader ...</span>
+    });
+
+GraphBuilder.<span class="fn">Execute</span>();   <span class="cmt">// 编译+执行整图</span></code></pre>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">调用 GraphBuilder.CreateTexture() 时，GPU 显存实际在何时分配？</p>
+    <button class="q-opt">CreateTexture() 被调用的瞬间，立即分配真实 GPU 显存</button>
+    <button class="q-opt">AddPass() 时，RDG 为该 Pass 分配所有参数对应的显存</button>
+    <button class="q-opt">GraphBuilder.Execute() 的编译阶段，RDG 推导生命周期后才分配（或复用别名）</button>
+    <div class="q-feedback" data-ok="对。CreateTexture 只返回一个虚拟句柄（FRDGTextureRef），真实显存在 Execute() 的编译期根据生命周期分析才被分配——这使得 RDG 能做内存别名优化。" data-no="再想：RDG 的关键设计是"延迟分配"——先声明逻辑资源，Execute 时才知道谁和谁的生命周期不重叠、能复用同一块物理显存。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看笔记，解释 RDG 的三步模型（Recording、Compile、Execute），并说明 FRDGTextureRef 是什么、什么时候变成真实 FRHITexture*。</summary>
+    <div class="answer">
+      <p><strong>Recording</strong>：渲染线程调用 <code>CreateTexture</code>、<code>AddPass</code> 等 API，向 FRDGBuilder 描述本帧所有 Pass 及其输入输出资源。此时 lambda 不运行，GPU 命令不录制，显存不分配。<code>FRDGTextureRef</code> 是图里的"逻辑变量"，不持有真实显存句柄。</p>
+      <p><strong>Compile</strong>：<code>Execute()</code> 被调用，RDG 遍历图，推导每个资源的生命周期（首次写→最后一次读），对不重叠的资源做内存别名，推导所有屏障插入点，剔除无引用的 Pass。这时 <code>FRDGTextureRef</code> 被解析为真实的 <code>FRHITexture*</code>（从瞬态池分配或别名复用）。</p>
+      <p><strong>Execute</strong>：按拓扑序依次调用每个 Pass 的 lambda，向 <code>FRHICommandList</code> 录制真实 GPU 命令（Dispatch/Draw）以及编译期确定的屏障。录制完后提交给 RHI 线程。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>RDG（<span class="file">RenderCore/Public/RenderGraphBuilder.h</span>）的核心：<strong>先描述、后执行</strong>——构图不录命令，<code>Execute()</code> 时才编译图、分配显存、插屏障、录命令。</li>
+      <li><code>FRDGTextureRef</code> / <code>FRDGBufferRef</code> 是虚拟句柄，编译期才解析为真实 <code>FRHITexture*</code>——这是内存别名的前提。</li>
+      <li><code>BEGIN_SHADER_PARAMETER_STRUCT</code> 里声明的 RDG 资源访问告诉 RDG"谁读谁写"——屏障位置由此自动推导，呼应 0003 手动屏障之痛。</li>
+      <li><code>AddPass(name, params, flags, lambda)</code>：flags 指定 Pass 类型（Raster/Compute/AsyncCompute/Copy），lambda 在 Execute 阶段才运行。</li>
+      <li><code>GraphBuilder.Execute()</code>：拓扑排序 + 资源分配 + 屏障 + 按序执行 lambda，是整帧 GPU 工作的真正"起跑枪"。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.26/en-US/ProgrammingAndScripting/Rendering/RenderDependencyGraph">Render Dependency Graph (RDG) — UE 4.26 Docs</a> ——官方说明，含 API 速查。源码：<span class="file">Engine/Source/Runtime/RenderCore/Public/RenderGraphBuilder.h</span>、<span class="file">RenderGraphResources.h</span>、<span class="file">RenderGraphUtils.h</span>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："RegisterExternalTexture 和 CreateTexture 的区别是什么？""ERDGPassFlags 里 Raster 和 Compute 的区别？""PassParameter 里的 RenderTargetBinding 和 UAV 有什么不同？""RDG 如何保证 lambda 里的捕获变量生命周期安全？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0014-deferredshadingscenerenderer-render.html"><span class="nav-dir">← 上一课</span>0014 · 总调度：Render() 全景</a>
+    <a class="next" href="0016-rdg-advanced.html"><span class="nav-dir">下一课 →</span>0016 · RDG 进阶：资源生命周期、屏障自动化、异步计算、Pass 剔除</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 3 渲染线程 · RDG 是 4.26 之后所有 Pass 的编程模型，下一课深入其编译优化细节。</footer>
+  </article>
+</div>
+</body>
+</html>

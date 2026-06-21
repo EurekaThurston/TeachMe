@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 17 课 · 四元数与 slerp:不会万向锁的旋转</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 17 课 · 模块 3 旋转</div>
+<h1>四元数与 slerp:不会万向锁、能平滑插值的旋转</h1>
+<p class="subtitle">四元数听起来玄(四个数、虚部、复数推导),但 TA 不需要啃数学证明。我们只学三件事:<strong>它是什么、它解决了上一课的什么坑、怎么用 slerp 做平滑旋转插值</strong>。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能把四元数理解为「<strong>绕某根轴转某个角</strong>」的紧凑打包(轴 + 角)。它的好处:<strong>不会万向锁</strong>、<strong>叠加旋转只需相乘</strong>、<strong>能用 slerp 平滑插值</strong>(沿最短弧匀速转,不会突跳)。你不用手算四元数,但要知道何时该用它、以及 slerp 比 lerp 好在哪。
+</div>
+
+<h2>一句话直觉:轴 + 角</h2>
+<p>
+忘掉「四个数」「虚部」。抓住一个几何事实:<strong>任何 3D 旋转,都可以表达成「绕某一根轴 n̂,转某个角 θ」</strong>(这叫轴角表示)。四元数就是把这个「轴 + 角」紧凑编码进四个数:
+</p>
+<div class="formula">q = ( <span class="vec">cos(θ/2)</span> , <span class="vecA">n̂ · sin(θ/2)</span> )　　前 1 个数是「转多少」,后 3 个数是「绕哪根轴」</div>
+<p>
+为什么是 θ/2(半角)?这正是四元数的数学魔法所在,也是它避免万向锁的关键——但你<strong>不需要推导它</strong>。需要记住的是:四元数 = 一根轴 + 一个角 的打包,<strong>没有「三个嵌套环」,所以根本不存在环重合的万向锁</strong>。
+</p>
+
+<h2>它解决了上一课的两个坑</h2>
+<table class="tbl">
+  <tr><th>欧拉角的坑</th><th>四元数怎么绕开</th></tr>
+  <tr><td>万向锁(中轴 90° 丢自由度)</td><td>没有嵌套轴,绕单一轴转,<strong>不会丢自由度</strong></td></tr>
+  <tr><td>顺序敏感、表示不唯一</td><td>叠加旋转=四元数<strong>相乘</strong>,干净;朝向表示基本唯一(q 和 −q 同朝向)</td></tr>
+  <tr><td>插值会突跳</td><td><strong>slerp</strong> 沿球面最短弧匀速转,平滑无突跳</td></tr>
+</table>
+<p>
+代价是:四元数<strong>不直观</strong>,人没法盯着四个数想象朝向。所以实践里的分工是:<strong>欧拉角给人看/手调,四元数给机器算(叠加、插值、连续转动)</strong>。
+</p>
+
+<h2>slerp:为什么不用普通 lerp</h2>
+<p>
+你已经在第 3 课学过 <strong>lerp</strong>(线性插值)。要在两个朝向之间平滑过渡(相机转向、骨骼补间、粒子对齐),能不能直接对四元数做 lerp?<strong>不行</strong>——直接 lerp 会让旋转<strong>中间变快变慢</strong>(不匀速),还会因为没归一化而轻微缩放。
+</p>
+<p>
+正确工具是 <strong>slerp</strong>(spherical linear interpolation,球面线性插值):它把两个朝向看成球面上的两个点,沿着<strong>最短的大圆弧、匀速</strong>滑过去。结果是<strong>恒定角速度</strong>的平滑旋转——这正是相机转向、动画过渡想要的手感。
+</p>
+<div class="formula">lerp:走直线弦,转速忽快忽慢　|　slerp:走球面弧,转速恒定、走最短路</div>
+<pre><code><span class="cmt">// 概念:在两个朝向间平滑转过去,t 从 0→1</span>
+Quat from = ...;          <span class="cmt">// 起始朝向</span>
+Quat to   = ...;          <span class="cmt">// 目标朝向</span>
+Quat now  = <span class="fn">Slerp</span>(from, to, t);   <span class="cmt">// 沿最短弧匀速插值</span>
+<span class="cmt">// 用于:相机平滑转向、骨骼补间、Niagara 粒子朝向渐变对齐</span>
+</code></pre>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  UE 里旋转的内部类型 <code>FQuat</code> 就是四元数;蓝图/C++ 的 <code>RInterp</code>/<code>Slerp</code>、动画混合、IK、相机平滑跟随,底层都是四元数 slerp。Niagara 里让粒子<strong>渐渐对齐</strong>到某方向(而不是瞬间 snap)、让朝向插值不抽搐,也是这个。记住信号:<strong>凡是「旋转要平滑过渡、要叠加、要连续转」就用四元数 + slerp;凡是「给人读/手填一个朝向」就用欧拉角</strong>。两者随时可互转。
+</div>
+
+<h2>一个常见小坑:最短路与 −q</h2>
+<p>
+四元数 <strong>q 和 −q 表示同一个朝向</strong>(转 θ 和转 θ+360° 一样)。但做 slerp 时,如果起点和终点的符号不一致,插值可能<strong>绕远路</strong>(走长弧、甚至快转一整圈)。所以 slerp 实现里通常会先检查两端点积、必要时把一端取反,保证走<strong>最短弧</strong>。「相机本该小转一下却猛甩一大圈」有时就是这个没处理好。
+</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>想用脑子直接读四元数的朝向。</strong> 别。四元数给机器算,读朝向看欧拉角或轴角。</li>
+  <li><strong>对旋转用 lerp 而不是 slerp。</strong> lerp 转速不匀、会缩放。朝向插值用 slerp。</li>
+  <li><strong>忘了四元数要归一化。</strong> 单位四元数才表示纯旋转;累乘多次后要 normalize,否则漂移。</li>
+  <li><strong>没处理 q/−q 最短路。</strong> slerp 前不对齐符号,可能绕远路猛甩。点积为负就取反一端。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz17"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=zjMuIxRvygQ" target="_blank">3Blue1Brown / Ben Eater — Visualizing quaternions(交互式)</a>
+  —— 用可交互动画把四元数的几何意义讲清。TA 看「轴+角、为什么平滑、为什么不锁」这部分即可,复数代数可略过。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我帮你把某段「相机/骨骼朝向突跳」改成 slerp?或者解释你的四元数累乘为什么漂移(没归一化)、slerp 为什么绕远路(没处理 −q)?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>look-at 与朝向构造</strong>——给一个「要看向的目标点」,怎么算出物体该有的朝向?把第 8 课的叉积、第 10 课的基、这一课的旋转缝合成一个 TA 天天用的工具。模块 3 收官。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz17", [
+  {
+    q: "把四元数理解成几何上的什么最实用?",
+    options: ["绕某根轴转某个角的打包", "三个嵌套旋转环", "一个缩放因子", "一个位置坐标"],
+    correct: 0,
+    why: "四元数=轴角(绕n̂转θ)的紧凑编码。没有嵌套环,所以根本不存在环重合的万向锁。"
+  },
+  {
+    q: "四元数相比欧拉角最关键的优势是?",
+    options: ["不会万向锁,且能平滑插值", "数字更少", "更容易用眼睛读朝向", "不需要归一化"],
+    correct: 0,
+    why: "绕单一轴、无嵌套→不锁;叠加=相乘;slerp可平滑插值。代价是不直观,所以给机器算。"
+  },
+  {
+    q: "在两个朝向间平滑过渡,正确工具是?",
+    options: ["slerp(球面线性插值)", "普通 lerp", "clamp", "saturate"],
+    correct: 0,
+    why: "对四元数直接lerp会转速不匀、轻微缩放。slerp沿球面最短弧匀速转,得到恒定角速度的平滑旋转。"
+  },
+  {
+    q: "实践中欧拉角和四元数的分工是?",
+    options: ["欧拉角给人读/手调,四元数给机器算", "完全等价随便用", "欧拉角算,四元数显示", "只用其中一个"],
+    correct: 0,
+    why: "欧拉角直观便于输入输出;叠加、插值、连续转动用四元数避坑。两者随时可互转。"
+  },
+  {
+    q: "「q 和 −q 表示同一朝向」对 slerp 意味着?",
+    options: ["不对齐符号可能绕远路猛甩", "插值会失败报错", "结果一定相同", "必须用 lerp 代替"],
+    correct: 0,
+    why: "符号不一致时slerp可能走长弧绕远路。实现里先看点积、必要时取反一端,保证走最短弧。"
+  },
+  {
+    q: "四元数多次累乘后要做什么以防漂移?",
+    options: ["归一化(保持单位四元数)", "取行列式", "乘以 2", "转成欧拉角再转回"],
+    correct: 0,
+    why: "只有单位四元数表示纯旋转。累乘的浮点误差会让模长偏离1,需normalize,否则朝向慢慢漂。"
+  }
+]);
+</script>
+</body>
+</html>

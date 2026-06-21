@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0003 · 图形 API 的契约：命令列表、PSO、描述符、屏障</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 0 · 基础</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 0 · 基础 · Lesson 0003</p>
+  <h1>图形 API 的契约：命令列表、PSO、描述符、屏障</h1>
+  <p class="subtitle">CPU 从不直接命令 GPU 干活——它<strong>录命令</strong>，GPU 异步地<strong>放命令</strong>。图形 API（这里以 D3D12 为心智模型）就是这份契约。搞懂它的四个核心概念，UE 的 RHI 和 RDG 就只是"替你把这份契约填好"。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~16 分钟</span>
+    <span><b>前置</b> 0001 / 0002</span>
+    <span><b>产出</b> 能说清命令列表/PSO/描述符/屏障各解决什么问题，以及 UE 在哪一层接管它们</span>
+  </div>
+
+  <p class="lead">现代显式 API（D3D12 / Vulkan）的设计哲学是一句话：<strong>把同步和状态管理的责任，从驱动手里拿走、交给应用</strong>。这听起来是负担，却是巨大性能的来源——因为只有应用（UE）知道整帧的全局信息，能做出驱动猜不到的优化。代价是有人得把这份"契约"填对。在 UE 里，填契约的人就是 <span class="term">RHI</span> 和 <span class="term">RDG</span>。本课先认识契约本身。</p>
+
+  <div class="callout knowledge">
+    <span class="label">为什么用 D3D12 当心智模型</span>
+    <p>UE 4.26 同时支持 D3D11（隐式、驱动替你管同步）和 D3D12（显式、你自己管）。本课程一律用<strong>显式模型</strong>思考，因为它把"到底谁在同步什么"摊开在明面上——而这正是 <span class="term">RDG</span> 被发明出来要自动化的东西。D3D11 只是把这些步骤藏进了驱动，并没有消失。</p>
+  </div>
+
+  <h2><span class="num">1</span>命令列表与队列：录制 / 提交 / 执行</h2>
+  <p>CPU 不会调一个函数就让 GPU 立刻画。它把一连串指令（设 PSO、绑资源、Draw、Dispatch……）<strong>录</strong>进一个<span class="term">命令列表</span>（command list），录完<strong>提交</strong>到一条<strong>命令队列</strong>，GPU 在自己的时间线上<strong>异步消费</strong>。</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">CPU 录制</span><span class="lane-body">SetPSO → SetDescriptors → Draw → Draw → Barrier → Draw …（写进命令列表，此刻 GPU 还没动）</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU 执行</span><span class="lane-body">从队列里取出已提交的命令列表，按序执行——通常落后 CPU 一帧（见 0004）</span></div>
+  </div>
+
+  <p>两个关键性质，后面整门课反复用到：</p>
+  <ul>
+    <li><strong>异步</strong>：提交 ≠ 执行完成。CPU 提交后继续往下跑，靠围栏（0004）才知道 GPU 何时做完。</li>
+    <li><strong>可并行录制</strong>：显式 API 允许<strong>多个线程各录一个命令列表</strong>，最后一起提交。UE 正是用这点把网格绘制命令的录制并行化（见 0018/0036），吃满多核 CPU。</li>
+  </ul>
+
+  <h2><span class="num">2</span>PSO：把"一大堆状态"冻成一个对象</h2>
+  <p>画一个三角形要确定的状态多得吓人：用哪个 VS/PS、顶点布局、混合模式、深度测试方式、光栅化设置、渲染目标格式…… 老式 API（D3D11）让你<strong>一项一项分别设</strong>，到 Draw 那一刻驱动才把这些状态<strong>组合、验证、编译</strong>成 GPU 能用的形态——这个运行时编译会造成<strong>卡顿（hitch）</strong>。</p>
+
+  <p><span class="term">PSO</span>（Pipeline State Object，管线状态对象）的解法：把上面几乎所有状态<strong>预先打包成一个不可变对象，提前编译好</strong>。绘制时只需一句"绑这个 PSO"，零运行时拼装。</p>
+
+  <pre><code><span class="cmt">// 概念示意：PSO 把这些一次性冻结</span>
+<span class="typ">PSO</span> = {
+  VS, PS,                  <span class="cmt">// 着色器字节码</span>
+  InputLayout,             <span class="cmt">// 顶点格式</span>
+  BlendState, DepthState,  <span class="cmt">// 混合 / 深度测试</span>
+  RasterizerState,
+  RenderTargetFormats      <span class="cmt">// 输出目标格式</span>
+};
+cmdList.<span class="fn">SetPipelineState</span>(PSO);   <span class="cmt">// 绘制时一句话搞定</span></code></pre>
+  <p class="code-cap">PSO 把运行时的状态拼装与编译，前移到加载期</p>
+
+  <div class="callout warn">
+    <span class="label">UE 的痛点 · PSO 缓存与卡顿</span>
+    <p>每一种"着色器 + 状态"的组合都是一个 PSO，必须提前编译。UE 的<strong>材质 shader permutation 爆炸</strong>就源于此：一个材质在不同光照/顶点工厂/Pass 下会生成大量变体，每个变体对应若干 PSO。若某 PSO 在玩家眼前第一次用到时才编译，就是一次卡顿。UE 因此有 <strong>PSO 预缓存</strong>（PSO caching）机制——这正是"shader 编译/PSO"成为 UE 性能话题的根因，0037 会深入。</p>
+  </div>
+
+  <h2><span class="num">3</span>描述符与根签名：着色器怎么找到资源</h2>
+  <p>着色器里写 <code>Texture2D BaseColor;</code>，可 GPU 怎么知道这张纹理在显存哪儿、什么格式、怎么采样？答案是<span class="term">描述符</span>（descriptor）——一小块描述"某资源在哪、如何解释"的元数据。绑定资源，本质是<strong>把描述符摆到着色器能查到的位置</strong>。</p>
+
+  <div class="pipeline">
+    <div class="stage"><span class="s-name">资源</span><span class="s-sub">显存里的纹理/缓冲</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">描述符</span><span class="s-sub">"在哪+怎么读"</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage"><span class="s-name">描述符堆</span><span class="s-sub">一大张表</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage fixed"><span class="s-name">根签名</span><span class="s-sub">着色器可见的槽位布局</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">着色器</span><span class="s-sub">按槽位读到资源</span></div>
+  </div>
+
+  <p><strong>根签名</strong>（root signature）定义了"这套着色器需要哪些资源槽位"——相当于函数签名。<strong>描述符堆</strong>是一大张连续的描述符表，绑定时把堆里的范围接到根签名的槽位上。UE 的 RHI 用 <code>FRHIShaderResourceView</code>、<code>FRHIUniformBuffer</code> 等抽象封装这一层；RDG 的 <code>SHADER_PARAMETER_*</code> 宏则让你<strong>声明式</strong>地填这些槽位（0015 会写到）。</p>
+
+  <h2><span class="num">4</span>资源屏障：显式 API 里最容易错、也最关键的一环</h2>
+  <p>同一块显存，这一刻是 Base Pass 的<strong>渲染目标</strong>（GPU 在写），下一刻要当作光照 Pass 的<strong>着色器输入</strong>（GPU 来读）。在显式 API 里，这个用途切换<strong>必须由你显式声明</strong>，叫<span class="term">资源屏障</span>（resource barrier / transition）。</p>
+
+  <pre><code><span class="cmt">// 把 GBuffer 从"可写的渲染目标"切到"可读的着色器资源"</span>
+cmdList.<span class="fn">ResourceBarrier</span>(GBufferA,
+    <span class="typ">RENDER_TARGET</span> <span class="kw">-&gt;</span> <span class="typ">PIXEL_SHADER_RESOURCE</span>);</code></pre>
+  <p class="code-cap">没有这条屏障，光照 Pass 可能读到尚未写完的数据</p>
+
+  <p>屏障干两件事：①<strong>同步</strong>——确保写操作真正完成、缓存刷新，读才能看到正确数据；②<strong>布局转换</strong>——某些硬件对"渲染目标"和"可采样纹理"用不同的内存排布，切换时要转换。屏障下错或漏下，会导致<strong>读到脏数据</strong>或<strong>性能悬崖</strong>（过度屏障让流水线频繁停顿）。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 这就是 RDG 存在的全部理由</span>
+    <p>手动在几百个 Pass 之间下对每一条屏障，既易错又难优化——而且只有"知道整帧长什么样"才能下到最优（提前转换、合并屏障、避免停顿）。<span class="term">RDG</span> 的做法：让你只<strong>声明每个 Pass 读写哪些资源</strong>，它从读写关系<strong>自动推导出全部屏障</strong>，并放在全局最优的位置。本课的"屏障"，就是 0016 里 RDG 替你自动化的那个东西。理解了手动版的痛，才懂 RDG 的价值。</p>
+  </div>
+
+  <h2><span class="num">5</span>把四件事串起来：一次绘制的 API 视角</h2>
+  <pre><code><span class="cmt">// 渲染线程录制命令列表（概念伪码）</span>
+cmd.<span class="fn">ResourceBarrier</span>(GBuffer, COMMON <span class="kw">-&gt;</span> RENDER_TARGET); <span class="cmt">// ④ 屏障：准备写</span>
+cmd.<span class="fn">SetRenderTargets</span>(GBufferA, GBufferB, GBufferC);
+cmd.<span class="fn">SetPipelineState</span>(BasePassPSO);                       <span class="cmt">// ② PSO：一次绑好所有状态</span>
+cmd.<span class="fn">SetDescriptorHeaps</span>(sceneTextures, samplers);           <span class="cmt">// ③ 描述符：资源接入槽位</span>
+<span class="kw">for</span> (draw : meshDrawCommands)                              <span class="cmt">// ① 命令列表：批量录 Draw</span>
+    cmd.<span class="fn">DrawIndexed</span>(draw.indexCount, draw.instanceCount);
+cmd.<span class="fn">ResourceBarrier</span>(GBuffer, RENDER_TARGET <span class="kw">-&gt;</span> SRV);     <span class="cmt">// ④ 屏障：转给光照读</span></code></pre>
+  <p class="code-cap">UE 的 BasePass 在 RHI 层最终就坍缩成这种序列；RDG/RHI 替你生成它</p>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">相比逐项设置渲染状态的旧式 API，PSO 把状态打包成不可变对象，最主要解决了什么问题？</p>
+    <button class="q-opt">避免在绘制时刻才组合并编译状态，消除运行时编译造成的卡顿</button>
+    <button class="q-opt">让着色器无需描述符即可直接访问显存资源</button>
+    <button class="q-opt">自动在 Pass 之间插入正确的资源屏障</button>
+    <div class="q-feedback" data-ok="对。状态拼装与编译被前移到 PSO 创建期，绘制时零运行时编译——这也是 UE PSO 预缓存要解决卡顿的根源。屏障是另一回事（由 RDG 管），描述符也仍然需要。" data-no="再想：PSO 的核心是把状态组合与编译前移到创建期。屏障由 RDG 自动化，描述符仍然必需——这两项不是 PSO 的职责。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>为什么显式 API 把资源屏障的责任交给应用，反而能比驱动自动管理更快？这给 UE 带来了什么任务？</summary>
+    <div class="answer">因为<strong>最优屏障决策需要全局信息</strong>——何时转换、能否提前转换以掩盖延迟、能否合并多条屏障——只有"知道整帧所有 Pass 如何读写资源"的应用才掌握这些信息，驱动只能保守地逐次猜测。把责任交给应用，就能下出驱动猜不到的更优同步。代价是 UE 必须有人填这份契约且不能填错：手动易错且难优化，于是 UE 用 <strong>RDG</strong> 从"每个 Pass 声明读写了哪些资源"自动推导并最优放置全部屏障（0016）。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>命令列表 + 队列</strong>：CPU 录制、GPU 异步执行；显式 API 允许多线程并行录制——UE 借此并行化绘制提交。</li>
+      <li><strong>PSO</strong>：把渲染状态冻成不可变对象、提前编译，消除运行时拼装卡顿——UE shader permutation/PSO 缓存的根源。</li>
+      <li><strong>描述符 / 根签名 / 堆</strong>：着色器通过描述符找到资源；根签名是资源槽位的"函数签名"。</li>
+      <li><strong>资源屏障</strong>：显式声明资源用途切换，负责同步与布局转换——错/漏即脏数据或性能悬崖。</li>
+      <li>UE 用 <strong>RHI</strong> 抽象这份契约、用 <strong>RDG</strong> 自动生成屏障与调度——后面 Part 3 / Part 7 就是看它们怎么填。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Microsoft，<a href="https://learn.microsoft.com/en-us/windows/win32/direct3d12/directx-12-programming-guide">《Direct3D 12 Programming Guide》</a>——命令列表、PSO、描述符堆、资源屏障的权威定义。结合 UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a> 看 RHI 如何封装它们。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："D3D11 的隐式同步具体藏在哪？""根签名和描述符堆的容量限制？""为什么有的屏障能 split 成 begin/end 两半？" 随时找我。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0002-gpu-parallel-machine.html"><span class="nav-dir">← 上一课</span>0002 · GPU 并行机器</a>
+    <a class="next" href="0004-cpu-gpu-cooperation.html"><span class="nav-dir">下一课 →</span>0004 · CPU 与 GPU 的协作</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 0 基础 · 认识了契约的"内容"，下一课讲契约双方如何在时间上协作。</footer>
+  </article>
+</div>
+</body>
+</html>

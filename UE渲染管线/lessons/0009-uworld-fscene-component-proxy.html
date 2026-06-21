@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0009 · 场景的两份表达：UWorld→FScene、Component→Proxy</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 2 · 游戏线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 2 · 游戏线程 · Lesson 0009</p>
+  <h1>场景的两份表达：UWorld→FScene、Component→Proxy</h1>
+  <p class="subtitle">UE 为何要把场景维护两份、两个对象对应同一个图元？这节课拆清六个核心类的职责与所属线程，搞透这张"游戏态 vs 渲染态"的对照表——Part 2 其余课全依赖它。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0005（两份场景概念）、0008（Tick 与帧末推送）</span>
+    <span><b>产出</b> 能区分 <code>UWorld</code>/<code>FScene</code>、<code>UPrimitiveComponent</code>/<code>FPrimitiveSceneProxy</code>/<code>FPrimitiveSceneInfo</code> 的职责与所属线程</span>
+  </div>
+
+  <p class="lead">0005 用一句话概括了"两份场景"；0008 展示了游戏线程侧数据如何产生。这节课把中间那道墙拆细：游戏侧的 <code>UWorld</code> 和渲染侧的 <code>FScene</code> 如何分工，一个 <code>UStaticMeshComponent</code> 在游戏侧和渲染侧各对应什么对象，以及三个名字相近但职责迥异的"Primitive 类"如何协作。</p>
+
+  <h2><span class="num">1</span>UWorld 与 FScene：场景的两条线</h2>
+  <p><code>UWorld</code> 是游戏线程的世界容器，持有所有 Level、Actor 列表以及物理场景（<code>FPhysScene</code>）。它有一个成员：</p>
+
+  <pre><code><span class="cmt">// UWorld（World.h）</span>
+<span class="typ">FSceneInterface</span>* Scene;   <span class="cmt">// 实际类型是 FScene（渲染线程侧）</span></code></pre>
+
+  <p><code>FScene</code>（<span class="file">Renderer/Private/Scene.cpp</span> / <span class="file">ScenePrivate.h</span>）是渲染线程的场景，持有所有可渲染对象的渲染侧数据结构，包括：</p>
+  <ul>
+    <li><code>TArray&lt;FPrimitiveSceneInfo*&gt; Primitives</code>——所有已注册图元的渲染侧记账对象</li>
+    <li><code>TArray&lt;FLightSceneInfo*&gt; Lights</code>——所有灯光的渲染侧记账对象</li>
+    <li>各种加速结构（八叉树等）供可见性剔除使用</li>
+  </ul>
+
+  <p><code>FScene</code> 只能在渲染线程上读写。游戏线程通过 <code>ENQUEUE_RENDER_COMMAND</code>（见 0010）向它注册/更新/移除图元，绝不直接操作。</p>
+
+  <div class="callout knowledge">
+    <span class="label">为什么要两份，不能共享一份？</span>
+    <p>游戏线程与渲染线程<strong>并行运行、各差一帧</strong>（见 0005 流水线图）。若渲染线程直接读 <code>UWorld</code>，游戏线程在并行 Tick、改 Actor 位置，结果是不可预测的数据竞争。两份场景以单向命令队列解耦，是整个 CPU 侧架构的根本约束。</p>
+  </div>
+
+  <h2><span class="num">2</span>三个易混的 Primitive 类</h2>
+  <p>围绕一个可渲染图元，有三个类，各归不同所有者、不同线程：</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>类名</th>
+        <th>所属线程</th>
+        <th>所有者</th>
+        <th>生命周期</th>
+        <th>职责</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>UPrimitiveComponent</code></td>
+        <td>游戏线程</td>
+        <td>Actor（UObject 体系）</td>
+        <td>与 Actor 共存亡</td>
+        <td>Gameplay 可读写的属性（位置、材质引用、可见性…）；是 Tick 和蓝图操作的目标</td>
+      </tr>
+      <tr>
+        <td><code>FPrimitiveSceneProxy</code></td>
+        <td>渲染线程（只读）</td>
+        <td>渲染线程（由组件创建，渲染线程管理）</td>
+        <td>组件注册到 FScene 时创建，反注册时销毁</td>
+        <td>渲染所需数据的<strong>不可变镜像</strong>；按组件类型各有子类（如 <code>FStaticMeshSceneProxy</code>）；提供 <code>GetDynamicMeshElements</code> / <code>DrawStaticElements</code></td>
+      </tr>
+      <tr>
+        <td><code>FPrimitiveSceneInfo</code></td>
+        <td>渲染线程</td>
+        <td><code>FScene</code></td>
+        <td>随图元在 FScene 注册/反注册</td>
+        <td>渲染器<strong>内部记账</strong>：存可见性 ID、光照缓存、阴影所需数据、到代理的反向引用等；非面向组件逻辑，而是面向渲染调度</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · Proxy 是"渲染时需要的所有数据的自包含副本"</span>
+    <p><code>FPrimitiveSceneProxy</code> 构造时从 <code>UPrimitiveComponent</code> 拷贝渲染所需的全部数据（顶点工厂引用、材质实例、包围盒、LOD 偏差…），此后游戏线程改 Component 时，渲染线程仍读稳定的副本。若游戏线程改了 Component 上的材质，必须通过 <code>MarkRenderStateDirty</code> → 帧末推送 → 重建 Proxy（或增量更新 Proxy），不能绕过。</p>
+  </div>
+
+  <h2><span class="num">3</span>FPrimitiveSceneProxy 的子类与 Mesh 提交接口</h2>
+  <p>每种几何类型有自己的 Proxy 子类，在 <code>UPrimitiveComponent::CreateSceneProxy()</code> 里按类型创建：</p>
+
+  <table>
+    <thead><tr><th>Component 类型</th><th>Proxy 子类</th><th>文件</th></tr></thead>
+    <tbody>
+      <tr><td><code>UStaticMeshComponent</code></td><td><code>FStaticMeshSceneProxy</code></td><td><span class="file">StaticMeshRender.cpp</span></td></tr>
+      <tr><td><code>USkeletalMeshComponent</code></td><td><code>FSkeletalMeshSceneProxy</code></td><td><span class="file">SkeletalMeshRender.cpp</span></td></tr>
+      <tr><td><code>ULandscapeComponent</code></td><td><code>FLandscapeComponentSceneProxy</code></td><td><span class="file">LandscapeRender.cpp</span></td></tr>
+    </tbody>
+  </table>
+
+  <p>Proxy 向渲染器提交几何有两条路径：</p>
+  <ul>
+    <li><strong><code>DrawStaticElements(FStaticPrimitiveDrawInterface*)</code></strong>：注册时调用一次，把不变的几何缓存为 <code>FStaticMesh</code>（进 <span class="term">FMeshBatch</span> 静态路径，见 0018）。适合静态网格。</li>
+    <li><strong><code>GetDynamicMeshElements(Views, ViewFamily, VisibilityMap, Collector)</code></strong>：每帧 <code>InitViews</code> 里调用，动态生成 <span class="term">FMeshBatch</span>（适合骨骼网格、粒子等每帧变化的几何）。</li>
+  </ul>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body"><code>UPrimitiveComponent</code>（UObject 生命周期）· Tick 改属性 · <code>MarkRenderStateDirty</code></span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body"><code>FPrimitiveSceneProxy</code>（只读镜像，按类型子类化）· <code>FPrimitiveSceneInfo</code>（FScene 内部记账）· 向 InitViews 提供 FMeshBatch</span></div>
+  </div>
+
+  <h2><span class="num">4</span>灯光的对应关系</h2>
+  <p>灯光同样有两份表达，逻辑完全对称：</p>
+  <ul>
+    <li><code>ULightComponent</code>（游戏线程）→ <code>CreateSceneProxy()</code> → <code>FLightSceneProxy</code>（渲染线程只读镜像，<span class="file">LightSceneProxy.h</span>）</li>
+    <li><code>FLightSceneInfo</code>（渲染器内部记账，由 <code>FScene</code> 持有，<span class="file">LightSceneInfo.h</span>）</li>
+  </ul>
+  <p>与 Primitive 三件套完全一一对应——理解了 Primitive 侧，灯光侧无需额外记忆。</p>
+
+  <h2><span class="num">5</span>游戏态 vs 渲染态对照</h2>
+  <table>
+    <thead><tr><th>维度</th><th>游戏态（游戏线程）</th><th>渲染态（渲染线程）</th></tr></thead>
+    <tbody>
+      <tr><td>世界容器</td><td><code>UWorld</code></td><td><code>FScene</code></td></tr>
+      <tr><td>图元描述</td><td><code>UPrimitiveComponent</code></td><td><code>FPrimitiveSceneProxy</code>（镜像）<br><code>FPrimitiveSceneInfo</code>（记账）</td></tr>
+      <tr><td>灯光描述</td><td><code>ULightComponent</code></td><td><code>FLightSceneProxy</code>（镜像）<br><code>FLightSceneInfo</code>（记账）</td></tr>
+      <tr><td>生命周期控制</td><td>UObject GC / BeginPlay / EndPlay</td><td><code>FScene::AddPrimitive</code> / <code>RemovePrimitive</code>（经 ENQUEUE）</td></tr>
+      <tr><td>修改方式</td><td>直接读写（Tick / Blueprint）</td><td>只能通过渲染命令入队间接更新</td></tr>
+      <tr><td>几何数据来源</td><td>持有 <code>UStaticMesh</code> 等资产引用</td><td>Proxy 缓存渲染用数据副本（顶点工厂、材质等）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">下列关于 <code>FPrimitiveSceneInfo</code> 的描述，哪一条最准确？</p>
+    <button class="q-opt">它是 <code>UPrimitiveComponent</code> 在渲染线程的直接对等类，存储组件的所有 Gameplay 属性</button>
+    <button class="q-opt">它是渲染器内部的记账对象，由 <code>FScene</code> 持有，存可见性 ID、光照缓存等渲染调度数据，持有指向 <code>FPrimitiveSceneProxy</code> 的引用</button>
+    <button class="q-opt">它等同于 <code>FPrimitiveSceneProxy</code>，只是旧版 API 的别名</button>
+    <div class="q-feedback" data-ok="正确。FPrimitiveSceneInfo 是渲染器内部记账，持有可见性 ID、光照/阴影缓存、指向 Proxy 的反向引用等，由 FScene 统一管理。它和 Proxy 是不同层次的对象：Proxy 是"渲染时怎么画我"，SceneInfo 是"渲染器如何调度我"。" data-no="再想：FPrimitiveSceneInfo 和 FPrimitiveSceneProxy 是同一图元在渲染侧的两个不同层次的对象。Proxy 是镜像（怎么画），SceneInfo 是渲染器记账（如何调度），二者均不存 Gameplay 属性。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>从 <code>UStaticMeshComponent</code> 开始，顺着线程边界列出它在游戏侧和渲染侧的完整对应关系（对象名 + 所属线程 + 职责一句话）。</summary>
+    <div class="answer">
+      <strong>游戏线程：</strong><code>UStaticMeshComponent</code>（UObject，Actor 子对象）——Gameplay 可读写的全部属性（位置、材质引用、可见性、碰撞等）。<br>
+      <strong>渲染线程（镜像）：</strong><code>FStaticMeshSceneProxy</code>（<code>FPrimitiveSceneProxy</code> 子类，<span class="file">StaticMeshRender.cpp</span>）——渲染所需数据的只读副本；实现 <code>DrawStaticElements</code>（缓存静态路径）和 <code>GetDynamicMeshElements</code>（动态提交 FMeshBatch）。<br>
+      <strong>渲染线程（记账）：</strong><code>FPrimitiveSceneInfo</code>（FScene 持有）——存可见性 ID、阴影/光照缓存、指向 Proxy 的指针；是渲染调度的内部索引，非组件镜像。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>UWorld</code> 是游戏线程的世界；<code>FScene</code>（<span class="file">Scene.cpp</span>）是渲染线程的世界，持有 <code>FPrimitiveSceneInfo</code> / <code>FLightSceneInfo</code> 数组，只能在渲染线程上操作。</li>
+      <li>一个图元有三个对象：<code>UPrimitiveComponent</code>（游戏态，可读写）、<code>FPrimitiveSceneProxy</code>（渲染态只读镜像，按类型子类化）、<code>FPrimitiveSceneInfo</code>（渲染器内部记账）。</li>
+      <li><code>FPrimitiveSceneProxy</code> 通过 <code>DrawStaticElements</code>（一次缓存）或 <code>GetDynamicMeshElements</code>（每帧动态）向渲染器提交 <span class="term">FMeshBatch</span>。</li>
+      <li>灯光完全对称：<code>ULightComponent</code> → <code>FLightSceneProxy</code> → <code>FLightSceneInfo</code>。</li>
+      <li>两份场景是强制设计，目的是让两条线程并行运行时零数据竞争。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Matt Hoffman，<a href="https://medium.com/@lordned/unreal-engine-4-rendering-part-2-shaders-and-vertex-data-80317e1ae5f3">《UE4 Rendering Part 2: Shaders and Vertex Data》</a>——从 Proxy 视角介绍顶点工厂与材质数据如何装进 Proxy。UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a>（"Scene Proxies"节）是 Proxy 概念的官方原始说明。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："<code>FPrimitiveSceneProxy</code> 构造函数里具体拷了哪些数据？""为什么 <code>DrawStaticElements</code> 只调一次？""<code>FPrimitiveSceneInfo</code> 里可见性 ID 是怎么用的？" 我是你的老师，随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0008-engineloop-tick-world-tick.html"><span class="nav-dir">← 上一课</span>0008 · FEngineLoop::Tick 深入：World Tick 与组件 Tick</a>
+    <a class="next" href="0010-proxy-creation-addtoscene-enqueue.html"><span class="nav-dir">下一课 →</span>0010 · 代理的创建与更新：AddToScene 与渲染命令入队</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 2 游戏线程 · 两份场景是整个 CPU 侧的根骨架，后续每课都在它上面生长。</footer>
+  </article>
+</div>
+</body>
+</html>

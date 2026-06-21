@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 课 · 加减与缩放:位移、速度×dt</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 5 课 · 模块 1 向量</div>
+<h1>加减与缩放:位移、速度 × dt</h1>
+<p class="subtitle">向量的三种基本运算——加、减、标量乘——每一种都有清晰的几何画面。学完你能<strong>亲手推出</strong> Niagara 那句灵魂代码 <code>Position += Velocity * dt</code>,而不是死记。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能在脑里画出三种运算:<strong>a + b = 首尾相接</strong>(走完 a 再走 b)、<strong>b − a = 从 a 指向 b 的箭</strong>、<strong>k·a = 把 a 伸长/缩短 k 倍</strong>(负数则反向)。并用它们解释每一帧粒子是怎么动的。
+</div>
+
+<h2>加法:首尾相接</h2>
+<p>
+<strong>a + b 就是分量分别相加</strong>:(ax+bx, ay+by, az+bz)。几何上:<strong>先走完 a,再从 a 的终点接着走 b</strong>,最终落点就是 a+b。顺序无所谓(a+b = b+a),因为不管先走哪条,围出的是同一个平行四边形,对角线一样。
+</p>
+<p>下面画布开了「sum」:黑色粗箭是 a+b,虚线是把 b 平移到 a 末端(首尾相接)。拖红/绿点,看 a+b 怎么跟着变。</p>
+<div class="lab">
+  <canvas id="play5"></canvas>
+  <div class="readout" id="read5"></div>
+</div>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  Niagara 里所有「力的叠加」都是向量加法:重力 + 风 + 涡流 = 合力。Solve Forces and Velocity 模块本质就是把一堆力向量加起来,再加到速度上。你往粒子上挂的每个力模块,都是在做一次 a+b。
+</div>
+
+<h2>减法:从哪指向哪</h2>
+<p>
+<strong>b − a 是「从 a 指向 b」的箭</strong>。记忆法:<strong>终点减起点</strong>。想要「从粒子指向目标」的方向?就是 <code>target − particlePos</code>。这是 TA 最高频的操作之一——求朝向、求吸引方向、求两点连线,全靠它。
+</p>
+<div class="formula"><span class="vecB">b</span> − <span class="vecA">a</span> = 从 a 出发、指到 b 的位移　　(箭头落在 b,尾巴在 a)</div>
+<p>
+方向记反是头号 bug:<code>a − b</code> 和 <code>b − a</code> 长度相同、<strong>方向正好相反</strong>。粒子「冲向目标」要 <code>target − pos</code>,写成 <code>pos − target</code> 就变成「逃离目标」。下一课归一化之后,这个箭会变成纯方向。
+</p>
+
+<h2>标量乘:伸缩与反向</h2>
+<p>
+<strong>k · a 把向量每个分量乘以 k</strong>,几何上是<strong>沿原方向伸长或缩短</strong>:k=2 长度翻倍、k=0.5 减半、k=0 变零向量、<strong>k=−1 长度不变但掉头</strong>。方向只有「同向」或「反向」两种结果,标量乘<strong>不会改变向量指的那条直线</strong>(除非乘 0)。
+</p>
+<pre><code><span class="kw">float3</span> back   = -<span class="num">1.0</span> * forward;     <span class="cmt">// 反向:朝后</span>
+<span class="kw">float3</span> half   = <span class="num">0.5</span> * velocity;     <span class="cmt">// 速度减半</span>
+<span class="kw">float3</span> scaled = velocity * deltaTime;  <span class="cmt">// 速度×时间 = 这一帧的位移!</span>
+</code></pre>
+
+<h2>把三者接起来:推导 Position += Velocity × dt</h2>
+<p>这是欧拉积分,游戏里每个会动的东西每帧都在做。现在你有能力<strong>自己推</strong>它,而不是背:</p>
+<ol>
+  <li><strong>速度</strong> Velocity 是一支「方向+大小」的箭,单位是 cm/<strong>秒</strong>(往哪、每秒多快)。</li>
+  <li>这一帧只过了 <strong>dt 秒</strong>(deltaTime,比如 1/60 ≈ 0.0167 秒)。</li>
+  <li><strong>标量乘</strong>:<code>Velocity × dt</code> = 这一帧实际走的<strong>位移</strong>(一支短箭)。速度是「每秒多远」,乘上「过了几秒」就得到「这帧走了多远」。</li>
+  <li><strong>向量加</strong>:把这段位移接到当前位置上 —— <code>Position + Velocity × dt</code> = 新位置。</li>
+</ol>
+<div class="formula">newPos = <span class="vec">Position</span> + <span class="vec">Velocity</span> × dt　　(位置 加 「速度 乘 时间」)</div>
+<pre><code><span class="cmt">// Niagara 每帧对每个粒子做的事(Solve Forces and Velocity 内部)</span>
+Particles.Position += Particles.Velocity * Engine.DeltaTime;
+</code></pre>
+<div class="callout callout-hlsl">
+  <span class="label">为什么必须乘 dt</span>
+  不乘 dt,粒子每<strong>帧</strong>走一个速度的距离——帧率越高跑得越快,游戏在不同机器上表现不一致。乘了 dt,粒子每<strong>秒</strong>走固定距离,和帧率脱钩。这叫<strong>帧率无关 framerate independence</strong>,是所有运动代码的铁律。
+</div>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>减法方向写反。</strong> 「从 A 指向 B」= B − A(终点减起点)。写成 A − B 就反了,吸引变排斥。</li>
+  <li><strong>忘记乘 dt。</strong> <code>Position += Velocity</code>(漏 dt)会让运动随帧率乱跳。任何「每秒多少」的量加进状态前都要 ×dt。</li>
+  <li><strong>以为标量乘会改方向。</strong> 正的 k 只伸缩、不转向;只有<strong>负 k</strong> 会掉头 180°。要任意转向得用旋转(模块 3),不是乘标量。</li>
+  <li><strong>分量没对齐就加。</strong> 只有同维、同坐标系的向量才能相加。把 Local 空间的速度直接加到 World 位置上是空间错配(模块 2)。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz5"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://gamemath.com/book/vectors.html" target="_blank">《3D Math Primer》第 2 章 — Vectors(加减与标量乘部分)</a>
+  —— 把向量加减、标量乘的几何意义和代数公式对照讲清。配合上面的可拖画布,首尾相接和「终点减起点」会变成肌肉记忆。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把你某个「让粒子飞向目标点」的逻辑,用 target−pos、normalize、×speed×dt 一步步拼给你看?或者纠结某处该不该乘 dt?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>长度与归一化</strong>——length 其实就是勾股定理,normalize 给你长度=1 的「纯方向」。为什么法线和光照方向必须归一化,一次讲明白。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/math-tools.js"></script>
+<script>
+VecPlayground("play5", {
+  readoutId: "read5",
+  show: ["sum", "len"],
+  vectors: [
+    { name: "a", x: 3, y: 1, color: "#c0392b", draggable: true },
+    { name: "b", x: 1, y: 3, color: "#2e7d32", draggable: true }
+  ]
+});
+renderQuiz("quiz5", [
+  {
+    q: "向量加法 a + b 的几何含义是?",
+    options: ["先走完 a,再接着走 b", "取 a 与 b 的中点", "把 a 投影到 b 上", "让 a 与 b 垂直"],
+    correct: 0,
+    why: "加法=首尾相接:从 a 末端接着走 b,落点即 a+b。顺序无所谓,围出同一个平行四边形对角线。"
+  },
+  {
+    q: "想得到「从粒子 P 指向目标 T」的向量,应该算?",
+    options: ["T − P(终点减起点)", "P − T", "T + P", "P × T"],
+    correct: 0,
+    why: "从 A 指向 B = B − A,终点减起点。写成 P − T 方向正好反过来,吸引就变排斥。"
+  },
+  {
+    q: "把向量乘以标量 −1,结果是?",
+    options: ["长度不变,方向掉头 180°", "长度翻倍,方向不变", "变成零向量", "长度减半,方向不变"],
+    correct: 0,
+    why: "k=−1:每个分量取反,长度不变、方向反向。正的 k 只伸缩不转向,只有负 k 会掉头。"
+  },
+  {
+    q: "Velocity × dt 这一步算出来的是?",
+    options: ["这一帧的位移", "新的速度", "加速度", "粒子的寿命"],
+    correct: 0,
+    why: "速度是「每秒多远」,乘上「过了 dt 秒」得到「这帧走了多远」=位移。再加到 Position 上得到新位置。"
+  },
+  {
+    q: "为什么运动要写 Position += Velocity * dt 而不是 Position += Velocity?",
+    options: ["让运动与帧率无关", "让粒子跑得更快", "为了省 GPU 性能", "让方向更准确"],
+    correct: 0,
+    why: "乘 dt 后粒子每秒走固定距离,和帧率脱钩(帧率无关)。漏掉 dt,高帧率机器上会跑得飞快。"
+  },
+  {
+    q: "下面哪种相加是「不合法 / 有隐患」的?",
+    options: ["把 Local 空间速度直接加到 World 位置", "重力向量加风力向量", "两个 World 空间位移相加", "速度乘 dt 后加到位置"],
+    correct: 0,
+    why: "只有同坐标系的向量能直接相加。Local 与 World 是不同空间,直接相加是空间错配(模块 2 的核心坑)。"
+  }
+]);
+</script>
+</body>
+</html>

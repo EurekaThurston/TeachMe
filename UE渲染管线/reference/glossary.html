@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>术语表 · UE 4.26 渲染管线</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  .gloss-grid { max-width: 60rem; }
+  .gloss-grid h2 { border-top: 1px solid var(--rule); }
+  dl.gloss { max-width: 60rem; }
+  dl.gloss dt { font-family: var(--mono); font-weight: 700; color: var(--gbuffer); margin-top: 1.1rem; font-size: .95rem; }
+  dl.gloss dt .zh { font-family: var(--sans); color: var(--ink-soft); font-weight: 600; font-size: .85rem; margin-left: .5rem; }
+  dl.gloss dd { margin: .25rem 0 0; max-width: 52rem; font-size: .95rem; }
+  dl.gloss dd code { font-size: .82em; }
+  .jump { position: sticky; top: 0; background: var(--paper); padding: .6rem 0; font-family: var(--sans); font-size: .8rem; border-bottom: 1px solid var(--rule); margin-bottom: 1rem; z-index: 5; }
+  .jump a { margin-right: .9rem; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">参考 · 术语表</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图 ↗</a>
+  </nav>
+
+  <p class="lesson-kicker">REFERENCE · 持续更新</p>
+  <h1>术语表 (Glossary)</h1>
+  <p class="subtitle">整条管线的统一命名。每节课首次出现的术语都会指回这里——名字一旦定下，全程不变。</p>
+
+  <nav class="jump">
+    <a href="#gpu">① GPU/图形API</a>
+    <a href="#thread">② 线程/场景</a>
+    <a href="#geo">③ 几何/可见性</a>
+    <a href="#deferred">④ 延迟着色/光照</a>
+    <a href="#rdg">⑤ RDG/RHI</a>
+    <a href="#post">⑥ 后处理/上屏</a>
+  </nav>
+
+  <div class="gloss-grid">
+
+  <h2 id="gpu"><span class="num">①</span>GPU 硬件 / 图形 API</h2>
+  <dl class="gloss">
+    <dt>Rasterization <span class="zh">光栅化</span></dt>
+    <dd>把投影到屏幕空间的三角形转换成被它覆盖的像素（片元）的固定功能阶段。GPU 用边函数判断每个像素是否在三角形内。</dd>
+    <dt>Fragment / Pixel Shader <span class="zh">像素/片元着色器</span></dt>
+    <dd>对光栅化产生的每个片元运行的可编程阶段，计算该片元的颜色/数据输出。</dd>
+    <dt>Early-Z / Z-Test <span class="zh">深度测试</span></dt>
+    <dd>用深度缓冲比较片元远近，剔除被遮挡片元。Early-Z 指在像素着色器之前就做测试以省下着色开销。</dd>
+    <dt>Warp / Wavefront <span class="zh">线程束</span></dt>
+    <dd>GPU 以 32（NV）或 64（AMD）个线程为一组锁步执行（SIMD）。同束内分支分歧会让两条路径都跑，损失效率。</dd>
+    <dt>Occupancy <span class="zh">占用率</span></dt>
+    <dd>SM/CU 上同时驻留的 warp 数与上限之比。高占用率用来隐藏内存延迟，但受寄存器/共享内存用量限制。</dd>
+    <dt>Command List / Command Buffer <span class="zh">命令列表</span></dt>
+    <dd>CPU 录制、GPU 执行的绘制/状态指令序列。现代 API（D3D12/Vulkan）可多线程并行录制。</dd>
+    <dt>PSO <span class="zh">管线状态对象</span></dt>
+    <dd>Pipeline State Object。把着色器、混合、光栅、深度等大部分固定状态打包成一个不可变对象，绘制时一次绑定，避免运行时状态拼装。</dd>
+    <dt>Descriptor / Root Signature <span class="zh">描述符/根签名</span></dt>
+    <dd>描述符是"资源（纹理/缓冲）在哪、怎么读"的句柄；根签名/描述符堆定义着色器能访问哪些描述符。</dd>
+    <dt>Resource Barrier / Transition <span class="zh">资源屏障/状态转换</span></dt>
+    <dd>显式告诉 GPU 一个资源的用途变了（如从渲染目标→着色器可读），以正确同步缓存与流水线。D3D12 需手动管理；RDG 自动化了它。</dd>
+    <dt>Fence <span class="zh">围栏</span></dt>
+    <dd>CPU↔GPU 或 GPU 队列间的同步原语。CPU 等 fence 信号以知道某帧 GPU 工作已完成、资源可复用。</dd>
+  </dl>
+
+  <h2 id="thread"><span class="num">②</span>UE 线程 / 场景表达</h2>
+  <dl class="gloss">
+    <dt>Game Thread <span class="zh">游戏线程</span></dt>
+    <dd>跑 Gameplay、Tick、AActor/UActorComponent 逻辑的线程。产出"这一帧场景长什么样"的数据，不直接调图形 API。</dd>
+    <dt>Render Thread <span class="zh">渲染线程</span></dt>
+    <dd>消费游戏线程入队的渲染命令、组织场景渲染、录制 RHI 命令的线程。通常落后游戏线程一帧。</dd>
+    <dt>RHI Thread <span class="zh">RHI 线程</span></dt>
+    <dd>把平台无关的 RHI 命令翻译成具体图形 API（D3D12 等）调用并提交 GPU 的线程。</dd>
+    <dt>RHI <span class="zh">渲染硬件接口</span></dt>
+    <dd>Render Hardware Interface。UE 对各图形 API（D3D11/12、Vulkan、Metal）的统一抽象层。</dd>
+    <dt>UWorld / FScene <span class="zh">世界/场景</span></dt>
+    <dd><code>UWorld</code> 是游戏线程的世界；<code>FScene</code> 是其渲染线程镜像，持有所有可渲染图元的代理。</dd>
+    <dt>UPrimitiveComponent / FPrimitiveSceneProxy <span class="zh">图元组件/场景代理</span></dt>
+    <dd>组件是游戏线程侧可渲染对象；其 <code>CreateSceneProxy()</code> 产出渲染线程侧的 <code>FPrimitiveSceneProxy</code>，渲染只读代理，避免跨线程访问游戏态。</dd>
+    <dt>FSceneView / FViewInfo <span class="zh">视图</span></dt>
+    <dd>一次观察的全部参数（相机矩阵、视锥、后处理设置）。<code>FViewInfo</code> 是渲染器内部带可见性等中间数据的扩展版。</dd>
+    <dt>ENQUEUE_RENDER_COMMAND <span class="zh">渲染命令入队</span></dt>
+    <dd>游戏线程把一段 lambda 投递到渲染线程队列执行的宏，是两线程间的主要通信方式。</dd>
+  </dl>
+
+  <h2 id="geo"><span class="num">③</span>几何 / 可见性</h2>
+  <dl class="gloss">
+    <dt>Frustum Culling <span class="zh">视锥剔除</span></dt>
+    <dd>剔除完全在相机视锥之外的图元，不送去绘制。</dd>
+    <dt>Occlusion Culling <span class="zh">遮挡剔除</span></dt>
+    <dd>剔除被其他物体挡住的图元。UE 用硬件遮挡查询 + HZB（层级 Z 缓冲）。</dd>
+    <dt>FMeshBatch <span class="zh">网格批</span></dt>
+    <dd>代理提交给渲染器的一份几何+材质描述，是绘制的原材料，尚未绑定到具体 Pass。</dd>
+    <dt>FMeshDrawCommand <span class="zh">网格绘制命令</span></dt>
+    <dd>FMeshBatch 经某个 Pass 的 <code>FMeshPassProcessor</code> 处理后，得到的无状态、可缓存、可合批的绘制描述，直接喂给 RHI。</dd>
+    <dt>FMeshPassProcessor <span class="zh">Pass 处理器</span></dt>
+    <dd>每个网格 Pass（深度、BasePass…）有一个处理器，决定用哪些着色器、把 FMeshBatch 转成 FMeshDrawCommand。</dd>
+    <dt>Vertex Factory <span class="zh">顶点工厂</span></dt>
+    <dd>抽象"顶点数据如何喂给顶点着色器"（静态网格、骨骼网格、实例化等各有一种），让同一材质适配不同几何来源。</dd>
+    <dt>GPU Scene <span class="zh">GPU 场景</span></dt>
+    <dd>把图元的变换、包围盒等数据常驻 GPU 缓冲，支持 GPU 端剔除与高效实例化，减少每帧 CPU 上传。</dd>
+    <dt>Draw Call Merging / Instancing <span class="zh">合批/实例化</span></dt>
+    <dd>把着色器绑定相同的多个 FMeshDrawCommand 合并为一次实例化绘制，降低 CPU 提交开销。</dd>
+  </dl>
+
+  <h2 id="deferred"><span class="num">④</span>延迟着色 / 光照 / 阴影</h2>
+  <dl class="gloss">
+    <dt>Deferred Shading <span class="zh">延迟着色</span></dt>
+    <dd>先把几何的材质属性写入 GBuffer，再在屏幕空间统一做光照。光照成本与几何复杂度解耦。UE 4.26 PC 默认路径。</dd>
+    <dt>GBuffer <span class="zh">几何缓冲</span></dt>
+    <dd>一组渲染目标，存每像素的基础色、法线、粗糙度、金属度、AO 等材质属性，供后续光照读取。</dd>
+    <dt>Depth Prepass <span class="zh">深度预通道</span></dt>
+    <dd>先只写深度，建立 Early-Z，使 BasePass 像素着色器只在最前面的可见片元上运行，省过度绘制。</dd>
+    <dt>Base Pass <span class="zh">基础通道</span></dt>
+    <dd>运行材质着色器、把材质属性写入 GBuffer 的主几何通道，同时输出速度等。</dd>
+    <dt>Light Grid / Clustered Culling <span class="zh">光照网格/聚簇剔除</span></dt>
+    <dd>用计算着色器把光源分配到屏幕 3D 网格（簇），着色时按像素位置快速取回影响它的光源列表。</dd>
+    <dt>CSM <span class="zh">级联阴影贴图</span></dt>
+    <dd>Cascaded Shadow Maps。按距离把视锥分多段，每段一张方向光阴影贴图，兼顾近处精度与远处覆盖。</dd>
+    <dt>SSAO / SSR / SSGI <span class="zh">屏幕空间环境光遮蔽/反射/全局光</span></dt>
+    <dd>在屏幕空间用深度+法线近似计算遮蔽、反射、间接光的技术；快但受屏幕信息所限。</dd>
+  </dl>
+
+  <h2 id="rdg"><span class="num">⑤</span>RDG / RHI</h2>
+  <dl class="gloss">
+    <dt>RDG <span class="zh">渲染依赖图</span></dt>
+    <dd>Render Dependency Graph。不立即执行 Pass，而是先把整帧录制成依赖图，再编译、按依赖序执行，自动做屏障/异步计算/内存别名。</dd>
+    <dt>RDG Pass <span class="zh">图节点</span></dt>
+    <dd>图里的一个工作单元，声明它读/写哪些资源 + 一个执行 lambda。依赖由资源读写关系自动推出。</dd>
+    <dt>RDG Resource <span class="zh">图资源</span></dt>
+    <dd><code>FRDGTexture</code>/<code>FRDGBuffer</code> 是图里的虚拟资源句柄，真正的显存在编译期才分配，生命周期由图推导。</dd>
+    <dt>Resource Aliasing <span class="zh">内存别名</span></dt>
+    <dd>生命周期不重叠的两个瞬态资源复用同一块显存，降低峰值显存占用——RDG 自动完成。</dd>
+    <dt>FRHICommandList <span class="zh">RHI 命令列表</span></dt>
+    <dd>平台无关的命令录制接口；渲染线程往里写，RHI 线程翻译执行。</dd>
+    <dt>Async Compute <span class="zh">异步计算</span></dt>
+    <dd>把计算工作放到独立 GPU 队列，与图形队列并行执行以填满 GPU。RDG 自动调度与围栏。</dd>
+  </dl>
+
+  <h2 id="post"><span class="num">⑥</span>后处理 / 上屏</h2>
+  <dl class="gloss">
+    <dt>Scene Color <span class="zh">场景颜色</span></dt>
+    <dd>光照后、后处理前的 HDR 线性颜色缓冲，后处理链的输入起点。</dd>
+    <dt>TAA <span class="zh">时间抗锯齿</span></dt>
+    <dd>Temporal Anti-Aliasing。每帧抖动采样点，用速度缓冲把历史帧重投影累积，去锯齿与噪点；UE 默认 AA。</dd>
+    <dt>Bloom / Eye Adaptation <span class="zh">泛光/自动曝光</span></dt>
+    <dd>泛光让高亮溢出；自动曝光按场景平均亮度调整曝光，模拟眼睛适应。</dd>
+    <dt>Tonemapping <span class="zh">色调映射</span></dt>
+    <dd>把 HDR 线性颜色压到显示器可呈现的 LDR 范围，并应用色彩分级/LUT。</dd>
+    <dt>Swap Chain / Back Buffer <span class="zh">交换链/后缓冲</span></dt>
+    <dd>交换链管理一组可呈现的后缓冲；渲染写后缓冲，Present 把它换到前台显示。</dd>
+    <dt>Present / Scanout <span class="zh">呈现/扫描输出</span></dt>
+    <dd>Present 提交一帧到显示队列；显示控制器按刷新率把前缓冲逐行扫描到显示器——像素真正被玩家看到。</dd>
+    <dt>VSync / Flip Model <span class="zh">垂直同步/翻转模型</span></dt>
+    <dd>VSync 让呈现对齐显示器刷新以避免撕裂；现代翻转模型直接交换缓冲指针，零拷贝。</dd>
+  </dl>
+
+  </div>
+
+  <footer class="lesson-foot">
+    UE 4.26 渲染管线课程 · 术语表随课程持续扩充。术语命名一经确立即全程沿用。
+  </footer>
+</div>
+</body>
+</html>

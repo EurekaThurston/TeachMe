@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 10 课 · 基向量:一个空间 = 原点 + 三根轴</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 10 课 · 模块 2 空间与变换</div>
+<h1>基向量:任何向量都是几根轴的加权和</h1>
+<p class="subtitle">这是理解矩阵的钥匙。一旦你看穿「坐标 (3, 2) 的意思是『3 份 x 轴 + 2 份 y 轴』」,下一课的矩阵就会从神秘数表变成一句大白话。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清:一组<strong>基向量 basis</strong> 就是一个空间的几根轴(2D 两根、3D 三根)。坐标 (x, y) 的真正含义是 <strong>x·î + y·ĵ</strong>——「沿第一根轴走 x 份,沿第二根轴走 y 份」。<strong>换一组基,同一个点的坐标就变</strong>;这正是变换的本质。
+</div>
+
+<h2>坐标其实是一道加法题</h2>
+<p>
+我们默认的 2D 基是两根单位轴:<strong>î = (1, 0)</strong>(指向右)和 <strong>ĵ = (0, 1)</strong>(指向上)。当你写坐标 (3, 2),它真正的意思是一道线性组合(<strong>linear combination</strong>):
+</p>
+<div class="formula">(3, 2) = 3 · <span class="vecA">î</span> + 2 · <span class="vecB">ĵ</span> = 3·(1,0) + 2·(0,1)</div>
+<p>
+「3 份右、2 份上」。平时这看不出来,因为 î、ĵ 太标准了(乘 1、乘 0)。但这个视角是整个模块的支点:<strong>坐标 = 基向量的加权配方,权重就是各个分量</strong>。
+</p>
+
+<h2>换一组基,世界就被掰弯</h2>
+<p>
+关键来了:<strong>如果 î 和 ĵ 不再是 (1,0) 和 (0,1) 呢?</strong> 同样的配方「3 份 î + 2 份 ĵ」会把点送到完全不同的地方。下面的画布可以<strong>拖动 î(红)和 ĵ(绿)的箭头</strong>——你在亲手换基。看橙色点:它的「坐标」始终是 (2, 1),即 <code>2·î + 1·ĵ</code>,但你一掰动基,它在画面上的实际位置就跟着跑。整个蓝色网格(空间本身)也跟着 î、ĵ 一起被拉伸、旋转、剪切。
+</p>
+<div class="lab">
+  <canvas id="basis10"></canvas>
+  <div class="readout" id="read10"></div>
+  <p style="font-size:0.85rem;color:var(--muted);margin:0.6rem 0 0">拖红/绿箭头改变基向量 î、ĵ。橙点的坐标恒为 (2,1),但它落在哪由基决定。半格吸附。</p>
+</div>
+<div class="callout callout-key">
+  <span class="label">这就是变换</span>
+  「保持坐标配方不变、换掉基向量,从而把点送到新位置」——这正是<strong>线性变换</strong>,也正是下一课<strong>矩阵</strong>要打包的东西。旋转、缩放、剪切,全都是「把 î、ĵ 搬到新位置」。把这个画面记牢,矩阵就懂了一大半。
+</div>
+
+<h2>3D:三根基向量</h2>
+<p>
+推广到 3D,基有三根:<strong>î=(1,0,0)、ĵ=(0,1,0)、k̂=(0,0,1)</strong>,坐标 (x,y,z) 就是 <code>x·î + y·ĵ + z·k̂</code>。在 UE 里这三根分别对应 <strong>前(X)、右(Y)、上(Z)</strong>。一个物体的朝向,本质就是它<strong>自己那套 î、ĵ、k̂ 在世界里指向哪</strong>——它的 forward / right / up 向量,就是它的基。
+</p>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  你在第 8 课用叉积搭的那套 <code>forward / right / up</code>,<strong>就是一组基向量</strong>。让粒子「朝运动方向对齐」= 把它的局部基对齐到 velocity 方向。Niagara 的 Align 模块、Mesh 粒子朝向,内部都是在给每个粒子安一套基。下一课会看到,把这三根基排成列,就得到这个粒子的旋转矩阵。
+</div>
+
+<h2>正交基:特别好用的一类基</h2>
+<p>
+如果基向量<strong>互相垂直、且都是单位长度</strong>,就叫<strong>标准正交基 orthonormal basis</strong>(ortho=正交/垂直,normal=单位长)。它特别好用,因为:不会扭曲长度和角度(没有剪切、没有非均匀缩放),而且它的逆变换特别好求(下一课/第 13 课会用到)。<strong>纯旋转</strong>就是从一组正交基换到另一组正交基。第 8 课用叉积搭基,搭出来的正是正交基——这不是巧合。
+</p>
+<p>
+反过来,如果基向量不垂直(被剪切)或长度不一(非均匀缩放),空间就被扭曲——这会引出第 13 课「法线为什么要逆转置」的麻烦。先记住:<strong>正交基 = 不扭曲,非正交基 = 扭曲</strong>。
+</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>把坐标当成「绝对位置」而非「基的配方」。</strong> (3,2) 的意思永远是 3î+2ĵ,换基就换位置。这是理解变换的支点。</li>
+  <li><strong>以为基一定是标准的 (1,0)、(0,1)。</strong> 任何一组(线性无关的)向量都能当基。旋转/缩放就是把基换成别的。</li>
+  <li><strong>忘了物体朝向就是它的基。</strong> forward/right/up 三向量 = 物体的局部基。算朝向其实就是在算这三根轴。</li>
+  <li><strong>混淆正交基与一般基。</strong> 只有正交基不扭曲长度角度;一旦剪切或非均匀缩放,法线处理就要小心(第 13 课)。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz10"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=k7RM-ot2NWY" target="_blank">3Blue1Brown — Linear combinations, span, and basis vectors(第 2 章)</a>
+  —— 用动画把「坐标=基向量的加权和」「换基=掰动 î ĵ」讲到极致直观。配合上面可拖的基画布一起看,这一课会彻底通。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把你某个粒子的 forward/right/up 写成一组基、并说明它如何对齐到 velocity?或者「线性无关 / 为什么需要三根而不是两根」?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>矩阵是什么</strong>——把刚才那套「变换后的 î、ĵ、k̂」按列装进一个盒子,就是矩阵。矩阵×向量=换空间,还有为什么 4×4 要补第 4 维 w。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/matrix-tools.js"></script>
+<script>
+MatrixGrid("basis10", {
+  draggable: true,
+  point: { x: 2, y: 1 },
+  readoutId: "read10",
+  i: { x: 1, y: 0 }, j: { x: 0, y: 1 }
+});
+renderQuiz("quiz10", [
+  {
+    q: "坐标 (3, 2) 用基向量写出来是?",
+    options: ["3·î + 2·ĵ", "3 + 2 = 5", "î × ĵ", "(3 + 2)·î"],
+    correct: 0,
+    why: "坐标=基的加权和(线性组合):沿 î 走 3 份、沿 ĵ 走 2 份。分量就是权重。"
+  },
+  {
+    q: "默认 2D 基中,î 和 ĵ 分别是?",
+    options: ["(1,0) 和 (0,1)", "(0,0) 和 (1,1)", "(1,1) 和 (−1,−1)", "(0,1) 和 (1,0)"],
+    correct: 0,
+    why: "标准基 î=(1,0) 指右、ĵ=(0,1) 指上。坐标乘它们再相加,平时因 ×1/×0 看不出来。"
+  },
+  {
+    q: "保持坐标配方不变、把基向量 î、ĵ 搬到新位置,这个操作叫?",
+    options: ["线性变换", "归一化", "点积", "插值"],
+    correct: 0,
+    why: "换基把点送到新位置,正是线性变换。旋转/缩放/剪切都是「把 î、ĵ 搬走」——下一课的矩阵就打包它。"
+  },
+  {
+    q: "一个物体的 forward / right / up 三个向量,本质是?",
+    options: ["它的局部基向量", "三个无关的随机方向", "它的位置坐标", "它的颜色通道"],
+    correct: 0,
+    why: "forward/right/up = 物体自己那套 î/ĵ/k̂ 在世界里指向哪。算朝向就是算这组基。"
+  },
+  {
+    q: "「标准正交基 orthonormal」指基向量?",
+    options: ["互相垂直且都是单位长度", "互相平行", "长度都为 2", "至少有一根是零向量"],
+    correct: 0,
+    why: "ortho=正交(垂直),normal=单位长。正交基不扭曲长度和角度,纯旋转就是正交基之间的变换。"
+  },
+  {
+    q: "用第 8 课叉积搭出的 forward/right/up,通常是?",
+    options: ["一组正交基", "一组被剪切的基", "全部平行", "全是零向量"],
+    correct: 0,
+    why: "叉积给互相垂直的向量,再归一化即单位长 → 正交基。这正是它好用、不扭曲的原因。"
+  }
+]);
+</script>
+</body>
+</html>

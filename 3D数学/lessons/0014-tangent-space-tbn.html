@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 14 课 · 切线空间与法线贴图(TBN)</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 14 课 · 模块 2 空间与变换</div>
+<h1>切线空间与法线贴图:TBN 三件套</h1>
+<p class="subtitle">法线贴图为什么整体偏蓝?「法线贴图发黑」到底是什么坏了?答案都在<strong>切线空间</strong>和它的三根基向量 <strong>T、B、N</strong> 里。这是模块 2 的收官,把空间、基、矩阵全部用在一个真实的 TA 场景上。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清:法线贴图存的是<strong>切线空间</strong>里的法线(所以偏蓝)。<strong>TBN</strong> 是表面上每个点的一组基(切线 T、副切线 B、法线 N),把它们排成列就是一个矩阵,能把切线空间的法线<strong>搬到世界空间</strong>去和光照计算。这正是第 10 课「基向量按列排成矩阵」的实战。
+</div>
+
+<h2>为什么法线贴图整体偏蓝</h2>
+<p>
+法线是单位向量,三个分量范围是 [-1, 1]。贴图像素只能存 [0, 1],所以编码时做了映射:<code>颜色 = 法线 × 0.5 + 0.5</code>。一个「没有凹凸、垂直于表面」的法线在切线空间里是 <strong>(0, 0, 1)</strong>(纯朝外),编码后变成颜色 <strong>(0.5, 0.5, 1.0)</strong>——这正是那种<strong>淡蓝紫色</strong>。
+</p>
+<div class="formula">切线空间法线 (0, 0, 1) ── ×0.5+0.5 ──▶ 颜色 (0.5, 0.5, 1.0) = 法线贴图的「蓝底」</div>
+<p>
+所以法线贴图偏蓝不是 bug,是因为大部分表面是平的、法线朝正外(Z=1),编码后 B 通道拉满。贴图里偏红偏绿的地方,才是有凹凸、法线被掰歪的细节。
+</p>
+
+<h2>切线空间是什么:每个点自带的小坐标系</h2>
+<p>
+关键问题:法线贴图存的法线,是相对<strong>谁</strong>的?如果存世界空间法线,模型一转、一动,贴图就废了。所以它存的是<strong>切线空间</strong>——一套<strong>贴在表面、随表面走</strong>的局部坐标系。无论模型怎么摆,(0,0,1) 永远表示「沿表面朝外」,贴图因此能复用。
+</p>
+<p>
+这套局部坐标系由<strong>三根基向量</strong>定义,就是 TBN:
+</p>
+<table class="tbl">
+  <tr><th>基向量</th><th>含义</th><th>方向</th></tr>
+  <tr><td><strong>T 切线 Tangent</strong></td><td>沿 UV 的 U 方向(横向贴着表面)</td><td>对应贴图 R 通道</td></tr>
+  <tr><td><strong>B 副切线 Bitangent</strong></td><td>沿 UV 的 V 方向(纵向贴着表面)</td><td>对应贴图 G 通道</td></tr>
+  <tr><td><strong>N 法线 Normal</strong></td><td>垂直于表面朝外</td><td>对应贴图 B 通道</td></tr>
+</table>
+<p>
+T 和 B 贴着表面、由 UV 走向决定;N 是上一课那根垂直法线。三者通常互相垂直,构成一组<strong>正交基</strong>(第 10 课)——这就是为什么 T 和 B 叫「切」线:它们和表面相切。
+</p>
+
+<h2>TBN 矩阵:把切线空间搬到世界</h2>
+<p>
+第 10、11 课的核心:<strong>把三根基向量按列排好,就是一个矩阵</strong>。把世界空间下的 T、B、N 按列排成 3×3,就得到 <strong>TBN 矩阵</strong>。它能把切线空间里的向量变换到世界空间:
+</p>
+<div class="formula">N_world = <span class="vec">TBN</span> · N_tangent　=　[ T | B | N ] · (贴图解出的法线)</div>
+<p>
+直觉:N_tangent 是「T 方向几份 + B 方向几份 + N 方向几份」的配方(线性组合)。TBN 矩阵拿这个配方,用世界空间的 T、B、N 重新组装,得到的就是这根法线在世界里真正的指向。然后才能和世界空间的光方向做 <code>N·L</code>(第 7 课)算明暗。
+</p>
+<pre><code><span class="cmt">// 概念:解码法线贴图 → 用 TBN 搬到世界 → 才能和世界光照算</span>
+<span class="kw">float3</span> n_tan = tex.<span class="fn">Sample</span>(s, uv).xyz * <span class="num">2.0</span> - <span class="num">1.0</span>;  <span class="cmt">// 解码:颜色 → [-1,1] 法线</span>
+<span class="kw">float3x3</span> TBN   = <span class="kw">float3x3</span>(T, B, N);                    <span class="cmt">// 三根基按列(注意引擎约定)</span>
+<span class="kw">float3</span> n_world = <span class="fn">normalize</span>(<span class="fn">mul</span>(TBN, n_tan));         <span class="cmt">// 搬到世界,再归一化</span>
+<span class="kw">float</span> ndotl  = <span class="fn">saturate</span>(<span class="fn">dot</span>(n_world, L));           <span class="cmt">// 现在才能正确算光照</span>
+</code></pre>
+
+<h2>接回引擎:法线贴图发黑到底是什么</h2>
+<div class="callout callout-vfx">
+  <span class="label">TA 的高频翻车</span>
+  「法线贴图一接上去物体就发黑 / 出现死黑斑」,几乎都是<strong>空间没对齐</strong>(第 9 课的老问题):把切线空间法线<strong>没经过 TBN</strong> 就直接当世界法线去和光照算,N·L 大面积变负被裁成 0,于是死黑。其它常见诱因:<strong>贴图被当成 sRGB 解码</strong>(法线贴图必须标记为线性/非颜色数据,否则数值被 gamma 扭曲)、<strong>UV 镜像导致副切线方向翻转</strong>(B 的手性反了,凹凸内外颠倒)。UE 里法线贴图取样节点已经把 TBN 和解码包好了,但你<strong>自定义 HLSL</strong> 解法线贴图时,这三件套要自己接对。
+</div>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>以为法线贴图存的是世界法线。</strong> 它存切线空间法线(所以偏蓝),必须经 TBN 才能进世界光照。</li>
+  <li><strong>忘了解码 ×2-1。</strong> 贴图是 [0,1],法线是 [-1,1]。漏了这步,法线全挤在正方向,凹凸消失。</li>
+  <li><strong>法线贴图当 sRGB 采样。</strong> 它是数据不是颜色,要标线性/非颜色,否则发黑发花。</li>
+  <li><strong>UV 镜像不翻副切线。</strong> 镜像 UV 会让 B 手性反转,凹凸内外颠倒,需要按 UV 朝向修正 B 的符号。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz14"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://learnopengl.com/Advanced-Lighting/Normal-Mapping" target="_blank">LearnOpenGL — Normal Mapping</a>
+  —— 把切线空间、TBN 矩阵的构造、为什么要把法线搬到同一空间,配图讲得极清楚。语言是 GLSL,但概念和 HLSL/UE 完全一致。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我帮你 debug「法线贴图发黑 / 凹凸反了」具体是 TBN、sRGB 还是副切线手性的问题?或者把 UE 材质里那套法线节点背后的 TBN 拆给你看?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>模块 2 完结 🎉 你已经走通「空间 → 基 → 矩阵 → TRS → 法线 → TBN」一整条变换链。<br>下一课进入<strong>模块 3:旋转</strong>——先从最直观的 <strong>2D 旋转与旋转矩阵</strong>开始,看一个角度怎么变成一个矩阵。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz14", [
+  {
+    q: "法线贴图为什么整体偏蓝?",
+    options: ["平表面法线(0,0,1)编码后是蓝", "贴图压缩导致偏色", "蓝色省内存", "美术习惯调蓝"],
+    correct: 0,
+    why: "法线×0.5+0.5 编码。平表面法线(0,0,1)→颜色(0.5,0.5,1.0),B通道拉满,所以蓝底。"
+  },
+  {
+    q: "法线贴图里存的法线住在哪个空间?",
+    options: ["切线空间(随表面走)", "世界空间", "视图空间", "裁剪空间"],
+    correct: 0,
+    why: "存切线空间法线,无论模型怎么摆,(0,0,1)永远表示朝外,贴图才能复用。要经TBN才进世界。"
+  },
+  {
+    q: "TBN 三根基向量分别是?",
+    options: ["切线、副切线、法线", "前、右、上", "红、绿、蓝", "平移、旋转、缩放"],
+    correct: 0,
+    why: "T切线(沿U)、B副切线(沿V)、N法线(朝外)。三者正交,贴着表面构成局部坐标系。"
+  },
+  {
+    q: "TBN 矩阵的作用是?",
+    options: ["把切线空间法线搬到世界空间", "把世界压成切线", "给贴图去色", "计算面积"],
+    correct: 0,
+    why: "把世界空间的T、B、N按列排成矩阵,乘切线空间法线=用世界基重组,得到世界空间法线。"
+  },
+  {
+    q: "解码法线贴图时必做的一步是?",
+    options: ["颜色 ×2−1 还原到 [−1,1]", "颜色 ×255", "取颜色的对数", "颜色归一化到 [0,1]"],
+    correct: 0,
+    why: "贴图存[0,1],法线是[-1,1]。漏了×2-1,法线全挤在正方向,凹凸细节消失。"
+  },
+  {
+    q: "法线贴图接上后物体「发黑」,最可能的根因是?",
+    options: ["切线空间法线没经 TBN 进世界", "模型面数太高", "贴图分辨率太低", "光太亮"],
+    correct: 0,
+    why: "没经TBN直接当世界法线,N·L大面积变负被裁成0→死黑。其次是当sRGB采样或副切线手性反了。"
+  }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0037 · D3D12 RHI 后端：PSO 缓存与描述符堆</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 7 · RHI 与显示</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 7 · RHI 与显示 · Lesson 0037</p>
+  <h1>D3D12 RHI 后端：PSO 缓存与描述符堆</h1>
+  <p class="subtitle">RHI 线程调用的 <code>GDynamicRHI</code> 究竟在做什么？本课拆开 D3D12RHI 后端：<code>FD3D12CommandContext</code> 如何映射到 D3D12 命令列表、PSO 如何被缓存与重用、描述符堆（在线/离线）如何管理、资源屏障如何追踪——把 0003 讲的图形 API 抽象契约，在 UE 源码层面完整对应一遍。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~28 分钟</span>
+    <span><b>前置</b> 0003（图形 API 契约）、0036（RHI 线程与命令列表）</span>
+    <span><b>产出</b> 能说清 FD3D12CommandContext 的职责、PSO 缓存命中路径、描述符堆在线/离线分工、资源状态追踪机制，以及上传堆的常量缓冲分配策略</span>
+  </div>
+
+  <p class="lead">在 0003 你学到了"PSO、命令列表、描述符、屏障"是 D3D12 对应用程序的四个核心契约。在 0036 你看到 RHI 线程把 <code>FRHICommand*</code> 链表翻译成 <code>GDynamicRHI</code> 调用。本课就是那个翻译目的地内部——<code>FD3D12DynamicRHI</code> 的具体实现，以及它管理的缓存、堆、状态机。</p>
+
+  <h2><span class="num">1</span>FD3D12CommandContext：一次绘制调用的承载者</h2>
+  <p><code>FD3D12CommandContext</code>（<span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12CommandContext.h</span>）是 D3D12RHI 的核心执行上下文，对应 D3D12 层的一个 <code>ID3D12GraphicsCommandList</code>。它的生命周期与一段 GPU 工作批次对齐：</p>
+
+  <div class="pipeline">
+    <div class="stage"><span class="s-name">OpenCommandList</span><span class="s-sub">从命令分配器<br>取得 CmdList</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">录制阶段</span><span class="s-sub">RHISetGraphicsPSO<br>RHIDrawIndexed…</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">FlushCommands</span><span class="s-sub">Close() + 提交<br>到命令队列</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">GPU 执行</span><span class="s-sub">异步消费<br>命令队列</span></div>
+  </div>
+
+  <p><code>FD3D12CommandContext</code> 内部持有：</p>
+  <ul>
+    <li><code>FD3D12CommandListHandle</code>——封装 <code>ID3D12GraphicsCommandList</code> 及其对应的 <code>ID3D12CommandAllocator</code>。</li>
+    <li>当前绑定的 PSO 句柄（用于检测 PSO 是否需要切换）。</li>
+    <li>当前描述符堆绑定状态（在线堆的当前偏移）。</li>
+    <li>资源状态缓存（<code>FD3D12ResourceStateCache</code>，见第 4 节）。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">命令分配器池——为什么不能立即复用</span>
+    <p>D3D12 的 <code>ID3D12CommandAllocator</code> 在 GPU 执行完对应命令列表之前不能 Reset。<code>FD3D12CommandAllocatorManager</code> 维护一个池，按 GPU 完成的 Fence 值区分"可复用"和"尚在飞行中"的分配器，避免 CPU 重置一个 GPU 还在读的分配器而触发未定义行为。</p>
+  </div>
+
+  <h2><span class="num">2</span>PSO 缓存：FD3D12PipelineStateCache</h2>
+  <p><span class="term">管线状态对象</span>（PSO）的创建在 D3D12 里极其昂贵——驱动要编译着色器字节码到机器码，可能耗时数百毫秒。UE 4.26 的 <code>FD3D12PipelineStateCache</code>（<span class="file">D3D12RHI/Private/D3D12PipelineState.h</span>）用多级缓存把这个代价摊薄：</p>
+
+  <table>
+    <thead><tr><th>缓存层级</th><th>存储位置</th><th>键</th><th>命中时</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>运行时内存缓存</b></td>
+        <td><code>TMap&lt;FD3D12GraphicsPipelineStateDesc, FD3D12PipelineState*&gt;</code></td>
+        <td>完整 PSO 描述结构体（着色器哈希 + 渲染状态）</td>
+        <td>直接返回已有 <code>ID3D12PipelineState*</code>，零开销。</td>
+      </tr>
+      <tr>
+        <td><b>磁盘持久化缓存</b></td>
+        <td>项目 Saved 目录下的 .pso 缓存文件</td>
+        <td>同上（跨会话）</td>
+        <td>从文件加载 PSO blob，驱动用预编译 blob 跳过大部分编译工作。</td>
+      </tr>
+      <tr>
+        <td><b>驱动缓存</b></td>
+        <td>GPU 驱动内部（不透明）</td>
+        <td>着色器字节码</td>
+        <td>驱动命中缓存可进一步加速。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>每次渲染线程调用 <code>RHICreateGraphicsPipelineState()</code> 时，UE 先查运行时内存缓存；未命中则尝试磁盘缓存；再未命中才调用 <code>ID3D12Device::CreateGraphicsPipelineState</code>。第一帧或全新材质组合时缓存冷启动，这正是 UE 的 <strong>PSO 预编译</strong>（ShaderCompileWorker 输出阶段）要提前做的事。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · PSO 抖动是卡帧元凶之一</span>
+    <p>若运行时遭遇大量缓存未命中（动态材质组合、首次加载关卡），驱动创建 PSO 会让 RHI 线程阻塞数十到数百毫秒，表现为明显的卡顿尖刺。解决路径：① UE 的 PSO 预编译 pipeline（将常见 PSO 在后台线程提前创建）；② 使用 <code>r.ShaderPipelineCache.Enabled 1</code> 持久化运行时缓存；③ 减少运行时材质排列组合数量。</p>
+  </div>
+
+  <h2><span class="num">3</span>描述符堆：在线堆与离线堆</h2>
+  <p>D3D12 通过<span class="term">描述符堆</span>（Descriptor Heap）把资源绑定给着色器。UE 的 D3D12RHI 把描述符堆分成两类：</p>
+
+  <div class="lanes">
+    <div class="lane render"><span class="lane-name">在线堆<br>(Online)</span><span class="lane-body">绑定到 GPU 命令列表（<code>SetDescriptorHeaps</code>）；着色器从这里读取描述符。<b>环形缓冲</b>设计：每帧分配新偏移，GPU 用完后偏移归零复用。容量有限，必须节约。</span></div>
+    <div class="lane rhi"><span class="lane-name">离线堆<br>(Offline)</span><span class="lane-body">CPU 侧的大型描述符存储池；描述符在创建资源（CreateTexture2D 等）时写入。绑定时从离线堆复制到在线堆（<code>CopyDescriptors</code>）。容量大，但 GPU 不能直接访问。</span></div>
+  </div>
+
+  <p>这个两级设计的动机：D3D12 规定 GPU 只能访问绑定到命令列表的堆，而绑定数量有限（通常一帧只 SetDescriptorHeaps 一次，否则有性能风险）。解法是让在线堆作为"暂存区"，每次 Draw 之前把需要的描述符从离线堆批量复制过来。</p>
+
+  <pre><code><span class="cmt">// D3D12DescriptorCache.cpp — 概念简化</span>
+<span class="kw">void</span> <span class="typ">FD3D12DescriptorCache</span>::<span class="fn">SetSRVs</span>(
+    <span class="typ">EShaderFrequency</span> ShaderStage,
+    <span class="typ">FD3D12ShaderResourceViewCache</span>&amp; Cache)
+{
+    <span class="cmt">// 1. 在在线堆上分配 N 个连续槽位</span>
+    <span class="typ">uint32</span> HeapOffset = <span class="fn">OnlineHeap</span>.<span class="fn">AllocateSlots</span>(Cache.NumSRVs);
+
+    <span class="cmt">// 2. 批量从离线堆复制到在线堆</span>
+    <span class="typ">Device</span>-&gt;<span class="fn">CopyDescriptors</span>(
+        <span class="fn">OnlineHandle</span>(HeapOffset), Cache.SRVHandles, Cache.NumSRVs);
+
+    <span class="cmt">// 3. 设置根描述符表指向在线堆的该偏移</span>
+    <span class="fn">CommandList</span>-&gt;<span class="fn">SetGraphicsRootDescriptorTable</span>(
+        SlotIndex, <span class="fn">OnlineHandle</span>(HeapOffset));
+}</code></pre>
+  <p class="code-cap"><span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12DescriptorCache.cpp</span> — 离线→在线堆复制路径（概念示意）</p>
+
+  <h2><span class="num">4</span>资源状态追踪与屏障</h2>
+  <p>D3D12 要求开发者手动管理每个资源的<span class="term">资源屏障</span>（Resource Barrier / Transition）。UE D3D12RHI 用 <code>FD3D12ResourceStateCache</code>（或 <code>FD3D12Resource</code> 内部的状态字段）追踪每个子资源（mip level × array slice）的当前状态，在需要时插入 <code>D3D12_RESOURCE_BARRIER_TYPE_TRANSITION</code>。</p>
+
+  <p>状态追踪的两种层次：</p>
+  <ul>
+    <li><strong>本地（per-CommandList）追踪</strong>：<code>FD3D12CommandContext</code> 记录在当前命令列表中已应用的状态转换，避免重复插屏障。</li>
+    <li><strong>全局（per-Resource）追踪</strong>：<code>FD3D12Resource</code> 存储资源当前在 GPU 时间线上的"已知状态"，在 Execute 后更新，供下一批命令列表参考。</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">状态追踪不是 RDG——两者互补</span>
+    <p>RDG（0015/0016）在 Pass 编译阶段就推导出整帧的屏障需求，在 ExecutePass 之间插入屏障。这已覆盖大多数现代路径。但仍有一些"手写 RHI"的老代码绕过 RDG 直接操作 <code>FRHICommandListImmediate</code>，那里靠 D3D12RHI 层的状态缓存作为兜底。两者并存，各有分工：RDG 是高层编排者，D3D12RHI 是低层保证者。</p>
+  </div>
+
+  <h2><span class="num">5</span>根签名：着色器如何找到资源</h2>
+  <p>D3D12 的<span class="term">根签名</span>（Root Signature）定义着色器能访问哪些描述符表、根常量、根描述符，以及它们在"着色器可见资源绑定空间"里的槽位布局。UE 4.26 使用一个固定的全局根签名策略——大多数管线状态共享同一个根签名（或少数几个变体），避免频繁切换根签名带来的 GPU 刷新开销。</p>
+
+  <p>根签名在 <code>FD3D12RootSignature</code>（<span class="file">D3D12RHI/Private/D3D12RootSignature.h</span>）中表达，描述了：</p>
+  <ul>
+    <li>每个着色器阶段（VS/PS/CS）的 SRV/UAV/CBV/Sampler 描述符表范围。</li>
+    <li>根常量（32 位值，直接嵌在根签名里，无需描述符）。</li>
+    <li>根 CBV（直接用 GPU 虚拟地址绑定，无需通过描述符堆）。</li>
+  </ul>
+
+  <h2><span class="num">6</span>上传堆与常量缓冲分配</h2>
+  <p>CPU 需要每帧向 GPU 传递大量常量数据（变换矩阵、光源参数、材质参数……）。D3D12 的上传堆（Upload Heap，<code>D3D12_HEAP_TYPE_UPLOAD</code>）在 CPU/GPU 都可见，但不是 GPU 最快的读取位置——它是 CPU 写、GPU 读的暂存区。UE D3D12RHI 的常量缓冲策略：</p>
+
+  <table>
+    <thead><tr><th>常量大小</th><th>策略</th><th>UE 实现</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>小常量（≤64B）</td>
+        <td>根常量（Root Constants），直接嵌在根签名里，无内存分配。</td>
+        <td><code>SetGraphicsRootConstants</code></td>
+      </tr>
+      <tr>
+        <td>中等常量（64B–几KB）</td>
+        <td>上传堆的线性分配器（每帧一个大块，子分配）；帧末归零。</td>
+        <td><code>FD3D12FastConstantAllocator</code>（概念名，实际实现见 D3D12RHI 相关分配器代码）</td>
+      </tr>
+      <tr>
+        <td>大/持久常量缓冲（材质参数等）</td>
+        <td>独立 <code>ID3D12Resource</code>，生命周期与材质实例绑定；用 <code>Map/Unmap</code> 更新。</td>
+        <td><code>FD3D12ConstantBuffer</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout knowledge">
+    <span class="label">为什么上传堆不用于渲染目标</span>
+    <p>上传堆的内存映射为 CPU/GPU 共享（Write-Combined），GPU 读取它时经过 PCIe/系统互联，带宽远低于 GPU 本地显存（Default Heap）。渲染目标、GBuffer、深度缓冲都必须放在 Default Heap。常量缓冲因为数据量相对小、且每帧必须由 CPU 更新，才用上传堆。</p>
+  </div>
+
+  <h2><span class="num">7</span>整体数据流：从 FRHICommand 到 D3D12 调用</h2>
+  <p>把本课与 0036 串在一起，一次 DrawIndexedPrimitive 的完整 CPU 侧路径：</p>
+
+  <div class="pipeline">
+    <div class="stage"><span class="s-name">渲染线程</span><span class="s-sub">FRHICommandList<br>.DrawIndexedPrimitive</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">命令链表节点</span><span class="s-sub">FRHICommandDraw<br>IndexedPrimitive</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage rhi"><span class="s-name">RHI 线程</span><span class="s-sub">ExecuteInner<br>→ GDynamicRHI</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">FD3D12<br>CommandContext</span><span class="s-sub">检查 PSO 缓存<br>复制描述符<br>插屏障</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">ID3D12Graphics<br>CommandList</span><span class="s-sub">.DrawIndexed<br>Instanced()</span></div>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">D3D12RHI 中"在线描述符堆"（Online Descriptor Heap）的作用是什么？</p>
+    <button class="q-opt">存储所有资源描述符的主仓库；创建纹理时写入，永久保留</button>
+    <button class="q-opt">绑定到当前命令列表的 GPU 可见堆；每次 Draw 前把需要的描述符从离线堆复制进来，以环形缓冲方式逐帧复用</button>
+    <button class="q-opt">D3D12 驱动内部的着色器缓存，与 CPU 代码无关</button>
+    <div class="q-feedback" data-ok="正确。在线堆是 GPU 命令列表可直接寻址的堆，容量有限；离线堆是 CPU 侧大容量仓库。每次绑定时把当前 Draw 需要的描述符子集从离线复制到在线，然后通过根描述符表指向在线堆的相应偏移。" data-no="再想：D3D12 规定 GPU 只能访问 SetDescriptorHeaps 绑定的堆（在线堆）；离线堆只供 CPU 管理和复制。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>PSO 缓存未命中时 UE D3D12RHI 会发生什么？为什么首帧卡顿与此有关？</summary>
+    <div class="answer">
+      <p>缓存未命中时，<code>FD3D12PipelineStateCache</code> 先检查磁盘缓存（.pso 文件）；若也未命中，则同步调用 <code>ID3D12Device::CreateGraphicsPipelineState</code>。这个调用会让 GPU 驱动对着色器字节码做最终优化编译（JIT），可能耗时数十至数百毫秒，期间 RHI 线程被阻塞，整个渲染管线停顿，表现为帧率尖刺。首帧或首次进入新关卡遭遇大量新 PSO，正是这类卡顿的根源。解决方法是 UE 的 PSO 预编译机制（ShaderPipelineCache），在后台线程提前构建并缓存常用 PSO。</p>
+    </div>
+  </details>
+
+  <details class="recall">
+    <summary>根签名（Root Signature）在 UE D3D12RHI 中是如何使用的？为什么 UE 倾向于使用少量固定根签名？</summary>
+    <div class="answer">
+      <p>根签名定义了着色器可见的绑定布局（描述符表、根常量、根 CBV）。切换根签名会触发 GPU 内部管线刷新，代价类似切换 PSO。UE 4.26 的 D3D12RHI 为大多数图形管线使用统一的全局根签名（或少数变体），把所有着色器阶段的 SRV/UAV/Sampler/CBV 都纳入这个固定布局。这样每帧几乎不需要切换根签名，只需在 Draw 前更新根描述符表的偏移（指向在线堆的新位置）即可。代价是根签名占用较多根参数槽位，但比频繁切换的性能损失小得多。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FD3D12CommandContext</code> 持有一个 <code>ID3D12GraphicsCommandList</code> 和命令分配器句柄；它是 RHI 线程翻译 <code>FRHICommand*</code> 的落地点。</li>
+      <li><code>FD3D12PipelineStateCache</code> 提供三级 PSO 缓存（内存 → 磁盘 → 驱动）；缓存未命中会阻塞 RHI 线程数十至数百毫秒，是首帧卡顿的主要原因。</li>
+      <li>描述符堆分<b>在线</b>（GPU 可见，环形缓冲）和<b>离线</b>（CPU 管理，大容量）两层；Draw 前把需要的描述符从离线复制到在线，再通过根描述符表绑定。</li>
+      <li>资源状态追踪（<code>FD3D12Resource</code> 内部状态字段 + 本地命令列表缓存）确保每次状态转换都有正确的 <code>ResourceBarrier</code>，与 RDG 上层屏障互补。</li>
+      <li>常量缓冲按大小分策略：小量用根常量（零分配），中量用上传堆线性分配器，大/持久量用专用 <code>FD3D12ConstantBuffer</code>。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>源码真相：<span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12CommandContext.h/.cpp</span>（命令上下文）、<span class="file">D3D12PipelineState.h/.cpp</span>（PSO 缓存）、<span class="file">D3D12DescriptorCache.cpp</span>（描述符堆）。交叉参考：<a href="https://github.com/donaldwuid/unreal_source_explained/blob/master/main/rendering.md">Unreal Source Explained — donaldwuid</a>（D3D12RHI 章节）；<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">How Unreal Renders a Frame — Kostas Anagnostou</a>（RHI 与后端视角）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："FD3D12CommandAllocatorManager 如何知道分配器可以复用了？""在线堆容量不够时会发生什么？""UE 的根签名具体有几个根参数、布局是怎样的？""FD3D12Resource 的状态追踪如何与多个 CommandContext 协同？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0036-rhi-thread-rhicommandlist.html"><span class="nav-dir">← 上一课</span>0036 · RHI 线程与 FRHICommandList</a>
+    <a class="next" href="0038-swapchain-present.html"><span class="nav-dir">下一课 →</span>0038 · 交换链与 Present</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 7 RHI 与显示 · D3D12RHI 后端是 UE 渲染抽象层与真实 GPU 驱动之间的最后一道接口。</footer>
+  </article>
+</div>
+</body>
+</html>

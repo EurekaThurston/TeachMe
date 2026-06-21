@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 课 · 叉积 cross:垂直与法线</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 8 课 · 模块 1 向量</div>
+<h1>叉积 cross:造一个垂直方向</h1>
+<p class="subtitle">点积给你一个数,叉积给你一个<strong>向量</strong>——而且这个向量<strong>同时垂直于</strong>输入的两者。算三角面法线、搭切线空间、判左右手,全靠它。这是模块 1 的收尾,也是通往「空间与变换」的桥。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清叉积 <strong>a × b 的两件事:方向</strong>——同时垂直于 a 和 b(即垂直于它们所在的平面);<strong>长度</strong>——等于 a、b 张成的平行四边形面积 <code>|a||b|sinθ</code>。会用它<strong>算面的法线</strong>,并知道叉积<strong>不可交换</strong>(a×b = −b×a),方向由手性决定。
+</div>
+
+<h2>叉积给的是垂直向量</h2>
+<p>
+给两个 3D 向量 a、b,<strong>a × b 是一个新向量,同时垂直于 a 和 b</strong>。换句话说,a 和 b 决定一个平面(像一张纸),叉积的结果是<strong>垂直戳出这张纸</strong>的那支箭。这就是它最重要的用途:<strong>已知面上两条边,求这个面朝哪——求法线</strong>。
+</p>
+<div class="formula">a × b = ( ay·bz − az·by ,　az·bx − ax·bz ,　ax·by − ay·bx )</div>
+<p>
+这个公式不用背(需要时查术语表或让我给)。要记的是它的<strong>含义</strong>:输出垂直于输入两者。2D 里没有「第三个垂直方向」,所以 2D 叉积退化成一个标量 <code>ax·by − ay·bx</code>——它就是上面公式的 z 分量,代表「平行四边形的有向面积」,也告诉你 b 在 a 的<strong>左边还是右边</strong>(正=逆时针/左,负=顺时针/右)。
+</p>
+<div class="lab">
+  <canvas id="play8"></canvas>
+  <div class="readout" id="read8"></div>
+  <p style="font-size:0.85rem;color:var(--muted);margin:0.6rem 0 0">这里显示 2D 叉积(z 分量)。正=b 在 a 逆时针侧,负=顺时针侧,0=共线。它的绝对值=两箭张成的平行四边形面积。</p>
+</div>
+
+<h2>长度 = 面积,也 = sinθ</h2>
+<p>
+叉积的长度 <code>|a × b| = |a||b|sinθ</code>,几何上正是 a、b 张成的<strong>平行四边形面积</strong>。和点积对照着记最清楚:
+</p>
+<table class="tbl">
+  <tr><th></th><th>点积 dot</th><th>叉积 cross</th></tr>
+  <tr><td>结果</td><td>标量(数)</td><td>向量(3D)</td></tr>
+  <tr><td>公式核心</td><td>|a||b|<strong>cos</strong>θ</td><td>|a||b|<strong>sin</strong>θ</td></tr>
+  <tr><td>最大时</td><td>两者<strong>平行</strong>(θ=0)</td><td>两者<strong>垂直</strong>(θ=90°)</td></tr>
+  <tr><td>为 0 时</td><td>垂直(θ=90°)</td><td>平行 / 共线(θ=0 或 180°)</td></tr>
+  <tr><td>量的是</td><td>多<strong>同向</strong></td><td>多<strong>垂直</strong> / 围出多大面积</td></tr>
+</table>
+<p>
+所以:<strong>两个向量越垂直,叉积越长;越平行,叉积越短</strong>(平行时为零向量——平行的两条边张不出面积,也定不出唯一的垂直方向)。这和点积正好互补:点积在平行时最大、垂直时为零。
+</p>
+
+<h2>杀手级应用:从三个点算三角面法线</h2>
+<p>
+网格的每个三角形由三个顶点 P0、P1、P2 组成。它朝哪?用两条边叉一下:
+</p>
+<pre><code><span class="kw">float3</span> e1 = P1 - P0;            <span class="cmt">// 边 1(终点减起点,第 5 课)</span>
+<span class="kw">float3</span> e2 = P2 - P0;            <span class="cmt">// 边 2</span>
+<span class="kw">float3</span> N  = <span class="fn">normalize</span>(<span class="fn">cross</span>(e1, e2)); <span class="cmt">// 垂直于面 → 法线,再归一化成纯方向</span>
+</code></pre>
+<p>
+三步用上了整个模块 1:<strong>减法</strong>求边、<strong>叉积</strong>求垂直、<strong>归一化</strong>成单位法线。这就是「几何法线」的来历。如果法线朝反了(朝模型内部),把 <code>cross(e1, e2)</code> 换成 <code>cross(e2, e1)</code> 翻面即可——因为 <strong>a×b = −b×a</strong>。
+</p>
+<div class="callout callout-warn">
+  <span class="label">手性决定方向(回到第 1 课)</span>
+  叉积指向哪一侧,由坐标系的<strong>手性</strong>决定。UE 是<strong>左手系</strong>,很多教程是右手系——这就是为什么你抄来的法线/切线公式有时朝反。记住:方向反了先怀疑手性或叉积参数顺序,翻一下 <code>cross</code> 的两个参数顺序通常就好。
+</div>
+
+<h2>搭正交基:为模块 2、3 铺路</h2>
+<p>
+叉积还能<strong>从一个方向造出一整套互相垂直的坐标轴(正交基)</strong>。比如已知粒子的运动方向 forward,想给它配一套「右、上」轴(让它朝运动方向喷射 / 拉伸):
+</p>
+<pre><code><span class="kw">float3</span> fwd   = <span class="fn">normalize</span>(velocity);
+<span class="kw">float3</span> right = <span class="fn">normalize</span>(<span class="fn">cross</span>(worldUp, fwd)); <span class="cmt">// 垂直于 up 和 fwd → 指向右</span>
+<span class="kw">float3</span> up    = <span class="fn">cross</span>(fwd, right);            <span class="cmt">// 再叉一次补齐第三轴,已自动正交</span>
+</code></pre>
+<p>
+这三根互相垂直的单位向量,<strong>就是一个坐标空间的基</strong>(下一模块的主角),也是 look-at 朝向构造(第 18 课)和切线空间 TBN(第 14 课)的核心套路。你现在已经具备搭它的全部零件了。
+</p>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  Niagara 让 Sprite/Ribbon「朝速度方向对齐」、Mesh 粒子「看向运动方向」,内部都在用叉积从 velocity 构造朝向基。你理解了这套,就能看懂(并自定义)那些 Align 模块到底在算什么,而不是只会勾选项。
+</div>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>以为叉积可交换。</strong> a×b = −b×a,<strong>换序会翻面</strong>。法线朝反时,交换叉积两个参数即可。</li>
+  <li><strong>对平行向量求叉积。</strong> 平行(或共线)时叉积是零向量,normalize 它会得 NaN。求法线时若两边共线(退化三角形)要防一手。</li>
+  <li><strong>把叉积结果当标量(或把点积当向量)。</strong> 3D 叉积给<strong>向量</strong>,点积给<strong>标量</strong>。要垂直方向用 cross,要同向程度用 dot,别用混。</li>
+  <li><strong>忽略手性导致方向反。</strong> UE 左手系 vs 教程右手系。搬公式后法线/切线朝反,先查手性与参数顺序。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz8"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=eu6i7WJeinw" target="_blank">3Blue1Brown — Cross products(Essence of Linear Algebra 第 10 章)</a>
+  —— 用面积和垂直方向把叉积讲到直观。看完你会明白「长度=面积、方向=垂直」不是巧合,而是叉积的本质定义。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我帮你从顶点算一个面的法线、或从 velocity 搭一套朝向基(right/up/forward)?或者 debug「法线 / 切线朝反」?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>🎉 模块 1 · 向量 全部打通!你已经握住了 3D 数学的心脏:点、方向、加减缩放、长度、归一化、点积、叉积。下一站 <strong>模块 2 · 坐标空间与变换</strong>——把这些向量装进矩阵,搞定 TA 最常翻车的 Local/World、法线逆转置、切线空间。想继续就跟我说。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/math-tools.js"></script>
+<script>
+VecPlayground("play8", {
+  readoutId: "read8",
+  show: ["cross", "angle"],
+  vectors: [
+    { name: "a", x: 4, y: 0, color: "#c0392b", draggable: true },
+    { name: "b", x: 2, y: 3, color: "#2e7d32", draggable: true }
+  ]
+});
+renderQuiz("quiz8", [
+  {
+    q: "3D 叉积 a × b 的结果方向是?",
+    options: ["同时垂直于 a 和 b", "与 a 平行", "a 和 b 的中间方向", "与 b 反向"],
+    correct: 0,
+    why: "叉积给一个同时垂直于 a、b 的向量,即垂直于它们所在平面。这是求法线的根。"
+  },
+  {
+    q: "叉积的长度 |a × b| 等于?",
+    options: ["a、b 张成的平行四边形面积 |a||b|sinθ", "a、b 的夹角", "|a| + |b|", "|a||b|cosθ"],
+    correct: 0,
+    why: "|a×b|=|a||b|sinθ=平行四边形面积。和点积的 cos 互补:垂直时叉积最大、平行时为零。"
+  },
+  {
+    q: "两个向量平行(共线)时,它们的叉积是?",
+    options: ["零向量", "最长的向量", "单位向量", "等于点积"],
+    correct: 0,
+    why: "平行时 sinθ=0,叉积长度为 0=零向量。平行的边张不出面积,也定不出唯一垂直方向。"
+  },
+  {
+    q: "从三角形顶点 P0,P1,P2 求面法线,正确步骤是?",
+    options: ["normalize(cross(P1−P0, P2−P0))", "normalize(P1+P2+P0)", "dot(P1−P0, P2−P0)", "cross(P0, P1)"],
+    correct: 0,
+    why: "两条边 = 顶点相减;叉积得垂直于面的向量;再归一化成单位法线。模块 1 三件套全用上。"
+  },
+  {
+    q: "发现算出的法线朝向模型内部(反了),最简单的修法是?",
+    options: ["交换叉积两个参数的顺序", "把法线乘以 2", "改用点积", "归一化两次"],
+    correct: 0,
+    why: "a×b = −b×a,换序即翻面。法线/切线朝反时先试交换 cross 参数顺序(也可能是手性约定不同)。"
+  },
+  {
+    q: "已知 forward,想配一根「右」轴搭正交基,常用?",
+    options: ["right = normalize(cross(up, forward))", "right = forward × forward", "right = dot(up, forward)", "right = up + forward"],
+    correct: 0,
+    why: "cross(up, forward) 给同时垂直于两者的向量=右轴;再 cross(forward, right) 补齐 up。这是 look-at 与 TBN 的核心套路。"
+  }
+]);
+</script>
+</body>
+</html>

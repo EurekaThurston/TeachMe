@@ -1,0 +1,281 @@
+/* ============================================================
+   UE 4.26 渲染管线课程 — 共享样式表
+   Tufte 风：干净排版、宽边注、可打印。所有课程链接此文件。
+   ============================================================ */
+
+:root {
+  --ink:        #1a1a1a;
+  --ink-soft:   #555;
+  --ink-faint:  #888;
+  --paper:      #fdfcf9;
+  --paper-2:    #f4f1ea;
+  --rule:       #e0dccf;
+  --accent:     #0b5fa5;   /* UE 蓝 */
+  --accent-2:   #b5481f;   /* GPU 橙 */
+  --accent-3:   #2e7d4f;   /* 洞见绿 */
+  --warn:       #9a6b00;
+  --code-bg:    #1e1e24;
+  --code-fg:    #e8e6df;
+  --gbuffer:    #5b3a8c;
+
+  --serif: "Iowan Old Style", "Palatino Linotype", "Source Han Serif SC",
+           "Songti SC", Georgia, "Times New Roman", serif;
+  --sans:  "Inter", "Segoe UI", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono:  "JetBrains Mono", "Cascadia Code", "Consolas", "SFMono-Regular", monospace;
+
+  --measure: 42rem;
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 18px; -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  line-height: 1.55;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---------- 页面骨架 ---------- */
+.page { max-width: 70rem; margin: 0 auto; padding: 2.5rem 2rem 6rem; }
+.content { max-width: var(--measure); }
+article { counter-reset: sidenote figure; }
+
+/* ---------- 顶部导航 ---------- */
+.topbar {
+  display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: .6rem; margin-bottom: 2rem;
+  font-family: var(--sans); font-size: .8rem;
+}
+.topbar .course { font-weight: 700; letter-spacing: .02em; color: var(--accent); }
+.topbar .crumb { color: var(--ink-faint); }
+.topbar .spacer { flex: 1; }
+.topbar a { color: var(--ink-soft); text-decoration: none; border-bottom: 1px dotted var(--rule); }
+.topbar a:hover { color: var(--accent); }
+
+/* ---------- 课头 ---------- */
+.lesson-kicker {
+  font-family: var(--sans); font-size: .78rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--accent-2);
+  margin: 0 0 .4rem;
+}
+h1 { font-weight: 700; font-size: 2.3rem; line-height: 1.12; margin: 0 0 .5rem; letter-spacing: -.01em; }
+.subtitle { font-size: 1.15rem; color: var(--ink-soft); font-style: italic; margin: 0 0 1.5rem; max-width: var(--measure); }
+
+.meta-row {
+  display: flex; gap: 1.2rem; flex-wrap: wrap;
+  font-family: var(--sans); font-size: .76rem; color: var(--ink-faint);
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  padding: .5rem 0; margin-bottom: 2rem;
+}
+.meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+/* ---------- 正文排版 ---------- */
+h2 {
+  font-family: var(--sans); font-weight: 700; font-size: 1.35rem;
+  margin: 2.8rem 0 .8rem; padding-top: .4rem; letter-spacing: -.01em;
+  max-width: var(--measure);
+}
+h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: .5rem; }
+h3 { font-family: var(--sans); font-weight: 650; font-size: 1.05rem; margin: 1.8rem 0 .5rem; color: var(--ink); max-width: var(--measure); }
+p, ul, ol { max-width: var(--measure); }
+p { margin: 0 0 1rem; }
+li { margin: .3rem 0; }
+strong { font-weight: 700; }
+em { font-style: italic; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(11,95,165,.25); }
+a:hover { border-bottom-color: var(--accent); }
+
+.lead { font-size: 1.1rem; color: var(--ink); }
+.lead::first-letter { } /* hook for drop cap if wanted */
+
+/* 术语首次出现 */
+.term { font-style: normal; font-weight: 600; color: var(--gbuffer); border-bottom: 1px dotted var(--gbuffer); cursor: help; }
+code .term { color: inherit; border: 0; }
+
+/* ---------- 边注 (Tufte sidenote) ---------- */
+.sidenote, .marginnote {
+  float: right; clear: right;
+  width: 16rem; margin: .2rem -18rem .8rem 0;
+  font-family: var(--sans); font-size: .76rem; line-height: 1.4; color: var(--ink-soft);
+}
+.sidenote { counter-increment: sidenote; }
+.sidenote::before { content: counter(sidenote) " "; color: var(--accent-2); font-weight: 700; }
+.sn-ref { color: var(--accent-2); font-weight: 700; font-size: .7em; vertical-align: super; cursor: pointer; }
+@media (max-width: 1100px) {
+  .sidenote, .marginnote { float: none; width: auto; margin: .8rem 0; padding: .6rem .8rem;
+    background: var(--paper-2); border-left: 3px solid var(--accent-2); border-radius: 0 4px 4px 0; }
+}
+
+/* ---------- 引用 / 主源卡 ---------- */
+blockquote {
+  margin: 1.5rem 0; padding: .2rem 0 .2rem 1.2rem;
+  border-left: 3px solid var(--rule); color: var(--ink-soft); font-style: italic;
+  max-width: var(--measure);
+}
+
+.callout {
+  max-width: var(--measure);
+  margin: 1.4rem 0; padding: 1rem 1.2rem; border-radius: 6px;
+  background: var(--paper-2); border: 1px solid var(--rule);
+  font-size: .95rem;
+}
+.callout .label {
+  font-family: var(--sans); font-size: .7rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; display: block; margin-bottom: .4rem;
+}
+.callout p:last-child { margin-bottom: 0; }
+.callout.knowledge { border-left: 4px solid var(--accent); }
+.callout.knowledge .label { color: var(--accent); }
+.callout.insight  { border-left: 4px solid var(--accent-3); background: #f0f6f1; }
+.callout.insight .label { color: var(--accent-3); }
+.callout.warn     { border-left: 4px solid var(--warn); background: #faf6ec; }
+.callout.warn .label { color: var(--warn); }
+.callout.source   { border-left: 4px solid var(--accent-2); }
+.callout.source .label { color: var(--accent-2); }
+.callout.source a { font-family: var(--sans); font-weight: 600; }
+
+/* ---------- 代码 ---------- */
+code {
+  font-family: var(--mono); font-size: .85em;
+  background: var(--paper-2); padding: .1em .35em; border-radius: 3px;
+  border: 1px solid var(--rule); color: #6a3d9a;
+}
+pre {
+  max-width: var(--measure);
+  background: var(--code-bg); color: var(--code-fg);
+  font-family: var(--mono); font-size: .8rem; line-height: 1.5;
+  padding: 1rem 1.1rem; border-radius: 8px; overflow-x: auto;
+  margin: 1.2rem 0; border: 1px solid #000;
+}
+pre code { background: none; border: 0; color: inherit; padding: 0; font-size: 1em; }
+pre .cmt { color: #7e8a9a; font-style: italic; }
+pre .kw  { color: #c792ea; }
+pre .typ { color: #82aaff; }
+pre .fn  { color: #ffcb6b; }
+pre .str { color: #c3e88d; }
+pre .file { color: #f78c6c; }
+.code-cap { font-family: var(--sans); font-size: .72rem; color: var(--ink-faint); margin: -.7rem 0 1.2rem; }
+.code-cap .file { color: var(--accent-2); font-weight: 600; }
+
+/* ---------- 管线阶段图 ---------- */
+.pipeline {
+  max-width: var(--measure);
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: .4rem;
+  margin: 1.4rem 0; font-family: var(--sans);
+}
+.stage {
+  flex: 1 1 6rem; min-width: 5.5rem;
+  background: #fff; border: 1px solid var(--rule); border-top: 3px solid var(--accent);
+  border-radius: 5px; padding: .55rem .6rem; font-size: .76rem; line-height: 1.3;
+}
+.stage .s-name { font-weight: 700; display: block; margin-bottom: .15rem; }
+.stage .s-sub { color: var(--ink-faint); font-size: .92em; }
+.stage.gpu  { border-top-color: var(--accent-2); }
+.stage.fixed{ border-top-color: var(--ink-faint); background: var(--paper-2); }
+.stage.prog { border-top-color: var(--accent-3); }
+.flow-arrow { align-self: center; color: var(--ink-faint); font-weight: 700; }
+
+/* 线程泳道 */
+.lanes { max-width: var(--measure); margin: 1.4rem 0; font-family: var(--sans); font-size: .8rem; }
+.lane { display: flex; align-items: stretch; margin-bottom: .35rem; }
+.lane .lane-name { flex: 0 0 7rem; font-weight: 700; padding: .5rem .6rem; border-radius: 5px 0 0 5px; color: #fff; }
+.lane .lane-body { flex: 1; background: var(--paper-2); border: 1px solid var(--rule); border-left: 0; border-radius: 0 5px 5px 0; padding: .5rem .7rem; }
+.lane.game .lane-name { background: var(--accent); }
+.lane.render .lane-name { background: var(--gbuffer); }
+.lane.rhi .lane-name { background: var(--accent-2); }
+.lane.gpu .lane-name { background: #444; }
+
+/* ---------- 表格 ---------- */
+table { max-width: var(--measure); border-collapse: collapse; margin: 1.4rem 0; font-size: .88rem; font-family: var(--sans); width: 100%; }
+th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 700; border-bottom: 2px solid var(--ink); color: var(--ink); }
+tbody tr:hover { background: var(--paper-2); }
+td code { font-size: .82em; }
+
+/* ---------- 数字图标题 ---------- */
+figure { max-width: var(--measure); margin: 1.6rem 0; }
+figcaption { counter-increment: figure; font-family: var(--sans); font-size: .76rem; color: var(--ink-faint); margin-top: .5rem; }
+figcaption::before { content: "图 " counter(figure) " · "; color: var(--accent-2); font-weight: 700; }
+
+/* ---------- Quiz 组件 ---------- */
+.quiz {
+  max-width: var(--measure);
+  margin: 1.8rem 0; padding: 1.2rem 1.3rem;
+  border: 1px solid var(--rule); border-radius: 8px; background: #fff;
+  font-family: var(--sans);
+}
+.quiz .q-tag { font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent-3); }
+.quiz .q-text { font-family: var(--serif); font-size: 1.05rem; font-weight: 600; margin: .3rem 0 .9rem; }
+.quiz .q-opt {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 5px;
+  padding: .55rem .8rem; margin: .4rem 0; font-size: .92rem; color: var(--ink);
+  transition: border-color .12s, background .12s;
+}
+.quiz .q-opt:hover { border-color: var(--accent); }
+.quiz .q-opt.correct { border-color: var(--accent-3); background: #eef7f0; }
+.quiz .q-opt.wrong { border-color: var(--accent-2); background: #f9eee9; }
+.quiz .q-opt:disabled { cursor: default; }
+.quiz .q-feedback {
+  margin-top: .8rem; padding: .7rem .9rem; border-radius: 5px; font-size: .9rem;
+  background: var(--paper-2); display: none;
+}
+.quiz .q-feedback.show { display: block; }
+.quiz .q-feedback.ok { border-left: 4px solid var(--accent-3); }
+.quiz .q-feedback.no { border-left: 4px solid var(--accent-2); }
+
+/* 自测/回忆题（先想再翻） */
+.recall { max-width: var(--measure); margin: 1.6rem 0; }
+.recall summary {
+  font-family: var(--sans); font-weight: 600; cursor: pointer; padding: .7rem .9rem;
+  background: var(--paper-2); border: 1px solid var(--rule); border-left: 4px solid var(--accent-3); border-radius: 5px;
+  list-style: none;
+}
+.recall summary::before { content: "🧠 凭记忆回答 — "; color: var(--accent-3); }
+.recall[open] summary { border-radius: 5px 5px 0 0; }
+.recall .answer { padding: .9rem 1rem; border: 1px solid var(--rule); border-top: 0; border-radius: 0 0 5px 5px; font-size: .95rem; }
+
+/* ---------- 关键要点框 ---------- */
+.takeaways {
+  max-width: var(--measure); margin: 2.5rem 0 1.5rem; padding: 1.2rem 1.4rem;
+  background: var(--ink); color: var(--paper); border-radius: 8px;
+}
+.takeaways h3 { color: #fff; margin: 0 0 .6rem; font-size: 1rem; }
+.takeaways ul { margin: 0; padding-left: 1.1rem; }
+.takeaways li { margin: .4rem 0; font-size: .92rem; }
+.takeaways code { background: rgba(255,255,255,.12); border-color: transparent; color: #ffd9a8; }
+
+/* ---------- 课尾 ---------- */
+.ask-teacher {
+  max-width: var(--measure); margin: 2rem 0; padding: .9rem 1.1rem; font-size: .9rem;
+  border: 1px dashed var(--accent); border-radius: 6px; background: #f3f8fc; font-family: var(--sans);
+}
+.ask-teacher b { color: var(--accent); }
+
+.lesson-nav {
+  max-width: var(--measure); display: flex; justify-content: space-between; gap: 1rem;
+  margin-top: 3rem; padding-top: 1rem; border-top: 2px solid var(--ink); font-family: var(--sans); font-size: .85rem;
+}
+.lesson-nav a { display: block; max-width: 45%; }
+.lesson-nav .nav-dir { display: block; font-size: .7rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .08em; }
+.lesson-nav .next { text-align: right; margin-left: auto; }
+
+footer.lesson-foot { max-width: var(--measure); margin-top: 2.5rem; font-family: var(--sans); font-size: .72rem; color: var(--ink-faint); }
+
+/* ---------- 打印 ---------- */
+@media print {
+  :root { --paper: #fff; --paper-2: #f4f4f4; }
+  body { font-size: 11pt; }
+  .topbar, .ask-teacher, .lesson-nav, .quiz .q-opt:hover { box-shadow: none; }
+  .sidenote, .marginnote { float: none; width: auto; border-left: 2px solid #999; padding-left: .6rem; }
+  pre { white-space: pre-wrap; border: 1px solid #ccc; }
+  .takeaways { background: #fff; color: #000; border: 2px solid #000; }
+  .takeaways h3 { color: #000; }
+  a { color: #000; border: 0; }
+  .stage, .quiz { break-inside: avoid; }
+}

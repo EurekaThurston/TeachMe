@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0030 · 体积雾与大气</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0030</p>
+  <h1>体积雾与大气</h1>
+  <p class="subtitle">体积雾用 Froxel 3D 网格的计算着色器积分散射/消光；大气系统用物理散射模型模拟天空颜色与空中透视；指数高度雾叠加廉价近似。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0024（Light Grid / Froxel 概念）、0002（计算着色器）</span>
+    <span><b>产出</b> 能解释体积雾的 Froxel 计算流程，以及 SkyAtmosphere、ExponentialHeightFog 的原理与叠加方式</span>
+  </div>
+
+  <p class="lead">雾与大气是两个层面的效果：<strong>体积雾</strong>在视锥内按物理散射方程逐 froxel 积分，得到光在雾中的散射（云隙光、体积光）和消光结果，最终以一张 3D 纹理供所有物体采样；<strong>大气</strong>则是天空本身颜色与空中透视（远处物体偏蓝）的物理模拟；<strong>指数高度雾</strong>是廉价的高度指数衰减近似，三者可组合使用。</p>
+
+  <h2><span class="num">1</span>体积雾的整体流程</h2>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">Froxel 注入</span><span class="s-sub">CS：散射系数<br>消光系数注入格</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">光照积分</span><span class="s-sub">CS：Light Grid 取光<br>+ 阴影 → 格内辐亮度</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">散射积分</span><span class="s-sub">CS：沿视线方向<br>逐格前向积分</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">应用采样</span><span class="s-sub">不透明/半透明 PS<br>采样 3D 纹理结果</span></div>
+  </div>
+
+  <p>代码：<code class="file">VolumetricFog.cpp</code>，计算着色器：<code class="file">VolumetricFog.usf</code>。全程用<strong>计算着色器（Compute Shader）</strong>，不走光栅化管线。</p>
+
+  <h2><span class="num">2</span>Froxel 网格：视锥空间体素</h2>
+  <p>UE 4.26 的体积雾把相机视锥切成一个<strong>Froxel（frustum voxel）网格</strong>：</p>
+  <ul>
+    <li>X / Y 轴：屏幕分辨率的子采样（默认 1/8 至 1/4，如 240×135）；</li>
+    <li>Z 轴：深度方向，按指数分布切片（近处切片薄，远处厚，默认 64 层到 <code>r.VolumetricFog.Distance</code> 限定的距离）；</li>
+    <li>每个格子是视锥空间的一个小锥形体积，存储散射系数（Scattering）和消光系数（Extinction）。</li>
+  </ul>
+
+  <p>这个网格与 0024 的 Light Grid 一脉相承——Light Grid 是屏幕空间的聚簇，Froxel 是视锥空间的体素，两者在深度轴上的分布策略类似（指数分布，近细远粗）。</p>
+
+  <h2><span class="num">3</span>注入阶段：向 Froxel 写散射/消光</h2>
+  <p><strong>注入（Voxel Injection）</strong>计算着色器：对每个 froxel，计算该体积内的散射系数和消光系数：</p>
+  <ul>
+    <li>来自 <code>AVolumetricFog</code> 组件的全局均匀雾参数（散射颜色、消光比例）；</li>
+    <li>来自 <code>ULocalFogVolume</code>（UE 4.26 的局部体积雾，可设置不同密度区域）；</li>
+    <li>大气组件（SkyAtmosphere）的散射贡献（可选）。</li>
+  </ul>
+
+  <h2><span class="num">4</span>光照积分阶段：每格的散射光</h2>
+  <p>第二个计算着色器对每个 froxel 计算该格内的<strong>入射散射辐亮度（In-Scattered Luminance）</strong>：</p>
+  <ol>
+    <li>从 <strong>Light Grid</strong>（0024）取得影响该格的灯光列表；</li>
+    <li>对每盏灯，计算灯光到 froxel 中心的辐照度（含衰减）；</li>
+    <li>乘以<strong>相位函数</strong>（Phase Function，控制散射方向性，Henyey-Greenstein 模型）得到向相机方向的散射量；</li>
+    <li>对方向光，再乘以阴影贴图采样结果（cloud volumetric shadow，体积阴影）。</li>
+  </ol>
+
+  <pre><code><span class="cmt">// VolumetricFog.usf 光照积分（示意）</span>
+<span class="typ">float3</span> InScattering = 0;
+<span class="kw">for</span> (<span class="typ">uint</span> LightIdx = 0; LightIdx &lt; LightCount; LightIdx++)
+{
+    <span class="typ">FLocalLightData</span> Light = <span class="fn">GetLocalLightData</span>(LightIdx, GridIndex);
+    <span class="typ">float3</span> LightVec  = Light.Position - FroxelCenter;
+    <span class="typ">float</span>  Atten     = <span class="fn">GetDistanceAttenuation</span>(LightVec, Light.InvRadius);
+    <span class="typ">float</span>  Phase     = <span class="fn">HenyeyGreenstein</span>(CosTheta, FogPhaseG);
+    InScattering    += Light.Color * Atten * Phase * Light.Luminance;
+}
+<span class="cmt">// 方向光乘阴影</span>
+InScattering += DirectionalLight * DirectionalShadow * DirPhase;
+Froxel.InScattering = InScattering * Froxel.Scattering;</code></pre>
+  <p class="code-cap">相位函数控制光在雾中是各向同性散射还是偏向某方向（正向散射产生云隙光/体积光效果）。</p>
+
+  <h2><span class="num">5</span>散射积分阶段：前向累积</h2>
+  <p>最后一个计算着色器沿<strong>Z 轴（从近到远）逐格积分</strong>，计算从相机看向每个 froxel 时光的透过率（Transmittance）和累积散射：</p>
+
+  <pre><code><span class="cmt">// 前向散射积分（Ray March along Z）</span>
+<span class="typ">float3</span> AccumScattering  = 0;
+<span class="typ">float</span>  AccumTransmittance = 1.0;
+<span class="kw">for</span> (<span class="typ">int</span> z = 0; z &lt; NumSlices; z++)
+{
+    <span class="typ">float4</span> Froxel = FroxelBuffer[z];
+    <span class="typ">float3</span> InScatter  = Froxel.rgb;
+    <span class="typ">float</span>  Extinction = Froxel.a;
+    <span class="typ">float</span>  SliceThickness = <span class="fn">GetSliceThickness</span>(z);
+    <span class="cmt">// Beer-Lambert 消光</span>
+    <span class="typ">float</span>  SliceTrans = <span class="fn">exp</span>(-Extinction * SliceThickness);
+    AccumScattering  += InScatter * AccumTransmittance * (1 - SliceTrans) / Extinction;
+    AccumTransmittance *= SliceTrans;
+    <span class="cmt">// 写入结果 3D 纹理</span>
+    ResultVolume[<span class="fn">int3</span>(xy, z)] = <span class="typ">float4</span>(AccumScattering, AccumTransmittance);
+}</code></pre>
+  <p class="code-cap">Beer-Lambert 定律描述光通过介质的指数衰减；累积散射是沿视线路径中雾对光的贡献总和。</p>
+
+  <p>结果写入一张 <strong>3D RGBA 纹理</strong>（RGB=累积散射颜色，A=透过率）。之后不透明和半透明物体的 PS 只需按像素的视图空间深度在这张 3D 纹理里做一次采样，就能得到雾对该像素的影响——O(1) 查询，无论场景几何多复杂。</p>
+
+  <h2><span class="num">6</span>SkyAtmosphere：物理大气散射</h2>
+  <p>UE 4.26 新增的 <code>ASkyAtmosphere</code> 组件实现基于物理的大气散射：</p>
+  <ul>
+    <li><strong>瑞利散射（Rayleigh Scattering）</strong>：小分子（氮/氧）对短波（蓝光）散射强，造成晴天蓝天、日落红橙天空；</li>
+    <li><strong>米氏散射（Mie Scattering）</strong>：大粒子（气溶胶、雾霾）的各向散射，造成朦胧感和云隙光白光；</li>
+    <li><strong>空中透视（Aerial Perspective）</strong>：远处物体因光在大气中散射和消光，颜色偏向天空色（蓝化/雾化），随距离指数增强。</li>
+  </ul>
+
+  <p>实现上，SkyAtmosphere 预计算一组<strong>查找纹理（LUT）</strong>（透射率 LUT、散射 LUT、多次散射 LUT），运行时着色器查这些 LUT 得到任意方向/距离的大气散射值，而不是实时做光线步进。空中透视的结果写入一张屏幕空间（或 froxel）纹理，叠加到 SceneColor。</p>
+
+  <div class="callout knowledge">
+    <span class="label">SkyAtmosphere 与 SkyLight 的分工</span>
+    <p>SkyLight 捕获天空的<strong>全局光照贡献</strong>（IBL，供地面物体接受间接光，见 0028），SkyAtmosphere 渲染<strong>天空本身的颜色</strong>（太阳盘、天空渐变、空中透视）。两者配合：SkyLight 在 SkyAtmosphere 驱动下实时重新捕获，保证 IBL 颜色与大气天空颜色一致。</p>
+  </div>
+
+  <h2><span class="num">7</span>指数高度雾（Exponential Height Fog）</h2>
+  <p><code>AExponentialHeightFog</code> 是廉价的高度衰减雾近似：雾密度随高度指数衰减（低处密，高处稀），在 PS 中用一个解析公式计算视线路径上的积分雾量，不需要体积纹理。它比 VolumetricFog 便宜得多，但：</p>
+  <ul>
+    <li>没有局部密度变化；</li>
+    <li>不计算真实灯光散射（无云隙光）；</li>
+    <li>适合大场景的背景雾感，或作为 VolumetricFog 的廉价替代/补充。</li>
+  </ul>
+
+  <h2><span class="num">8</span>三者的叠加顺序与适用</h2>
+  <table>
+    <thead><tr><th>技术</th><th>原理</th><th>开销</th><th>适用</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>ExponentialHeightFog</b></td>
+        <td>解析高度衰减公式，无体积积分</td>
+        <td>极低</td>
+        <td>大场景背景雾感，廉价近似</td>
+      </tr>
+      <tr>
+        <td><b>VolumetricFog</b></td>
+        <td>Froxel CS 积分，Beer-Lambert + 相位函数</td>
+        <td>中等（受 Froxel 分辨率）</td>
+        <td>云隙光、体积光、局部密度变化</td>
+      </tr>
+      <tr>
+        <td><b>SkyAtmosphere</b></td>
+        <td>LUT 预计算瑞利/米氏散射 + 空中透视</td>
+        <td>低（LUT 查表）</td>
+        <td>天空颜色、日出日落、远景雾化</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>典型组合：ExponentialHeightFog 提供基础雾感 + VolumetricFog 加体积光 + SkyAtmosphere 驱动天空与远景大气——三者可同时启用，在 SceneColor 中按序叠加。</p>
+
+  <div class="callout warn">
+    <span class="label">VolumetricFog 的性能热点</span>
+    <p>体积雾最贵的部分是 Z 轴切片数（<code>r.VolumetricFog.GridSizeZ</code>，默认 64）和覆盖距离（<code>r.VolumetricFog.Distance</code>）。切片数翻倍 = 光照积分 CS 工作量翻倍。降低移动平台性能的首选操作：减少 Z 切片（32）+ 缩短距离。体积雾结果 3D 纹理的分辨率由 <code>r.VolumetricFog.GridPixelSize</code>（屏幕空间下采样比）控制。</p>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">体积雾的散射积分结果写入一张 3D 纹理后，不透明物体的像素着色器如何使用它？</p>
+    <button class="q-opt">逐像素重新执行一次光线步进，再加上 3D 纹理的参考值校正</button>
+    <button class="q-opt">按像素的视图空间深度在 3D 纹理中做一次采样，直接得到该像素处的累积散射和透过率</button>
+    <button class="q-opt">3D 纹理只供半透明 Pass 使用，不透明物体不采样体积雾</button>
+    <div class="q-feedback"
+      data-ok="对。3D 纹理已经存储了每个 froxel 位置的累积散射（RGB）和透过率（A），不透明物体 PS 按深度在 z 轴上插值采样一次即可，是 O(1) 查询。"
+      data-no="再想想：预计算进 3D 纹理的全部意义就是让采样变成 O(1)——不透明或半透明物体的 PS 只需按深度做一次 3D 纹理采样，不需要重跑积分。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出体积雾从 Froxel 初始化到最终应用到像素的四个阶段及每阶段的核心计算（不看图）。</summary>
+    <div class="answer">
+      <ol>
+        <li><strong>注入阶段</strong>：计算着色器对每个 froxel 写入散射系数（Scattering）和消光系数（Extinction），来源包括全局雾参数、局部雾体积等。</li>
+        <li><strong>光照积分阶段</strong>：从 Light Grid 取得影响该格的灯光列表，对每盏灯计算散射辐亮度（衰减 × 相位函数 × 阴影），累积为格内的入射散射量。</li>
+        <li><strong>散射积分阶段</strong>：沿 Z 轴从近到远逐格前向积分（Beer-Lambert），计算从相机到每格的累积散射颜色和透过率，写入结果 3D RGBA 纹理。</li>
+        <li><strong>应用阶段</strong>：不透明和半透明物体的像素着色器按视图空间深度在 3D 纹理中采样一次，得到雾的散射（加）和透过率（乘），叠加到最终像素颜色。</li>
+      </ol>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>体积雾</strong>（<code>VolumetricFog.cpp</code>）：视锥 Froxel 网格 → 计算着色器三步（注入→光照积分→散射积分）→ 3D 纹理 → 物体 PS O(1) 采样。</li>
+      <li>光照积分用 <strong>Light Grid</strong>（0024）取灯光，乘以<strong>相位函数</strong>（Henyey-Greenstein），积分用 Beer-Lambert 衰减。</li>
+      <li><strong>SkyAtmosphere</strong>：LUT 预计算瑞利/米氏散射，空中透视叠加远景大气；驱动 SkyLight 的 IBL。</li>
+      <li><strong>ExponentialHeightFog</strong>：解析高度衰减，极低开销，适合背景雾感。</li>
+      <li>三者可组合叠加，VolumetricFog 最贵，性能热点在 Z 切片数和覆盖距离。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》part 3</a>——含体积雾 Pass 的分析。补充：<a href="https://docs.unrealengine.com/4.26/en-US/BuildingWorlds/FogEffects/VolumetricFog/">UE 4.26 Volumetric Fog 文档</a>，<a href="https://docs.unrealengine.com/4.26/en-US/BuildingWorlds/LightingAndShadows/SkyAtmosphere/">UE 4.26 SkyAtmosphere 文档</a>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："Henyey-Greenstein 相位函数 g 参数怎么调？""SkyAtmosphere 的 LUT 分别存的是什么？""体积雾和指数高度雾能同时开吗，怎么混合？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0029-translucency-forward.html"><span class="nav-dir">← 上一课</span>0029 · 半透明渲染：Translucency 与前向着色</a>
+    <a class="next" href="0031-postprocess-overview.html"><span class="nav-dir">下一课 →</span>0031 · 后处理概述</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 体积雾把散射物理学塞进 Froxel 格子，大气把天空的光物理塞进 LUT。</footer>
+  </article>
+</div>
+</body>
+</html>

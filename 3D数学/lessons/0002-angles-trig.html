@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课 · 角度与三角:sin/cos 与单位圆</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 2 课 · 模块 0 地基</div>
+<h1>角度与三角:sin/cos 与单位圆</h1>
+<p class="subtitle">shader 里到处是 <code>sin</code>、<code>cos</code>,很多人背公式却没画面感。这一课让你<strong>一眼看穿:sin 就是圆上那个点的 y,cos 就是它的 x</strong>。从此 sin/cos 不再是黑箱。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  在单位圆上看懂:转过角 θ 时,落点的 <strong>x = cos θ、y = sin θ</strong>;两者都在 [−1, 1] 之间、每 2π(360°)循环一次。理解 <strong>弧度 vs 度</strong>,以及为什么「随时间起伏 / 脉冲 / 旋转」的 shader 全靠 sin/cos。
+</div>
+
+<h2>角的单位:度 vs 弧度</h2>
+<p>
+角有两套单位。<strong>度(°)</strong>:整圈 360°,直觉、对外用。<strong>弧度(radian)</strong>:整圈 = 2π ≈ 6.283 rad。弧度听着别扭,但它是「自然」单位——在半径为 1 的圆上,<strong>你转过的弧长,就是弧度数</strong>。转 1 弧度,就是沿圆边走了 1 个半径的长度。
+</p>
+<div class="formula">2π rad = 360°　　π rad = 180°　　1 rad ≈ 57.3°　　度→弧度:×(π/180)</div>
+<p>
+为什么要在意?因为<strong>所有编程语言和 shader 的 <code>sin/cos</code> 吃的都是弧度,不是度</strong>。HLSL 里 <code>sin(90)</code> 不是「90 度的正弦 = 1」,而是「90 弧度的正弦」≈ 0.894,一个看似乱来的数。要 90° 得写 <code>sin(radians(90))</code> 或 <code>sin(PI/2)</code>。这是新手最爱踩的坑。
+</p>
+
+<h2>单位圆:sin 和 cos 的真身</h2>
+<p>
+画一个半径=1、圆心在原点的圆(<strong>单位圆 unit circle</strong>)。从正 x 轴开始,逆时针转过角 θ,你会停在圆边某个点上。这个点的坐标,<strong>定义</strong>就是:
+</p>
+<div class="formula">点 = ( <span class="vecA">cos θ</span> , <span class="vecB">sin θ</span> )　　即 cos = 横坐标 x,sin = 纵坐标 y</div>
+<p>拖下面的滑块转动角度,红色横线是 cos(x 分量),绿色竖线是 sin(y 分量)。盯住它们怎么随角度变。</p>
+
+<div class="lab">
+  <canvas id="circle"></canvas>
+  <div class="dials">
+    <label for="ang">角度 θ</label>
+    <input type="range" id="ang" min="0" max="360" value="50">
+    <span class="out" id="angOut">50°</span>
+  </div>
+  <div class="readout" id="circleRead"></div>
+</div>
+
+<div class="callout callout-vfx">
+  <span class="label">你应该看到</span>
+  转一整圈,cos 和 sin 都在 <strong>−1 到 +1 之间来回荡</strong>,谁都不会超界。θ=0° 时 cos=1、sin=0;θ=90° 时 cos=0、sin=1;θ=180° 时 cos=−1。两条曲线形状一样、只是错开 90°——这就是为什么 sin 和 cos 是「同一个波,相位差 90°」。
+</div>
+
+<h2>为什么 shader 离不开 sin</h2>
+<p>
+sin 的杀手锏是:<strong>喂给它一个一直增大的数(比如时间),它吐出一个在 −1 和 +1 之间平滑往返的数</strong>。这正是做「呼吸、脉冲、波动、摇摆」需要的东西——一个永不越界、来回振荡的信号。
+</p>
+<pre><code><span class="cmt">// HLSL:一个 0→1 来回呼吸的强度,驱动自发光</span>
+<span class="kw">float</span> pulse = <span class="fn">sin</span>(Time * <span class="num">3.0</span>) * <span class="num">0.5</span> + <span class="num">0.5</span>;  <span class="cmt">// sin∈[-1,1] →映射到 [0,1]</span>
+emissive = baseColor * pulse;
+</code></pre>
+<p>
+拆开看:<code>Time*3.0</code> 是相位(乘的数越大,跳得越快=频率);<code>sin(...)</code> 给 [−1,1];<code>*0.5+0.5</code> 把它搬进 [0,1](这是第 3 课「数值映射」的活)。换成 <code>cos</code> 只是起点不同。把多个不同频率的 sin 叠起来,就是水面、能量流、噪声的雏形。
+</p>
+<div class="callout callout-hlsl">
+  <span class="label">HLSL 速记</span>
+  <code>sin/cos(x)</code> → [−1,1] 振荡;<code>x</code> 是弧度。常见配方:<code>sin(Time*频率 + 相位)*振幅 + 偏移</code>。
+  绕中心转 UV、波纹、抖动,核心都是这一行。<code>tan</code> 少用(会爆到无穷);<code>atan2(y,x)</code> 反过来由方向求角度,下一模块会用。
+</div>
+
+<h2>三角形里的另一半:为什么叫「三角」</h2>
+<p>
+sin/cos 也来自直角三角形:把单位圆那个点和原点、和它在 x 轴的投影连起来,就是一个直角三角形,斜边=1(半径)。于是 <strong>cos = 邻边/斜边、sin = 对边/斜边</strong>。两种讲法是同一回事——单位圆版更适合 shader(因为我们关心的是「圆上点的坐标」),三角形版更适合「已知边长求角」。两个都要有。
+</p>
+<p>
+还有一个恒等式你迟早会撞见:<strong>sin²θ + cos²θ = 1</strong>。它就是勾股定理在单位圆上的样子(斜边 1,两条直角边 sin 和 cos)。第 6 课算向量长度时你会发现它俩是同一个定理。
+</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>给 sin/cos 喂角度数。</strong> <code>sin(90)</code> ≠ 1。函数吃弧度,要先 <code>radians(90)</code> 或直接用 <code>PI/2</code>。最高频的坑。</li>
+  <li><strong>以为 sin 会越界。</strong> sin/cos 永远在 [−1,1]。想要别的范围,自己用 <code>*振幅+偏移</code> 映射。</li>
+  <li><strong>分不清频率和振幅。</strong> <code>sin(Time*A)*B</code>:A 改的是<strong>快慢(频率)</strong>,B 改的是<strong>高低(振幅)</strong>。调错了旋钮就达不到效果。</li>
+  <li><strong>混淆 sin 与 cos 的起点。</strong> 它俩差 90° 相位:t=0 时 sin=0(从中间起)、cos=1(从顶点起)。要「一开始就最亮」用 cos,要「一开始为 0」用 sin。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>可以回到上面的单位圆边拖边验证。</p>
+<div class="quiz" id="quiz2"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=fjOdtSu4Lm4" target="_blank">Freya Holmér — Math for Game Devs(Part 1,含 trig 段落)</a>
+  —— 专给游戏开发者讲的数学,单位圆和三角讲得直观、贴实时场景。配合上面的可拖单位圆一起看,sin/cos 会彻底变成画面而非公式。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把你某段「用 sin 做动画」的材质拆开,逐项讲清哪个是频率、哪个是振幅、相位偏了多少?或者想搞懂 <code>atan2</code>、<code>tan</code> 什么时候用?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>数值管道——lerp / clamp / saturate / smoothstep / frac</strong>。这五个函数你天天写,这节把它们的几何含义一次讲透,做软边和渐变再不靠瞎试。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/math-tools.js"></script>
+<script>
+UnitCircle("circle", { angleId: "ang", readoutId: "circleRead" });
+document.getElementById("ang").addEventListener("input", function(){ document.getElementById("angOut").textContent = this.value + "°"; });
+renderQuiz("quiz2", [
+  {
+    q: "在单位圆上转过角 θ,落点的横坐标 x 等于?",
+    options: ["cos θ", "sin θ", "tan θ", "θ 本身"],
+    correct: 0,
+    why: "定义:单位圆上落点 = (cos θ, sin θ)。横坐标 x = cos θ,纵坐标 y = sin θ。"
+  },
+  {
+    q: "HLSL 里写 sin(90),它理解的 90 是?",
+    options: ["90 弧度,不是 90 度", "90 度,结果约等于 1", "自动判断为度", "无效会报错"],
+    correct: 0,
+    why: "三角函数一律吃弧度。sin(90) 算的是 90 弧度的正弦(≈0.894)。要 90° 得写 sin(radians(90)) 或 sin(PI/2)。"
+  },
+  {
+    q: "sin 和 cos 的取值范围始终是?",
+    options: ["−1 到 +1 之间", "0 到 1 之间", "0 到 360 之间", "可以是任意实数"],
+    correct: 0,
+    why: "它们是单位圆(半径 1)上点的坐标,永远落在 [−1, 1]。想要别的范围要自己映射。"
+  },
+  {
+    q: "在 sin(Time * A) * B 里,A 控制的是?",
+    options: ["振荡的快慢,即频率", "振荡的高低,即振幅", "信号的初相位", "信号的取值上限"],
+    correct: 0,
+    why: "乘在 Time 上的 A 改变相位增长速度=频率(快慢);乘在 sin 外面的 B 才是振幅(高低)。"
+  },
+  {
+    q: "想让一段自发光「从一开始就最亮、再回落」,更该用?",
+    options: ["cos(从顶点 1 起步)", "sin(从中间 0 起步)", "tan(从 0 起步)", "frac(锯齿起步)"],
+    correct: 0,
+    why: "t=0 时 cos=1(最高)、sin=0(中间)。要开局即峰值用 cos,要开局为 0 用 sin——两者差 90° 相位。"
+  },
+  {
+    q: "恒等式 sin²θ + cos²θ = 1 本质上是?",
+    options: ["单位圆上的勾股定理", "一个巧合,无几何含义", "仅在 θ=45° 成立", "三角函数的定义式"],
+    correct: 0,
+    why: "单位圆上点 (cosθ, sinθ) 到原点距离=半径=1。由勾股定理 cos²+sin²=1²。第 6 课算向量长度会再遇到它。"
+  }
+]);
+</script>
+</body>
+</html>

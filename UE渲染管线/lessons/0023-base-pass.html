@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0023 · Base Pass：写 GBuffer 与速度</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0023</p>
+  <h1>Base Pass：写 GBuffer 与速度</h1>
+  <p class="subtitle">Base Pass 是材质着色器真正运行的地方。它的任务只有一件：把每个可见片元的材质属性编码进 GBuffer（MRT），同时可选地输出速度向量。它不做任何光照计算。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~16 分钟</span>
+    <span><b>前置</b> 0021（GBuffer 布局）、0022（Prepass / Early-Z）、0001（MRT）</span>
+    <span><b>产出</b> 能描述 BasePass 如何运行材质着色器并把属性写入 GBuffer（MRT），以及速度/贴花的处理</span>
+  </div>
+
+  <p class="lead">Prepass 建立了 SceneDepth，BasePass 拿着这张深度图开启 Early-Z，让每个像素着色器调用只发生在真正可见的片元上。然后，材质着色器读取 Texture 采样、法线贴图、材质参数，输出 BaseColor/Roughness/Metallic/Normal 等属性，经 <code>EncodeGBuffer</code> 编码写进 MRT 的 GBufferA/B/C/D——这一步没有任何光照求和，光照是光照 Pass 的事（0025）。这就是延迟着色"先写后读"承诺的 CPU 侧。</p>
+
+  <h2><span class="num">1</span>代码入口：RenderBasePass</h2>
+  <p><code>FDeferredShadingSceneRenderer::RenderBasePass</code>（<code>BasePassRendering.cpp</code>）在 RDG 里注册一个写入所有 GBuffer + SceneDepth 的 Pass。Pass 内部，每个图元经由 <code>FBasePassMeshProcessor</code> 生成绑定了完整材质着色器的 <code>FMeshDrawCommand</code>。</p>
+
+  <pre><code><span class="cmt">// BasePassRendering.cpp（架构示意）</span>
+<span class="kw">void</span> <span class="typ">FDeferredShadingSceneRenderer</span>::<span class="fn">RenderBasePass</span>(
+    <span class="typ">FRDGBuilder</span>&amp; GraphBuilder,
+    <span class="typ">FExclusiveDepthStencil</span> DepthStencilAccess,
+    <span class="typ">FRDGTextureRef</span> SceneColorTexture,
+    <span class="typ">FRDGTextureRef</span> SceneDepthTexture, ...)
+{
+    <span class="cmt">// RDG Pass：MRT = [SceneColor, GBufferA, GBufferB, GBufferC, GBufferD]</span>
+    <span class="cmt">// DepthStencil = SceneDepth（只读深度用于 Early-Z，写 stencil）</span>
+    <span class="fn">RenderBasePassInternal</span>(GraphBuilder, ...);
+}</code></pre>
+
+  <h2><span class="num">2</span>BasePassPixelShader.usf 的核心流程</h2>
+  <p><code>Engine/Shaders/Private/BasePassPixelShader.usf</code> 是材质实例生成 PS 的模板。简化流程：</p>
+
+  <pre><code><span class="cmt">// BasePassPixelShader.usf（核心路径，简化）</span>
+<span class="kw">void</span> <span class="fn">MainPS</span>(<span class="typ">FVertexFactoryInterpolantsVSToPS</span> Interpolants, ...)
+{
+    <span class="cmt">// 1. 从 Vertex Factory 取插值数据（UV, 法线切线空间等）</span>
+    <span class="typ">FMaterialPixelParameters</span> MaterialParameters =
+        <span class="fn">GetMaterialPixelParameters</span>(Interpolants, SvPosition);
+
+    <span class="cmt">// 2. 调用材质图节点生成的代码，求出材质属性</span>
+    <span class="typ">FPixelMaterialInputs</span> PixelMaterialInputs;
+    <span class="fn">CalcMaterialParameters</span>(MaterialParameters, PixelMaterialInputs, ...);
+
+    <span class="cmt">// 3. 把材质输出填进 FGBufferData</span>
+    <span class="typ">FGBufferData</span> GBuffer;
+    GBuffer.BaseColor  = <span class="fn">GetMaterialBaseColor</span>(PixelMaterialInputs);
+    GBuffer.Roughness  = <span class="fn">GetMaterialRoughness</span>(PixelMaterialInputs);
+    GBuffer.Metallic   = <span class="fn">GetMaterialMetallic</span>(PixelMaterialInputs);
+    GBuffer.WorldNormal = <span class="fn">TransformTangentNormalToWorld</span>(...);
+    GBuffer.ShadingModelID = <span class="fn">GetMaterialShadingModel</span>(...);
+    GBuffer.Emissive   = <span class="fn">GetMaterialEmissive</span>(PixelMaterialInputs);
+
+    <span class="cmt">// 4. 编码进 MRT 输出</span>
+    <span class="fn">EncodeGBuffer</span>(GBuffer,
+        OutTarget0, <span class="cmt">// GBufferA = WorldNormal</span>
+        OutTarget1, <span class="cmt">// GBufferB = Metallic/Specular/Roughness/ShadingModelID</span>
+        OutTarget2, <span class="cmt">// GBufferC = BaseColor + AO</span>
+        OutTarget3, <span class="cmt">// GBufferD = CustomData</span>
+        SceneColorOut); <span class="cmt">// 写 Emissive 到 SceneColor（不含间接光照）</span>
+}</code></pre>
+
+  <div class="callout knowledge">
+    <span class="label">Emissive 直接进 SceneColor</span>
+    <p>自发光（Emissive）不需要光照计算，BasePass 直接把它累加到 SceneColor（RT0）。光照 Pass 之后再把直接光贡献叠加进去。因此 SceneColor 在 BasePass 之后已经包含 Emissive，光照 Pass 只是继续写入。</p>
+  </div>
+
+  <h2><span class="num">3</span>速度缓冲：r.BasePassOutputsVelocity</h2>
+  <p>速度向量（屏幕空间运动向量）供 TAA（0032）重投影历史帧和运动模糊（0035）使用。UE 4.26 里有两种输出时机，由 cvar 控制：</p>
+
+  <table>
+    <thead><tr><th>cvar 值</th><th>行为</th><th>优劣</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.BasePassOutputsVelocity=1</code></td><td>在 BasePass 的 MRT 中直接输出 Velocity（额外绑定一个 Velocity RT）</td><td>省去单独 Velocity Pass 的几何遍历；代价是 BasePass 的 MRT 更宽，带宽略增</td></tr>
+      <tr><td><code>r.BasePassOutputsVelocity=0</code></td><td>在 BasePass 之后单独跑 Velocity Pass（<code>RenderVelocities</code>）</td><td>BasePass 带宽更窄；但多一次几何遍历</td></tr>
+    </tbody>
+  </table>
+
+  <p>默认行为因平台而异：PC 路径通常为 1（在 BasePass 内输出），以节省一次额外的遍历。</p>
+
+  <h2><span class="num">4</span>DBuffer 贴花的注入顺序</h2>
+  <p>贴花（Decal）在 BasePass <strong>之前</strong>注入到 <strong>DBuffer</strong>（Decal Buffer），BasePass 的 PS 在采样材质属性之前会先读 DBuffer，把贴花的 BaseColor/Normal/Roughness 叠加进去。这让贴花无需第二次光照计算就能正确影响材质属性。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">Prepass</span><span class="s-sub">SceneDepth</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">DBuffer</span><span class="s-sub">贴花写入<br>（Pre-BasePass）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">BasePass</span><span class="s-sub">材质 PS<br>读 DBuffer<br>→ GBuffer MRT</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">GBuffer A/B/C/D<br>+ Velocity</span><span class="s-sub">供光照 Pass 读取</span></div>
+  </div>
+
+  <h2><span class="num">5</span>前向与移动端路径（简述，超出延迟主线）</h2>
+  <p>当材质设置为 <strong>Forward Shading</strong> 或目标平台为移动端时，BasePass 的 PS 直接在片元上计算光照并写进 SceneColor，不走 GBuffer。UE 4.26 的 Forward Renderer（<code>ForwardShadingRenderer.cpp</code>）就是这条路径。本课程延迟主线不展开，提一句作为参照：两者 BasePass 的几何遍历相同，差别在 PS 的输出目标（GBuffer vs. 直接 SceneColor）。</p>
+
+  <div class="callout warn">
+    <span class="label">UE5 超纲</span>
+    <p>UE5 的 Substrate 材质系统改变了 BasePass 的 GBuffer 写入逻辑；Nanite 的 Visibility Buffer 路径则完全绕过传统 BasePass。这些均超出本课程范围。</p>
+  </div>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">BasePass 的像素着色器在 <code>EncodeGBuffer</code> 调用之前，主要做了什么？</p>
+    <button class="q-opt">从 Vertex Factory 取插值数据，调用材质图生成代码求出材质属性（BaseColor/Roughness/Normal 等），填入 FGBufferData</button>
+    <button class="q-opt">对所有动态光源累积 BRDF 结果并写入 SceneColor</button>
+    <button class="q-opt">读取 GBufferB 中的 ShadingModelID 并 switch 到对应光照模型</button>
+    <div class="q-feedback" data-ok="对。BasePass PS 先求出材质属性，再用 EncodeGBuffer 编码进 MRT——光照根本不在 BasePass 里做，那是光照 Pass 的事。" data-no="再想：BasePass 完全不做光照计算。它只负责材质属性→GBuffer。光照是 0025 RenderLights 的事。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>Emissive 为什么不需要光照 Pass 处理？DBuffer 贴花为什么在 BasePass 之前就写入？</summary>
+    <div class="answer">Emissive 是材质自发光，本身就是能量来源，不依赖任何入射光线，所以 BasePass 直接把它累加到 SceneColor 即可，不需要 BRDF 积分。DBuffer 贴花在 BasePass 之前写入是因为贴花应该<em>修改</em>物体表面的材质属性（BaseColor、Normal、Roughness）——如果在 BasePass 之后再处理，就只能修改已写入 GBuffer 的值（可行但需要额外 Pass），而在 BasePass 内读 DBuffer 则让贴花的影响自然混入材质计算，贴花的光照完全由 GBuffer 里的最终材质属性决定，无需单独光照。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>BasePass 的核心职责：运行材质着色器（<code>BasePassPixelShader.usf</code>），把材质属性经 <code>EncodeGBuffer</code> 写进 GBufferA/B/C/D（MRT）。不做光照。</li>
+      <li>入口：<code>FDeferredShadingSceneRenderer::RenderBasePass</code> + <code>FBasePassMeshProcessor</code>（<code>BasePassRendering.cpp</code>）。</li>
+      <li>Emissive 直接写 SceneColor；ShadingModelID 写 GBufferB.a。</li>
+      <li><code>r.BasePassOutputsVelocity=1</code>：在 BasePass 内输出速度向量（UE 4.26 PC 默认）；=0 则单独 Velocity Pass。</li>
+      <li>DBuffer 贴花在 BasePass 之前写入，BasePass PS 读 DBuffer 混合进材质属性，让贴花参与完整 GBuffer 光照。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>（BasePass 抓帧分析）；Matt Hoffman，<a href="https://medium.com/@lordned/unreal-engine-4-rendering-part-4-the-deferred-shading-pipeline-389fc0175789">Part 4 – The Deferred Shading Pipeline</a>（BasePass PS 流程，注意文章写于旧 Drawing Policy 时代，架构描述仍有参考价值）。引擎源码：<code>Engine/Source/Runtime/Renderer/Private/BasePassRendering.cpp</code>、<code>Engine/Shaders/Private/BasePassPixelShader.usf</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："FBasePassMeshProcessor 怎么选 shader permutation？""DBuffer 和 普通 Decal 路径有什么区别？""r.BasePassOutputsVelocity 和静态物体速度的关系？"随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0022-depth-prepass.html"><span class="nav-dir">← 上一课</span>0022 · Depth Prepass（Early-Z）</a>
+    <a class="next" href="0024-light-culling-grid.html"><span class="nav-dir">下一课 →</span>0024 · 光照剔除：Light Grid / 聚簇</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 0023 BasePass 是 GBuffer 的生产者，光照 Pass 的上游。</footer>
+  </article>
+</div>
+</body>
+</html>

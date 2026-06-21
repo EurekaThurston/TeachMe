@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0017 · 可见性与剔除：视锥、距离、遮挡(HZB)</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 4 · 几何与可见性</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 4 · 几何与可见性 · Lesson 0017</p>
+  <h1>可见性与剔除：视锥、距离、遮挡(HZB)</h1>
+  <p class="subtitle"><code>InitViews</code> 是渲染线程最重要的准备阶段：它决定哪些图元会被画、会被送到哪些 Pass。四层剔除逐步过滤，最终结果写进 <code>FViewInfo::PrimitiveVisibilityMap</code>。剔除做得好，后续所有 Pass 都省力。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0005（帧生命周期）、0011（FScene 与代理）、0004（CPU/GPU 回读延迟）</span>
+    <span><b>产出</b> 能说出 InitViews 里四层剔除的顺序与原理，理解遮挡查询为何延迟一帧</span>
+  </div>
+
+  <p class="lead"><code>FDeferredShadingSceneRenderer::InitViews</code>（<span class="file">SceneVisibility.cpp</span>）在每帧 <code>Render()</code> 的最开头调用。它的职责是：对场景里的每个 <span class="term">FPrimitiveSceneProxy</span>，判断当前视图是否需要渲染它。被剔除的图元不会生成任何 <span class="term">FMeshBatch</span>，不会走后续 Pass，不占 GPU 时间。这节课把四层剔除的逻辑、顺序、源码入口逐一拆开。</p>
+
+  <h2><span class="num">1</span>剔除的总体结构：漏斗模型</h2>
+  <p>四层剔除从粗到细依次执行，每一层只处理上一层"活下来"的图元。越早剔除成本越低——视锥剔除只是 AABB vs 平面的数学，遮挡查询则需要 GPU 渲染一遍低分辨率场景。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">① 视锥剔除</span><span class="s-sub">FrustumCull<br>AABB vs 6平面</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">② 距离剔除</span><span class="s-sub">MinDrawDist<br>MaxDrawDist</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">③ 预计算可见性</span><span class="s-sub">PVS Cell<br>关卡烘焙</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">④ 遮挡剔除</span><span class="s-sub">HW Query + HZB<br>结果延迟一帧</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">PrimitiveVisibilityMap</span><span class="s-sub">最终可见集</span></div>
+  </div>
+
+  <p>最终写入 <code>FViewInfo::PrimitiveVisibilityMap</code>（一个按图元索引的位域）和 <code>StaticMeshVisibilityMap</code>（静态网格专用）。只有置位的图元才会参与后续的 <code>GetDynamicMeshElements</code> 或缓存绘制命令查找。</p>
+
+  <h2><span class="num">2</span>第一层：视锥剔除（FrustumCull）</h2>
+  <p>视锥剔除检测图元的包围体是否与相机视锥相交。UE 用轴对齐包围盒（AABB）对视锥的六个平面做快速 SAT（分离轴测试）。代码入口：<code>FSceneRenderer::ComputeViewVisibility</code> → <code>FrustumCull&lt;true, true&gt;(...</code>（<span class="file">SceneVisibility.cpp</span>）。</p>
+
+  <p>视锥剔除完全在 CPU 上运行，可以多线程并行（每个 View 独立）。它是成本最低、效果最稳的一层——完全在视锥外的物体，后续所有 GPU 工作全省掉。</p>
+
+  <div class="callout knowledge">
+    <span class="label">为什么用 AABB 而非精确的 Convex Hull</span>
+    <p>AABB 对平面的 SAT 是 6 次点积 + 6 次比较，可以 SIMD 化，一次批量测试几百个包围盒只需微秒级。精确形状测试精度更高但计算量翻数倍，对于视锥剔除而言过度精确——"包围盒漏网、精确形状其实剔掉"的概率不高，不值得额外开销。真正的精准剔除留给后面的遮挡层。</p>
+  </div>
+
+  <h2><span class="num">3</span>第二层：距离剔除（Min/Max Draw Distance）</h2>
+  <p>每个 <code>UPrimitiveComponent</code> 有两个属性：<code>MinDrawDistance</code> 和 <code>LDMaxDrawDistance</code>（关卡细节最大绘制距离）。<code>FPrimitiveSceneInfo</code> 存储它们的平方值，<code>ComputeViewVisibility</code> 把图元到相机的距离平方与之比对，超出范围直接剔除。</p>
+
+  <p>距离剔除还承载另一个功能：<strong>LOD 选择</strong>。<code>FPrimitiveLODLevel</code> 根据距离选出当前应渲染的 LOD，后续 <code>GetDynamicMeshElements</code> 和命令缓存查找都用这个 LOD 结果。距离剔除本质上是 LOD 系统的极端情况（LOD 为"不画"）。</p>
+
+  <h2><span class="num">4</span>第三层：预计算可见性（Precomputed Visibility）</h2>
+  <p>UE 的预计算可见性系统（<code>PrecomputedVisibilityHandler</code>）在编辑器中把关卡划分为网格单元（Cell），对每个 Cell 离线计算哪些图元可见，结果编码成压缩的 PVS 位域存进关卡包。运行时只需查找当前相机所在 Cell，直接取出位域做 AND 运算。</p>
+
+  <div class="callout insight">
+    <span class="label">PVS 的代价：离线时间换运行时零开销</span>
+    <p>PVS 查找的 CPU 开销几乎为零，但它依赖关卡几何静止。动态物体（角色、可破坏物体）不能参与 PVS，只能依赖遮挡查询。室内走廊、城堡内部等遮挡关系稳定的场景最适合 PVS——开放世界基本不用，因为 Cell 数量会爆。cvar <code>r.PrecomputedVisibilityWarning</code> 可检查覆盖情况。</p>
+  </div>
+
+  <h2><span class="num">5</span>第四层：遮挡剔除——两种机制并存</h2>
+  <p>遮挡剔除是代价最高但效果最强的一层，UE 4.26 有两种机制交替使用：</p>
+
+  <h3>5a. 硬件遮挡查询（<code>FOcclusionQueryHelpers</code>）</h3>
+  <p>对每个候选图元提交一次 GPU 遮挡查询：用包围盒在已有深度缓冲上做深度测试，统计通过的像素数。<strong>关键约束：查询结果必须等 GPU 完成后才能读回 CPU，而这至少需要等到下一帧</strong>（呼应 0004 回读延迟）。所以这帧提交的查询，下一帧才用结果决定是否剔除——结果始终落后一帧。</p>
+
+  <div class="callout warn">
+    <span class="label">延迟一帧的后果</span>
+    <p>如果相机快速移动，前一帧被遮挡的物体在新视角下可能已经露出，但查询结果还显示"遮挡"——这导致一帧的<strong>鬼影（popping）</strong>：物体先消失，下帧重新出现。UE 通过保守估计（扩大查询包围盒、保留缓冲帧数）缓解，但无法完全消除。这是硬件遮挡查询的根本限制，不是 bug。</p>
+  </div>
+
+  <h3>5b. HZB 遮挡（<code>FHZBOcclusionTester</code>）</h3>
+  <p>Hierarchical Z-Buffer（层级 Z 缓冲）是另一种遮挡思路：从上一帧的深度缓冲生成 mip 链（每级取最大深度），然后把图元包围盒投影到屏幕，在 HZB 的合适 mip 级别上采样一次深度值做比较。整个过程在 GPU 的 Compute Shader 里跑，比硬件查询更并行、延迟更可预测。</p>
+
+  <p>HZB 生成入口：<code>FDeferredShadingSceneRenderer::RenderHzb</code>（<span class="file">HZBOcclusion.cpp</span>）。HZB 纹理用上一帧的 SceneDepth 构建，同样有一帧延迟，但因为在 GPU 端执行，回读开销小得多。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">上帧 SceneDepth</span><span class="s-sub">已有深度结果</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">HZB 生成</span><span class="s-sub">Compute 构建 mip 链<br>每级取 max depth</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">HZB 查询</span><span class="s-sub">包围盒投影到屏幕<br>采 mip 级别比深度</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">遮挡结果</span><span class="s-sub">写入 PrimitiveVisibilityMap</span></div>
+  </div>
+
+  <h2><span class="num">6</span>相关性计算：FPrimitiveViewRelevance</h2>
+  <p>通过所有剔除层的图元还需要做<strong>相关性计算</strong>（<code>FPrimitiveViewRelevance</code>）：<code>FPrimitiveSceneProxy::GetViewRelevance</code> 告诉渲染器这个图元需要参与哪些 Pass（深度 Pass？BasePass？半透明？速度缓冲？）。结果存入 <code>FRelevancePacket</code>，决定图元被送到哪些 Pass 的绘制命令队列。</p>
+
+  <p>这一步是"可见"与"参与 Pass"之间的桥梁：图元可见不等于它参与所有 Pass，例如纯透明物体不写 GBuffer，不透明的 DepthOnly 材质不写 BasePass。</p>
+
+  <pre><code><span class="cmt">// FPrimitiveViewRelevance 的关键字段（SceneManagement.h）</span>
+<span class="kw">struct</span> <span class="typ">FPrimitiveViewRelevance</span>
+{
+    <span class="kw">uint32</span> bDrawRelevance      : 1;  <span class="cmt">// 这帧要画吗</span>
+    <span class="kw">uint32</span> bStaticRelevance    : 1;  <span class="cmt">// 走静态路径（缓存命令）</span>
+    <span class="kw">uint32</span> bDynamicRelevance   : 1;  <span class="cmt">// 走动态路径（GetDynamicMeshElements）</span>
+    <span class="kw">uint32</span> bRenderInMainPass   : 1;  <span class="cmt">// 进 BasePass / DepthPass</span>
+    <span class="kw">uint32</span> bTranslucentRelevance : 1;<span class="cmt">// 进半透明 Pass</span>
+    <span class="kw">uint32</span> bShadowRelevance    : 1;  <span class="cmt">// 参与阴影投射</span>
+    <span class="cmt">// ... 更多 Pass 标志</span>
+};</code></pre>
+  <p class="code-cap"><code>FPrimitiveViewRelevance</code> 的核心字段——决定图元进哪些 Pass</p>
+
+  <h2><span class="num">7</span>结果汇总：PrimitiveVisibilityMap</h2>
+  <p>四层剔除 + 相关性计算完成后，<code>FViewInfo</code> 持有两张关键位图：</p>
+  <table>
+    <thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>PrimitiveVisibilityMap</code></td><td><code>TBitArray&lt;&gt;</code></td><td>通用可见性，按图元全局索引</td></tr>
+      <tr><td><code>StaticMeshVisibilityMap</code></td><td><code>TArray&lt;uint64&gt;</code></td><td>静态网格专用，用于快速查找缓存绘制命令</td></tr>
+    </tbody>
+  </table>
+  <p>后续 <code>FMeshPassProcessor</code> 和缓存命令系统都以这两张位图为索引入口，只处理置位的图元。</p>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">硬件遮挡查询的结果为什么总是延迟一帧才能用？</p>
+    <button class="q-opt">UE 刻意缓存一帧以平滑画面，是一种 TAA 策略</button>
+    <button class="q-opt">HZB mip 链的构建需要用上一帧的深度，所以强制延迟</button>
+    <button class="q-opt">GPU 查询结果要等 GPU 完成该帧渲染后才可回读，CPU 在下一帧才能拿到并据此决定是否剔除</button>
+    <div class="q-feedback"
+      data-ok="对。查询结果存在 GPU 端，CPU 读取需要等 GPU 那帧的命令全部执行完，这与 0004 讲的回读延迟完全一致。所以这帧提交查询，下帧才用结果。"
+      data-no="关键是回读开销：CPU 必须等 GPU 完成渲染才能读出查询像素数。这正是 0004 CPU/GPU 协作里讲的延迟问题——同步等待等不起，只能接受延迟一帧的结果。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看图，按顺序说出 InitViews 里四层剔除的名称、执行位置（CPU/GPU）、结果时效，以及最终结果写进哪个数据结构。</summary>
+    <div class="answer">
+      ① <strong>视锥剔除</strong>（CPU，<code>FrustumCull</code>，即时）——AABB vs 视锥六平面。<br>
+      ② <strong>距离剔除</strong>（CPU，<code>ComputeViewVisibility</code>，即时）——MinDrawDistance/LDMaxDrawDistance 平方比较。<br>
+      ③ <strong>预计算可见性</strong>（CPU，<code>PrecomputedVisibilityHandler</code>，即时）——离线 PVS 位域 AND 运算。<br>
+      ④ <strong>遮挡剔除</strong>（GPU，<code>FOcclusionQueryHelpers</code> + <code>FHZBOcclusionTester</code>，延迟一帧）——硬件遮挡查询统计通过像素数；HZB 用上帧深度 mip 链比较包围盒深度。<br>
+      最终结果写入 <code>FViewInfo::PrimitiveVisibilityMap</code>（通用）和 <code>StaticMeshVisibilityMap</code>（静态网格）。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>InitViews</code> 的核心函数是 <code>FDeferredShadingSceneRenderer::ComputeViewVisibility</code>（<span class="file">SceneVisibility.cpp</span>），四层剔除在此串联。</li>
+      <li>剔除漏斗从粗到细：<strong>视锥→距离→PVS→遮挡</strong>，每层只处理上层存活的图元，越早剔除越省。</li>
+      <li>硬件遮挡查询和 HZB 都依赖上一帧结果，天然延迟一帧——这是 GPU 回读延迟（0004）的直接体现，会导致快速移动时的一帧 popping。</li>
+      <li><code>FPrimitiveViewRelevance</code>（<code>GetViewRelevance</code>）在可见性判定之后进一步决定图元参与哪些 Pass——可见不等于进所有 Pass。</li>
+      <li>最终可见性写入 <code>FViewInfo::PrimitiveVisibilityMap</code> 和 <code>StaticMeshVisibilityMap</code>，后续所有 Pass 以此为入口。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>——其中"Visibility and Occlusion"一节逐步还原了本课的四层剔除，并配有 RenderDoc 截图展示 HZB mip 链的样子。直接对照阅读，效果最好。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："HZB 每个 mip 级别取 max 还是 min？为什么？""PVS Cell 大小怎么配置？""遮挡查询的 popping 有没有工程上的缓解手段？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0016-rdg-advanced.html"><span class="nav-dir">← 上一课</span>0016 · RDG 进阶</a>
+    <a class="next" href="0018-mesh-drawing-pipeline.html"><span class="nav-dir">下一课 →</span>0018 · Mesh Drawing Pipeline</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 4 几何与可见性 · 剔除是所有后续 Pass 的前提，做得好后面全省力。</footer>
+  </article>
+</div>
+</body>
+</html>

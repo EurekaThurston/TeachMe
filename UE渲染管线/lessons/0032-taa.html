@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0032 · 时间抗锯齿（TAA）</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 6 · 后处理</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 6 · 后处理 · Lesson 0032</p>
+  <h1>时间抗锯齿（TAA）</h1>
+  <p class="subtitle">每帧抖动投影矩阵的子像素偏移，把多帧的超采样样本累积进历史缓冲；速度缓冲驱动运动重投影；邻域夹紧拒绝鬼影。TAA 是 UE 4.26 的默认抗锯齿方案。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0031（后处理概述）、0022（Base Pass 速度输出）</span>
+    <span><b>产出</b> 能解释子像素抖动、历史缓冲重投影、邻域夹紧的工作原理，以及 TAA 为什么需要速度缓冲</span>
+  </div>
+
+  <p class="lead">传统 MSAA 在单帧内用多个覆盖采样点消除边缘锯齿，代价是每帧要多次写 GBuffer——这在延迟着色下显存成本极高。TAA 换了一个思路：每帧只用一个采样点，但把采样点在 2×2 或 Halton 序列的子像素位置上<strong>逐帧抖动</strong>，然后把多帧的样本在<strong>历史缓冲</strong>里累积，相当于把时间维度变成超采样维度。最终效果：几乎零显存开销的 8× 乃至更高效等效超采样，但要解决运动带来的鬼影问题。</p>
+
+  <h2><span class="num">1</span>子像素抖动：投影矩阵的偏移</h2>
+  <p>TAA 的抖动在渲染管线的最早端发生——<strong>修改投影矩阵</strong>。具体做法是在投影矩阵的平移分量（行/列 [2][0] 和 [2][1]，取决于约定）上加一个子像素偏移，使整个场景在屏幕上整体位移不超过半个像素。</p>
+
+  <p>偏移序列的选取影响最终效果：</p>
+  <ul>
+    <li><strong>2 帧序列（Halton 2,3）</strong>：最轻量，收敛快，但累积采样数少，仍有残留锯齿；</li>
+    <li><strong>8 帧 Halton 序列</strong>：UE 4.26 默认，兼顾收敛速度和质量；</li>
+    <li><strong>可配置</strong>：<code>r.TemporalAASamples</code> 控制序列长度（默认 8），<code>r.TemporalAAFilterSize</code> 控制时间滤波核。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">Halton 序列是什么</span>
+    <p>Halton 序列是一种低差异序列（Low-Discrepancy Sequence）：给定维度 <em>d</em> 和基数 <em>b</em>，第 <em>n</em> 项把 <em>n</em> 的 <em>b</em> 进制表示按小数点镜像展开。对 2D 抖动，用基数 (2,3)——Halton(2) 和 Halton(3)。相比伪随机，低差异序列在有限样本数下覆盖更均匀，抖动分布更好，同样 8 帧下质量优于纯随机抖动。</p>
+  </div>
+
+  <p>投影矩阵修改发生在 <code class="file">SceneView.cpp</code> 的视图设置阶段（<code class="fn">FSceneView</code> 构造时）。之后整个场景的所有 VS 输出的裁剪空间位置都带有这个子像素偏移，光栅化结果自然产生子像素级别的偏移。这不需要修改任何材质或着色器。</p>
+
+  <h2><span class="num">2</span>历史缓冲：FSceneViewState 上的跨帧存储</h2>
+  <p>TAA 的核心数据结构是<strong>历史缓冲（History Buffer）</strong>，它存储上一帧（或多帧）TAA 处理后的场景颜色，格式通常与 SceneColor 相同（<code>PF_FloatRGBA</code> 或 <code>PF_FloatR11G11B10</code>）。</p>
+
+  <p>历史缓冲不能是 RDG 瞬态资源（因为它要跨帧存活），它被存储在 <code class="typ">FSceneViewState</code> 上——这是与 <code>FSceneView</code> 对应的<strong>持久状态对象</strong>，生命周期与视口（Viewport）相同，而不是与单帧相同。</p>
+
+  <pre><code><span class="cmt">// ScenePrivate.h（结构示意）</span>
+<span class="kw">class</span> <span class="typ">FSceneViewState</span> : <span class="kw">public</span> <span class="typ">FSceneViewStateInterface</span>
+{
+<span class="kw">public</span>:
+    <span class="cmt">// TAA 历史：上一帧输出的颜色纹理（External Resource 注入 RDG）</span>
+    <span class="typ">TRefCountPtr</span>&lt;<span class="typ">IPooledRenderTarget</span>&gt; PrevFrameViewInfo.TemporalAAHistory;
+
+    <span class="cmt">// 速度缓冲历史（用于静止场景的历史失效检测）</span>
+    <span class="typ">TRefCountPtr</span>&lt;<span class="typ">IPooledRenderTarget</span>&gt; PrevFrameViewInfo.VelocityHistory;
+
+    <span class="cmt">// 相机矩阵历史（用于相机运动的重投影）</span>
+    <span class="typ">FMatrix</span> PrevViewMatrix;
+    <span class="typ">FMatrix</span> PrevProjectionMatrix;
+    <span class="cmt">// ...</span>
+};</code></pre>
+  <p class="code-cap">历史缓冲通过 <code class="fn">GraphBuilder.RegisterExternalTexture()</code> 以 External Resource 方式注入当帧的 RDG 图，TAA Pass 读取它，并在帧末将新的输出回写给 ViewState，供下帧使用。</p>
+
+  <h2><span class="num">3</span>速度缓冲与运动重投影</h2>
+  <p>静止相机时，上一帧的像素和当前帧的像素一一对应——直接比较同一屏幕位置即可。但一旦物体移动或相机旋转，需要<strong>重投影（Reprojection）</strong>：对当前帧每个像素，找到上一帧它对应的屏幕位置，从历史缓冲的那个位置采样。</p>
+
+  <p>重投影需要两类速度信息：</p>
+  <ul>
+    <li><strong>相机速度</strong>：相机运动产生的全屏速度，可以从当前帧和前一帧的 View/Projection 矩阵差值计算得到，不需要专用缓冲；</li>
+    <li><strong>物体速度</strong>：场景中运动物体（骨骼动画、物体移动）产生的逐像素速度，必须在 <strong>Base Pass</strong> 时由顶点着色器计算并写入 <strong>Velocity GBuffer</strong>（<code>SceneVelocity</code>，<code>PF_G16R16</code> 格式，存储屏幕空间位移）。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">Velocity GBuffer 的写入时机</span>
+    <p>UE 4.26 在 Base Pass 的顶点着色器中计算每个顶点的"当前帧裁剪空间位置"与"上一帧裁剪空间位置"的差，转换为屏幕空间位移后写入 <code>SV_Target</code> 中的速度通道。对静止物体，速度为 0（或跳过写入），只写相机运动引起的部分。这条速度数据同时被 TAA 和动态模糊（0035）消费——是它们的共同依赖。</p>
+  </div>
+
+  <p>TAA Pass 的重投影核心逻辑：</p>
+  <pre><code><span class="cmt">// TemporalAA.usf — 重投影采样（示意）</span>
+<span class="typ">float2</span> Velocity = <span class="fn">SceneVelocityTexture.SampleLevel</span>(Sampler, UV, 0).xy;
+<span class="cmt">// 速度缓冲存的是屏幕空间位移（相对于上一帧）</span>
+<span class="typ">float2</span> PrevUV   = UV - Velocity;
+<span class="typ">float3</span> HistorySample = <span class="fn">HistoryBuffer.SampleLevel</span>(Sampler, PrevUV, 0).rgb;
+<span class="cmt">// HistorySample 是上一帧对应位置的颜色</span></code></pre>
+  <p class="code-cap">若 <code>PrevUV</code> 超出 [0,1] 范围（物体移出屏幕），历史无效，需要丢弃历史、用当前帧颜色替代（History Invalidation）。</p>
+
+  <h2><span class="num">4</span>邻域夹紧（Neighborhood Clamping）：拒绝鬼影</h2>
+  <p>重投影给出了上一帧的颜色，但这个颜色不一定和当前帧吻合——场景内容可能变化、遮挡关系改变、光照变化等。直接把历史颜色混入会产生<strong>鬼影（Ghosting）</strong>：之前帧的颜色"留"在当前位置。</p>
+
+  <p>解决方案是<strong>邻域夹紧（Neighborhood Clamping / Variance Clipping）</strong>：</p>
+  <ol>
+    <li>对当前帧像素，采样其 3×3 邻域（9 个像素）；</li>
+    <li>计算邻域颜色的<strong>最小/最大包围盒</strong>（Bounding Box Clamp）或<strong>方差椭球</strong>（Variance Clip，精度更高）；</li>
+    <li>把历史颜色<strong>夹紧（Clamp）</strong>到这个包围盒内——如果历史颜色超出当前帧邻域颜色范围，说明它来自一个和当前帧不同的场景区域，强制拉回边界。</li>
+  </ol>
+
+  <pre><code><span class="cmt">// 邻域包围盒夹紧（示意）</span>
+<span class="typ">float3</span> NeighborMin = <span class="fn">float3</span>(1e10, 1e10, 1e10);
+<span class="typ">float3</span> NeighborMax = <span class="fn">float3</span>(-1e10, -1e10, -1e10);
+<span class="kw">for</span> (<span class="typ">int</span> i = -1; i &lt;= 1; i++) <span class="kw">for</span> (<span class="typ">int</span> j = -1; j &lt;= 1; j++) {
+    <span class="typ">float3</span> c = <span class="fn">SceneColorTexture.Load</span>(<span class="typ">int3</span>(PixelPos + <span class="typ">int2</span>(i,j), 0)).rgb;
+    NeighborMin = <span class="fn">min</span>(NeighborMin, c);
+    NeighborMax = <span class="fn">max</span>(NeighborMax, c);
+}
+<span class="typ">float3</span> ClampedHistory = <span class="fn">clamp</span>(HistorySample, NeighborMin, NeighborMax);</code></pre>
+  <p class="code-cap">Variance Clip 用均值和标准差而非极值构建椭球，对亮度剧变区域（如高光边缘）夹紧更精准，但计算量稍高。UE 4.26 默认使用方差夹紧。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 夹紧越激进，鬼影越少但时间稳定性越差</span>
+    <p>邻域夹紧的本质是"不信任历史"。夹紧范围越小，拒绝的鬼影越多，但也会把合理的历史信息丢弃，导致时间累积效果减弱、画面出现"闪烁（Flicker）"。<code>r.TemporalAACurrentFrameWeight</code> 控制当前帧颜色在混合时的权重（默认约 0.1），值越大倾向当前帧（少鬼影、多闪），值越小倾向历史（稳定、易鬼影）。这是 TAA 质量调优的核心 trade-off。</p>
+  </div>
+
+  <h2><span class="num">5</span>混合权重与最终输出</h2>
+  <p>夹紧后，TAA 把历史颜色和当前帧颜色按权重混合：</p>
+  <pre><code><span class="cmt">// 指数移动平均混合</span>
+<span class="typ">float</span> BlendFactor = <span class="fn">saturate</span>(CurrentFrameWeight); <span class="cmt">// 约 0.1 默认</span>
+<span class="typ">float3</span> Output = <span class="fn">lerp</span>(ClampedHistory, CurrentColor, BlendFactor);
+<span class="cmt">// Output 写回 SceneColor 并存入 HistoryBuffer 供下帧使用</span></code></pre>
+  <p class="code-cap">这是一个指数移动平均（Exponential Moving Average）：历史贡献约 90%，当前帧约 10%。等效于对过去多帧做加权平均，权重随时间指数衰减。</p>
+
+  <p>混合权重还可以根据像素速度自适应调整：运动速度大的区域历史可信度低，可以动态增大 <code>BlendFactor</code>（更倾向当前帧），减少运动鬼影；静止区域则保持低 <code>BlendFactor</code>，充分利用历史累积。</p>
+
+  <h2><span class="num">6</span>关键 CVars 速查</h2>
+  <table>
+    <thead><tr><th>CVar</th><th>默认值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.TemporalAA.Algorithm</code></td><td>0</td><td>0 = Gen4 TAA（UE 4.26 默认），1 = Gen5（TAAU，实验性）</td></tr>
+      <tr><td><code>r.TemporalAASamples</code></td><td>8</td><td>Halton 序列长度（抖动帧数），值越大质量越稳定</td></tr>
+      <tr><td><code>r.TemporalAACurrentFrameWeight</code></td><td>0.1</td><td>当前帧混合权重，增大减少鬼影但增加闪烁</td></tr>
+      <tr><td><code>r.TemporalAAFilterSize</code></td><td>1.0</td><td>时间滤波核宽度，增大更模糊（锐度下降）</td></tr>
+      <tr><td><code>r.TemporalAA.Upsampling</code></td><td>0</td><td>1 = 开启时间上采样（TAAU），配合低 ScreenPercentage 使用</td></tr>
+      <tr><td><code>r.VelocityOutputPass</code></td><td>0</td><td>速度缓冲写入时机（0=Base Pass 内，1=单独 Pass）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">TAA 与 Alpha 透明度的冲突</span>
+    <p>TAA 历史缓冲混合假设颜色在相邻帧间连续变化。透明粒子、半透明材质在每帧的渲染顺序和覆盖关系可能突变，导致夹紧失效、鬼影明显。UE 4.26 默认把半透明 Pass 的结果在 TAA 之后以单独方式合并（不经历史混合），但这意味着半透明不受 TAA 的抗锯齿保护。<code>r.SeparateTranslucency</code> 控制这个行为。</p>
+  </div>
+
+  <h2><span class="num">7</span>为什么 TAA 必须放在后处理链最前面</h2>
+  <p>TAA 消费的速度缓冲在 Base Pass 时写入，是整个 GBuffer 中生命周期最"易污染"的资源——任何后续写 SceneColor 的 Pass（泛光、景深）都可能产生和速度不匹配的颜色值，让历史重投影对不准。因此规则是：<strong>TAA 必须在所有修改 SceneColor 的后处理 Pass 之前运行</strong>，直接消费来自几何/光照阶段的原始 SceneColor。</p>
+
+  <p>这也说明了为什么泛光中出现的高亮边缘不应该"泄漏"进 TAA 历史——泛光是 TAA 之后才运行的，两者的时序保证了历史缓冲里存的永远是未加泛光的干净场景颜色。</p>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">TAA 的邻域夹紧（Neighborhood Clamping）解决的是什么问题，它的核心操作是什么？</p>
+    <button class="q-opt">解决锯齿问题；对当前帧的边缘像素做超采样</button>
+    <button class="q-opt">解决鬼影问题；把重投影得到的历史颜色夹紧到当前帧邻域颜色的包围盒内，拒绝和当前帧不一致的历史</button>
+    <button class="q-opt">解决运动模糊问题；把速度大的像素的历史权重降为 0</button>
+    <div class="q-feedback"
+      data-ok="对。邻域夹紧的目标是鬼影（Ghosting）：历史颜色因遮挡变化等原因与当前帧不一致，强制夹入当前帧邻域范围可以拒绝失效的历史采样。"
+      data-no="再想想：锯齿靠的是历史累积本身，不是夹紧；夹紧是专门针对鬼影的，它检查历史颜色是否"偏离"当前帧邻域，偏离则拉回。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出 TAA 从抖动到最终输出的完整数据流：投影矩阵→速度缓冲→重投影→夹紧→混合，每步的输入和输出是什么？</summary>
+    <div class="answer">
+      <ol>
+        <li><strong>子像素抖动</strong>：在 FSceneView 构建时修改投影矩阵，加入 Halton 序列偏移（&lt;0.5 像素）。输入：帧计数；输出：带偏移的投影矩阵，影响所有 VS 输出位置。</li>
+        <li><strong>Base Pass 写速度</strong>：顶点着色器计算当前帧与上一帧裁剪空间位置差 → 屏幕空间位移写入 Velocity GBuffer（G16R16）。</li>
+        <li><strong>TAA Pass 读速度，重投影</strong>：对当前帧每像素，读速度缓冲得到 ΔUV，从历史缓冲的 UV-ΔUV 处采样，得到历史颜色。</li>
+        <li><strong>邻域夹紧</strong>：采样当前帧 3×3 邻域，计算颜色包围盒/方差椭球，历史颜色被 clamp 到范围内。</li>
+        <li><strong>混合</strong>：<code>lerp(ClampedHistory, CurrentColor, ~0.1)</code>，输出写入新 SceneColor，并拷贝给 FSceneViewState 的 TemporalAAHistory 供下帧。</li>
+      </ol>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>TAA 通过逐帧移动投影矩阵的<strong>子像素偏移</strong>（Halton 序列）积累多帧超采样，等效于高质量 MSAA 但无显存开销。</li>
+      <li>历史缓冲存在 <code>FSceneViewState</code> 上，跨帧持久，以 External Resource 方式注入 RDG。</li>
+      <li><strong>速度缓冲</strong>（Base Pass 写入的 GBuffer Velocity 通道）是重投影的核心；它同时被 TAA 和动态模糊消费。</li>
+      <li><strong>邻域夹紧</strong>用当前帧 3×3 邻域包围盒拒绝失效历史，解决鬼影；夹紧越激进，鬼影越少但闪烁越多。</li>
+      <li>混合权重约 0.1（当前帧），约 0.9（历史），形成指数移动平均；<code>r.TemporalAACurrentFrameWeight</code> 可调。</li>
+      <li>TAA 必须是后处理链的第一个 Pass——在泛光、景深等所有修改 SceneColor 的 Pass 之前。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》Part 3</a>——含 TAA Pass 的分析。源码：<code>Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessTemporalAA.cpp</code> 和 <code>PostProcessTemporalAA.usf</code>。延伸：Brian Karis，《Temporal Reprojection Anti-Aliasing in INSIDE》（GDC 2016）——Halton 抖动与邻域夹紧的实践讲解。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："Halton 序列具体怎么计算，推一下公式？""Variance Clip 比 Bounding Box Clamp 好在哪里，数学上怎么区别？""TAAU（时间上采样）和普通 TAA 的区别是什么？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0031-postprocess-overview.html"><span class="nav-dir">← 上一课</span>0031 · 后处理管线概述</a>
+    <a class="next" href="0033-bloom-exposure.html"><span class="nav-dir">下一课 →</span>0033 · 泛光与自动曝光</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 6 后处理 · TAA 用时间换空间，把多帧子像素偏移积累成高质量抗锯齿，速度缓冲是它的运动矫正手段。</footer>
+  </article>
+</div>
+</body>
+</html>

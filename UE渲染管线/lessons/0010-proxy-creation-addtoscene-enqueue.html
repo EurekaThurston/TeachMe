@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0010 · 代理的创建与更新：AddToScene 与渲染命令入队</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 2 · 游戏线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 2 · 游戏线程 · Lesson 0010</p>
+  <h1>代理的创建与更新：AddToScene 与渲染命令入队</h1>
+  <p class="subtitle">一个图元如何从游戏线程的 <code>UPrimitiveComponent</code> 走过 <code>ENQUEUE_RENDER_COMMAND</code>，最终在渲染线程侧被 <code>FScene::AddPrimitiveSceneInfo_RenderThread</code> 注册、并在 <code>AddToScene</code> 时缓存绘制命令。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0009（UWorld/FScene/Proxy 三件套）</span>
+    <span><b>产出</b> 能描述图元注册/更新如何经 <code>ENQUEUE_RENDER_COMMAND</code> 跨线程到达 <code>FScene</code>，并说清 <code>AddToScene</code> 时缓存绘制命令的时机</span>
+  </div>
+
+  <p class="lead">0009 建立了概念地图：游戏侧 Component、渲染侧 Proxy、渲染器记账 SceneInfo。这节课看机制：这三个对象是怎么被<strong>创建</strong>的，变换更新怎么<strong>跨线程传递</strong>，以及 <code>AddToScene</code> 里藏着的一步——<code>CacheMeshDrawCommands</code>——为什么对静态网格性能至关重要。</p>
+
+  <h2><span class="num">1</span>图元注册：从 AddPrimitive 到 AddToScene</h2>
+  <p>当一个 <code>UPrimitiveComponent</code> 被注册到世界（<code>RegisterComponent</code> / Actor 的 <code>BeginPlay</code> 期）时，游戏线程调用：</p>
+
+  <pre><code><span class="cmt">// 游戏线程（PrimitiveComponent.cpp 节选，逻辑简化）</span>
+World->Scene-><span class="fn">AddPrimitive</span>(this);   <span class="cmt">// FSceneInterface::AddPrimitive，this = UPrimitiveComponent*</span></code></pre>
+
+  <p><code>FScene::AddPrimitive</code>（<span class="file">Scene.cpp</span>）在游戏线程上做两件事：</p>
+  <ol>
+    <li>调用 <code>Component->CreateSceneProxy()</code>，创建对应的 <code>FPrimitiveSceneProxy</code> 子类实例。</li>
+    <li>分配一个新的 <code>FPrimitiveSceneInfo</code>，然后通过 <code>ENQUEUE_RENDER_COMMAND</code> 把它连同 Proxy 一起投到渲染线程：</li>
+  </ol>
+
+  <pre><code><span class="cmt">// FScene::AddPrimitive 末尾（简化）</span>
+<span class="fn">ENQUEUE_RENDER_COMMAND</span>(AddPrimitiveCommand)(
+    [Scene = this, SceneInfo, Proxy](<span class="typ">FRHICommandListImmediate</span>&amp; RHICmdList)
+    {
+        Scene-><span class="fn">AddPrimitiveSceneInfo_RenderThread</span>(RHICmdList, SceneInfo);
+    });</code></pre>
+
+  <p>渲染线程消费这条命令后，<code>AddPrimitiveSceneInfo_RenderThread</code> 把 <code>SceneInfo</code> 插入 <code>FScene::Primitives</code> 数组，为它分配可见性 ID，并调用：</p>
+
+  <pre><code>SceneInfo-><span class="fn">AddToScene</span>(RHICmdList, bUpdateStaticDrawLists);   <span class="cmt">// 核心步骤见第 2 节</span></code></pre>
+
+  <h2><span class="num">2</span>AddToScene 与 CacheMeshDrawCommands</h2>
+  <p><code>FPrimitiveSceneInfo::AddToScene</code>（<span class="file">ScenePrivate.h</span> / <span class="file">Scene.cpp</span>）是注册时最繁重的一步。对于支持静态绘制路径的图元（如 <code>UStaticMeshComponent</code>），它会调用：</p>
+
+  <pre><code>Scene-><span class="fn">CacheMeshDrawCommands</span>(RHICmdList, {SceneInfo});
+<span class="cmt">// 调用 Proxy->DrawStaticElements → 生成 FMeshBatch
+// → FMeshPassProcessor 转换为 FMeshDrawCommand
+// → 缓存到 FScene::CachedMeshDrawCommands</span></code></pre>
+
+  <p>缓存的 <code>FMeshDrawCommand</code> 是完整的"一次绘制"描述：PSO、顶点缓冲绑定、着色器绑定——可以在之后每帧不重新生成、直接提交给 RHI。这是 UE 4.22 之后新 Mesh Draw Pipeline 对静态网格的关键优化：注册时付出一次较高的构建成本，换取运行时每帧接近零开销的提交。</p>
+
+  <div class="callout knowledge">
+    <span class="label">静态路径 vs 动态路径的缓存决策</span>
+    <p>并非所有图元都走静态路径。判据在 <code>FPrimitiveSceneProxy::GetPrimitiveType()</code> 等接口：若 Proxy 声明支持静态绘制（<code>SupportsStaticLighting</code>、<code>ShouldRenderInMainPass</code> 等），则 <code>AddToScene</code> 时缓存；否则每帧走 <code>GetDynamicMeshElements</code> 动态生成。骨骼网格（每帧骨骼矩阵变化）走动态路径；静态网格默认走静态路径。</p>
+  </div>
+
+  <h2><span class="num">3</span>变换更新：UpdatePrimitiveTransform</h2>
+  <p>注册后，若图元移动了（如角色携带的物件），游戏线程调用：</p>
+
+  <pre><code><span class="cmt">// FScene::UpdatePrimitiveTransform（Scene.cpp，游戏线程）</span>
+<span class="fn">ENQUEUE_RENDER_COMMAND</span>(UpdateTransformCommand)(
+    [Proxy, NewLocalToWorld, WorldBounds, LocalBounds](<span class="typ">FRHICommandListImmediate</span>&amp;)
+    {
+        Proxy-><span class="fn">SetTransform</span>(NewLocalToWorld, WorldBounds, LocalBounds, ...);
+        <span class="cmt">// 同时更新 SceneInfo 的包围盒，刷新加速结构</span>
+    });</code></pre>
+
+  <p>变换更新不需要重建 Proxy，只需更新 Proxy 持有的矩阵与包围盒。但如果材质改了、网格资产换了，通常需要销毁并重建 Proxy（游戏线程调用 <code>MarkRenderStateDirty</code> 后，<code>SendAllEndOfFrameUpdates</code> 会触发 <code>RecreateRenderState</code>）。</p>
+
+  <h2><span class="num">4</span>ENQUEUE_RENDER_COMMAND 宏机制</h2>
+  <p><code>ENQUEUE_RENDER_COMMAND</code>（<span class="file">RenderingThread.h</span>）是游戏线程向渲染线程通信的唯一正式通道。它的展开逻辑：把传入的 lambda 包装成一个 <code>TEnqueueUniqueRenderCommandType</code>，投入渲染线程的命令队列（底层是 TaskGraph 任务）。</p>
+
+  <pre><code><span class="cmt">// 宏展开示意（RenderingThread.h）</span>
+<span class="fn">ENQUEUE_RENDER_COMMAND</span>(MyCommandName)(
+    [CapturedData](<span class="typ">FRHICommandListImmediate</span>&amp; RHICmdList)
+    {
+        <span class="cmt">// 这段代码在渲染线程上执行，CapturedData 已安全跨线程</span>
+    });</code></pre>
+
+  <p>几条使用规则：</p>
+  <ul>
+    <li>捕获的数据必须是值拷贝或渲染线程安全的指针（如 <code>FPrimitiveSceneProxy*</code>，渲染线程管理其生命周期）——不能捕获 <code>UObject*</code>，GC 随时回收。</li>
+    <li>命令按入队顺序执行，不重排——这保证"先注册再更新变换"的顺序不乱。</li>
+    <li>游戏线程不等待渲染线程执行完才继续——入队即可（异步），这是两线程流水差一帧的原因之一。</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">不能捕获 UObject 指针</span>
+    <p>Lambda 在渲染线程上执行时，游戏线程可能已经进行了下一帧甚至触发 GC。<code>UObject</code> 指针可能已经失效。正确做法：只捕获 <code>FPrimitiveSceneProxy*</code>（渲染线程管理生命周期）、基础类型、或者用 <code>TRefCountPtr</code>/<code>TSharedPtr</code> 维护生命周期。这是 UE 跨线程编程的高频陷阱。</p>
+  </div>
+
+  <h2><span class="num">5</span>FRenderResource 生命周期：InitRHI / ReleaseRHI</h2>
+  <p>GPU 资源（顶点缓冲、纹理、索引缓冲）通过 <code>FRenderResource</code> 体系管理（<span class="file">RenderResource.h</span>）。关键接口：</p>
+  <ul>
+    <li><code>InitRHI()</code>：在渲染线程上调用，创建 RHI 侧的实际 GPU 对象（如 <code>RHICreateVertexBuffer</code>）。</li>
+    <li><code>ReleaseRHI()</code>：释放 GPU 资源，由 <code>BeginReleaseResource</code> 触发（同样经 <code>ENQUEUE_RENDER_COMMAND</code>）。</li>
+  </ul>
+  <p><code>FStaticMeshVertexBuffers</code>、<code>FRawStaticIndexBuffer</code> 等都继承 <code>FRenderResource</code>。Proxy 构造时把顶点工厂（<span class="term">Vertex Factory</span>）与这些缓冲关联；缓冲的 <code>InitRHI</code> 才是真正往 GPU 上传数据的时机。</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body">
+      <code>RegisterComponent</code> → <code>FScene::AddPrimitive</code> → <code>CreateSceneProxy()</code> → 分配 <code>FPrimitiveSceneInfo</code> → <code>ENQUEUE_RENDER_COMMAND(AddPrimitive)</code>
+      <br><br>
+      移动物件 → <code>MarkRenderTransformDirty</code> → 帧末 <code>SendAllEndOfFrameUpdates</code> → <code>ENQUEUE_RENDER_COMMAND(UpdateTransform)</code>
+    </span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">
+      消费 AddPrimitive 命令 → <code>AddPrimitiveSceneInfo_RenderThread</code> → <code>AddToScene</code> → <code>CacheMeshDrawCommands</code>（静态路径）
+      <br><br>
+      消费 UpdateTransform 命令 → <code>Proxy::SetTransform</code> → 更新 SceneInfo 包围盒
+    </span></div>
+  </div>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text"><code>CacheMeshDrawCommands</code> 在图元注册时被调用，它缓存的是什么，目的是什么？</p>
+    <button class="q-opt">缓存 <code>FMeshDrawCommand</code>（完整的 PSO + 着色器绑定 + 顶点绑定描述），以便后续每帧直接提交而不重新生成，降低运行时 CPU 开销</button>
+    <button class="q-opt">缓存 <code>FMeshBatch</code>（原始几何描述），在 <code>InitViews</code> 每帧读取以省去 <code>GetDynamicMeshElements</code> 调用</button>
+    <button class="q-opt">缓存顶点缓冲的 GPU 地址，使每次 draw call 无需重新绑定 VB</button>
+    <div class="q-feedback" data-ok="正确。CacheMeshDrawCommands 把 FMeshBatch 经 FMeshPassProcessor 转化为完整的 FMeshDrawCommand（PSO + 所有绑定），缓存进 FScene::CachedMeshDrawCommands。注册时付出一次构建开销，运行时每帧复用，是新 Mesh Draw Pipeline 的核心优化。" data-no="再想：缓存的不是 FMeshBatch（那是中间描述），而是经 FMeshPassProcessor 处理后的最终产物 FMeshDrawCommand——它包含 PSO 和全部绑定，可直接喂给 RHI，无需每帧重建。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>完整说出一个 <code>UStaticMeshComponent</code> 从注册到渲染线程建立缓存绘制命令的调用链（含文件锚点）。</summary>
+    <div class="answer">
+      <strong>游戏线程：</strong>
+      <code>UPrimitiveComponent::RegisterComponent</code> → <code>FScene::AddPrimitive</code>（<span class="file">Scene.cpp</span>）→ <code>UStaticMeshComponent::CreateSceneProxy()</code> 产出 <code>FStaticMeshSceneProxy</code>（<span class="file">StaticMeshRender.cpp</span>）→ 分配 <code>FPrimitiveSceneInfo</code> → <code>ENQUEUE_RENDER_COMMAND(AddPrimitive)</code>（<span class="file">RenderingThread.h</span>）。
+      <br><strong>渲染线程：</strong>
+      消费命令 → <code>FScene::AddPrimitiveSceneInfo_RenderThread</code> → 插入 <code>Primitives</code> 数组 → <code>FPrimitiveSceneInfo::AddToScene</code> → <code>FScene::CacheMeshDrawCommands</code>（调 <code>Proxy->DrawStaticElements</code> → <code>FMeshBatch</code> → <code>FMeshPassProcessor</code> → <code>FMeshDrawCommand</code> → 缓存）。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>注册流：游戏线程 <code>FScene::AddPrimitive</code> → 创建 Proxy + SceneInfo → <code>ENQUEUE_RENDER_COMMAND</code> → 渲染线程 <code>AddPrimitiveSceneInfo_RenderThread</code> → <code>AddToScene</code>。</li>
+      <li><code>AddToScene</code> 时为静态网格调用 <code>CacheMeshDrawCommands</code>，把 <code>FMeshBatch</code> 经 <code>FMeshPassProcessor</code> 编译为可复用的 <code>FMeshDrawCommand</code>，运行时每帧零开销提交。</li>
+      <li>变换更新：<code>FScene::UpdatePrimitiveTransform</code> 同样经 <code>ENQUEUE_RENDER_COMMAND</code>，只更新 Proxy 矩阵与 SceneInfo 包围盒，不重建 Proxy。</li>
+      <li><code>ENQUEUE_RENDER_COMMAND</code>（<span class="file">RenderingThread.h</span>）是唯一正式跨线程通道，异步投递，禁止捕获 <code>UObject*</code>。</li>
+      <li><code>FRenderResource::InitRHI</code>（渲染线程）是 GPU 资源真正创建的时机；<code>ReleaseRHI</code> 是释放时机。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Matt Hoffman，<a href="https://medium.com/@lordned/unreal-engine-4-rendering-part-2-shaders-and-vertex-data-80317e1ae5f3">《UE4 Rendering Part 2》</a>（Proxy 注册与顶点工厂）与 <a href="https://medium.com/@lordned/unreal-engine-4-rendering-part-3-drawing-policies-89bb1a3c641b">《Part 3》</a>（Drawing Policies → 新 Mesh Draw Pipeline 前身，对照 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/MeshDrawingPipeline">UE 4.27 Mesh Drawing Pipeline 文档</a> 理解演进）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："<code>FMeshPassProcessor</code> 具体在 <code>CacheMeshDrawCommands</code> 里怎么选着色器？""什么情况下静态图元会失效缓存、需要重新 <code>CacheMeshDrawCommands</code>？""捕获 <code>TRefCountPtr</code> 和裸指针有何区别？" 我是你的老师，随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0009-uworld-fscene-component-proxy.html"><span class="nav-dir">← 上一课</span>0009 · 场景的两份表达：UWorld→FScene、Component→Proxy</a>
+    <a class="next" href="0011-view-creation-fviewinfo.html"><span class="nav-dir">下一课 →</span>0011 · View 的诞生：从 PlayerController 到 FViewInfo</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 2 游戏线程 · ENQUEUE_RENDER_COMMAND 是两线程间的单向大动脉，本课把它的使用模式讲透。</footer>
+  </article>
+</div>
+</body>
+</html>

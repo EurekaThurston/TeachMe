@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0021 · 延迟着色总览与 GBuffer 布局</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0021</p>
+  <h1>延迟着色总览与 GBuffer 布局</h1>
+  <p class="subtitle">延迟着色是 UE 4.26 PC 路径的核心承诺：把"几何有哪些像素"与"像素怎么着色"拆成两个独立的 Pass，让光照成本彻底与场景复杂度解耦。这节课从动机出发，精确到每个通道存什么。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~18 分钟</span>
+    <span><b>前置</b> 0001（MRT、OM 阶段）、0005（帧全景）</span>
+    <span><b>产出</b> 能解释延迟着色的动机，并说出 UE 4.26 GBuffer 各通道存什么</span>
+  </div>
+
+  <p class="lead">前向渲染里，每个可见片元的像素着色器必须立刻对所有影响它的光源求和——光越多、片元越多，开销直接叠加。延迟着色把"求和"这步搬到一个专门的屏幕空间 Pass：BasePass 只负责把材质属性写进一组纹理（GBuffer），光照 Pass 再读这些纹理逐光源叠加。几何复杂度决定写的代价，光源数量决定读的代价，两者不再耦合。你会在 0001 里学到的 MRT 机制（<code>SV_Target0~N</code> 同时写出）正是让这套思路成立的硬件基础。</p>
+
+  <h2><span class="num">1</span>前向 vs 延迟：成本模型对比</h2>
+  <p>设场景有 G 个可见片元、L 盏动态光：</p>
+
+  <table>
+    <thead><tr><th>路径</th><th>着色调用次数</th><th>什么时候变慢</th></tr></thead>
+    <tbody>
+      <tr><td><b>前向渲染</b></td><td>G × L（最坏情况每片元循环所有光）</td><td>光源多 + 复杂场景几何双重叠加</td></tr>
+      <tr><td><b>延迟着色</b></td><td>G（写 GBuffer）+ L × 受影响像素（读 GBuffer 着色）</td><td>光源多时只多花"受影响像素×L"；几何复杂不加重光照</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">延迟的代价</span>
+    <p>延迟着色不是免费的：GBuffer 占显存带宽（读+写），半透明物体无法直接延迟着色（需前向路径或单独处理），MSAA 代价高昂（每采样点都要存 GBuffer）。UE 4.26 针对这些限制分别有对策——0029 讲半透明，抗锯齿依赖 TAA 而非 MSAA。</p>
+  </div>
+
+  <h2><span class="num">2</span>UE 4.26 GBuffer 完整布局</h2>
+  <p>UE 4.26 的 GBuffer 由以下渲染目标组成。除 SceneDepth 外，其余均通过 BasePass 的 MRT 一次写出。在着色器侧，<code>DeferredShadingCommon.ush</code> 里的 <code>FGBufferData</code> 结构体是所有编码/解码逻辑的统一入口。</p>
+
+  <table>
+    <thead><tr><th>缓冲名</th><th>格式（典型）</th><th>存储内容</th></tr></thead>
+    <tbody>
+      <tr><td><b>SceneColor</b></td><td>R11G11B10F 或 RGBA16F</td><td>HDR 场景颜色（光照前为清空或 Emissive；光照后累积直接光；最终供后处理）</td></tr>
+      <tr><td><b>SceneDepth</b></td><td>D32F / D24S8</td><td>32-bit 线性深度。Depth Prepass（0022）先填充；BasePass 用 Early-Z 复用</td></tr>
+      <tr><td><b>GBufferA</b></td><td>RGBA8</td><td>RGB = WorldNormal（编码为 oct 或 signed 格式）；A = Per-Object GBuffer 数据（如自定义深度等标记）</td></tr>
+      <tr><td><b>GBufferB</b></td><td>RGBA8</td><td>R = Metallic；G = Specular；B = Roughness；A[4:0] = ShadingModelID；A[5] = SelectiveOutputMask</td></tr>
+      <tr><td><b>GBufferC</b></td><td>RGBA8 (sRGB)</td><td>RGB = BaseColor；A = GBuffer AO（预烘焙或 SSAO 结果）</td></tr>
+      <tr><td><b>GBufferD</b></td><td>RGBA8</td><td>各 ShadingModel 自定义数据（如 Subsurface Profile 用 R 存 Profile ID；Clear Coat 用 R=ClearCoat, G=Roughness）</td></tr>
+      <tr><td><b>GBufferE</b></td><td>RGBA8</td><td>预计算阴影因子（Precomputed Shadow Factors）；可选，按需分配</td></tr>
+      <tr><td><b>Velocity</b></td><td>RG16F</td><td>每像素屏幕空间运动向量，供 TAA（0032）和运动模糊（0035）使用；由 r.BasePassOutputsVelocity 控制是否在 BasePass 内输出</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout knowledge">
+    <span class="label">ShadingModelID 的作用</span>
+    <p>GBufferB 的高四位存 <code>ShadingModelID</code>（最多 16 种模型）。光照 Pass 读出这个 ID 后，用 <code>switch</code> 跳转到对应的 BRDF 实现（<code>ShadingModels.ush</code>）——这就是"一个 GBuffer 支持多种材质模型"的机制。UE 4.26 内置模型包括 DefaultLit（0）、Subsurface（1）、PreintegratedSkin（2）、ClearCoat（3）、SubsurfaceProfile（4）、TwoSidedFoliage（5）等。</p>
+  </div>
+
+  <h2><span class="num">3</span>着色器侧：FGBufferData 与编码/解码</h2>
+  <p>所有对 GBuffer 的读写，都经由 <code>Engine/Shaders/Private/DeferredShadingCommon.ush</code> 里两个函数完成：</p>
+
+  <pre><code><span class="cmt">// DeferredShadingCommon.ush（节选，架构示意）</span>
+<span class="kw">struct</span> <span class="typ">FGBufferData</span>
+{
+    <span class="typ">float3</span> WorldNormal;       <span class="cmt">// GBufferA.rgb 解码</span>
+    <span class="typ">float</span>  Metallic;          <span class="cmt">// GBufferB.r</span>
+    <span class="typ">float</span>  Specular;          <span class="cmt">// GBufferB.g</span>
+    <span class="typ">float</span>  Roughness;         <span class="cmt">// GBufferB.b</span>
+    <span class="typ">float3</span> BaseColor;         <span class="cmt">// GBufferC.rgb (linear)</span>
+    <span class="typ">float</span>  GBufferAO;         <span class="cmt">// GBufferC.a</span>
+    <span class="typ">uint</span>   ShadingModelID;    <span class="cmt">// GBufferB.a 低 4 bit</span>
+    <span class="typ">uint</span>   SelectiveOutputMask;
+    <span class="typ">float4</span> CustomData;        <span class="cmt">// GBufferD</span>
+    <span class="typ">float4</span> PrecomputedShadowFactors; <span class="cmt">// GBufferE</span>
+};
+
+<span class="cmt">// BasePass 写：把材质输出填进 FGBufferData，再编码进 MRT</span>
+<span class="fn">EncodeGBuffer</span>(GBuffer, OutTarget0, OutTarget1, ...);
+
+<span class="cmt">// 光照 Pass 读：从 MRT 采样，解包成 FGBufferData 供 BRDF</span>
+<span class="typ">FGBufferData</span> GBuffer = <span class="fn">DecodeGBufferData</span>(
+    GBufferATexture, GBufferBTexture, GBufferCTexture,
+    GBufferDTexture, GBufferETexture,
+    SceneDepthTexture, ScreenUV);</code></pre>
+
+  <p>CPU 侧，GBuffer 纹理集合由 <code>FSceneTextures</code>（<code>SceneTextures.h</code>）管理，通过 <code>FSceneTexturesUniformParameters</code> 以 Uniform Buffer 的形式绑定到着色器——光照 Pass 直接读这个 UB，无需手动绑定每张纹理。</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">BasePass</span><span class="s-sub">材质着色器<br>EncodeGBuffer</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">MRT 输出</span><span class="s-sub">GBufferA/B/C/D<br>SceneDepth</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">光照 Pass</span><span class="s-sub">DecodeGBuffer<br>按 ShadingModelID</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">BRDF 求和</span><span class="s-sub">ShadingModels.ush<br>BRDF.ush</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">SceneColor</span><span class="s-sub">累积 HDR 光照</span></div>
+  </div>
+
+  <h2><span class="num">4</span>法线编码细节</h2>
+  <p>GBufferA.rgb 用 8-bit 精度存世界法线，直接存 [-1,1]³ 会损失精度。UE 4.26 默认用<strong>压缩-符号编码</strong>：把 [-1,1] 映射到 [0,1] 再写入 RGBA8（即 <code>N * 0.5 + 0.5</code>），解码时反向。对于需要更高精度的路径（如开启 r.GBuffer 精度升级），可换用 RGBA16F。GBufferA.a 存每对象数据（如选择遮罩、自定义深度 stencil 标记），与法线并不干扰。</p>
+
+  <div class="callout warn">
+    <span class="label">UE5 超纲提示</span>
+    <p>UE5 引入 Substrate 材质系统，彻底重写了 GBuffer 布局与 ShadingModel 分发逻辑；Lumen 也绕开了传统 GBuffer 读取路径。这些均超出本课程范围——本课所有内容严格锁定 UE 4.26。</p>
+  </div>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">光照 Pass 如何知道某像素应该用哪种 BRDF（如 DefaultLit 还是 ClearCoat）？</p>
+    <button class="q-opt">通过查询该像素对应的材质资产名称</button>
+    <button class="q-opt">读取 GBufferB 的 alpha 通道，提取 ShadingModelID 后用 switch 分发到 ShadingModels.ush</button>
+    <button class="q-opt">通过顶点颜色中存储的标记判断</button>
+    <div class="q-feedback" data-ok="对。GBufferB.a 的低 4 bit 存 ShadingModelID，光照 Pass 读出后在 ShadingModels.ush 里 switch 到对应 BRDF——这是支持多材质模型的关键机制。" data-no="再想：GBufferB.a 的低 4 bit 专门用于存 ShadingModelID，光照 Pass 只需读这个整数就能分发到正确的 BRDF 分支。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看表，按顺序说出 UE 4.26 的 GBuffer 通道及其存储内容，并解释为什么 SceneDepth 由 Depth Prepass（而非 BasePass）填充。</summary>
+    <div class="answer">通道顺序：<strong>SceneColor</strong>（HDR 颜色）、<strong>SceneDepth</strong>（32-bit 线性深度）、<strong>GBufferA</strong>（WorldNormal + per-object）、<strong>GBufferB</strong>（Metallic/Specular/Roughness + ShadingModelID）、<strong>GBufferC</strong>（BaseColor + GBuffer AO）、<strong>GBufferD</strong>（自定义数据）、<strong>GBufferE</strong>（预计算阴影）、<strong>Velocity</strong>（运动向量）。SceneDepth 由 Depth Prepass（0022）先填充是为了建立 Early-Z——让 BasePass 的像素着色器只在最前可见片元上运行，避免对被遮挡片元执行昂贵的材质着色；这是整条延迟路径的性能基础。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>延迟着色把"几何→GBuffer"（BasePass）与"GBuffer→光照"（Lighting Pass）分离，光照成本与几何复杂度解耦——核心动机。</li>
+      <li>UE 4.26 GBuffer 有 8 个主要通道：SceneColor、SceneDepth、GBufferA（法线）、GBufferB（Metallic/Specular/Roughness/<strong>ShadingModelID</strong>）、GBufferC（BaseColor/AO）、GBufferD（自定义）、GBufferE（阴影因子）、Velocity。</li>
+      <li><code>FGBufferData</code> + <code>EncodeGBuffer</code> / <code>DecodeGBufferData</code> 是着色器侧读写 GBuffer 的统一接口，定义在 <code>DeferredShadingCommon.ush</code>。</li>
+      <li>CPU 侧 <code>FSceneTextures</code> 管理 GBuffer 资源，通过 <code>FSceneTexturesUniformParameters</code> 绑定到光照着色器。</li>
+      <li>延迟的缺陷：显存带宽高、半透明需单独处理、MSAA 昂贵——UE 4.26 用 TAA 替代 MSAA。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>——BasePass 与 GBuffer 布局的逐帧抓帧分析；对照 RenderDoc 看各通道内容。引擎源码：<code>Engine/Shaders/Private/DeferredShadingCommon.ush</code>（FGBufferData / EncodeGBuffer / DecodeGBufferData）、<code>Engine/Source/Runtime/Renderer/Private/SceneTextures.h</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："GBufferB.a 的 bit 布局具体怎么拆？""SelectiveOutputMask 是干什么的？""延迟路径的带宽到底是多少 GB/s 数量级？"随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0020-gpu-scene-instancing-merging.html"><span class="nav-dir">← 上一课</span>0020 · GPU Scene 与实例化合批</a>
+    <a class="next" href="0022-depth-prepass.html"><span class="nav-dir">下一课 →</span>0022 · Depth Prepass（Early-Z）</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 0021 GBuffer 布局是整个延迟路径的数据合同。</footer>
+  </article>
+</div>
+</body>
+</html>

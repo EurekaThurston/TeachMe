@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0027 · 屏幕空间：SSAO / SSR / SSGI</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0027</p>
+  <h1>屏幕空间：SSAO / SSR / SSGI</h1>
+  <p class="subtitle">三种以 GBuffer 深度和法线为输入、仅用屏幕内信息近似计算遮蔽/反射/间接光的技术——快且局限共存。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0021（GBuffer 布局）、0017（HZB 层级 Z 缓冲）</span>
+    <span><b>产出</b> 能解释三种屏幕空间技术的输入、执行阶段与局限，以及它们在帧内的顺序</span>
+  </div>
+
+  <p class="lead">延迟着色的直接光照（0025）和阴影（0026）做完后，场景里仍缺少两类间接效果：角落与缝隙里的<strong>环境光遮蔽</strong>（接缝显得不自然）和<strong>反射与间接光弹射</strong>（镜面与漫反射间接光）。UE 4.26 在不动用光线追踪的前提下，用三个屏幕空间 Pass 来近似这些效果：SSAO、SSR、SSGI。它们统一的代价是：<strong>只能用当前帧屏幕内可见的信息</strong>，屏幕边缘和被遮挡的几何对它们而言是不存在的。</p>
+
+  <h2><span class="num">1</span>三者在帧内的位置</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">直接光照<br>0025</span><span class="s-sub">延迟光照写<br>SceneColor</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">SSAO</span><span class="s-sub">GBuffer深度/法线<br>→ AO Mask</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">SSGI</span><span class="s-sub">HZB+SceneColor<br>→ 间接漫反射</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">SSR</span><span class="s-sub">HZB+SceneColor<br>→ 屏幕空间反射</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">反射合成<br>0028</span><span class="s-sub">SSR+IBL<br>最终反射</span></div>
+  </div>
+
+  <p>SSAO 的结果应用于间接光（ambient）之前，SSGI 提供一次弹射漫反射间接光，SSR 的结果进入反射合成 Pass（0028）。它们在 <code>FDeferredShadingSceneRenderer::Render()</code> 里的顺序是固定的。</p>
+
+  <h2><span class="num">2</span>SSAO：屏幕空间环境光遮蔽</h2>
+  <p>代码：<code class="file">PostProcessAmbientOcclusion.cpp</code>，着色器：<code class="file">PostProcessAmbientOcclusion.usf</code>。</p>
+
+  <p>SSAO 的物理直觉：一个表面点的<strong>半球遮挡率</strong>越高（周围有更多几何挡住天空/间接光），它得到的环境光越少。SSAO 用屏幕空间的深度重建来采样这个点周围的"邻居深度"，统计有多少邻居高于自己，从而估算遮挡率。</p>
+
+  <p>具体步骤：</p>
+  <ol>
+    <li>从 GBuffer 深度重建每个屏幕像素的<strong>视图空间位置</strong>；</li>
+    <li>从 GBuffer A/B 读取<strong>世界法线</strong>（作为半球朝向）；</li>
+    <li>在法线方向的半球内随机采样 N 个点（用旋转噪声图 tiling 以减少规律感），把采样点重投影到屏幕空间，与深度缓冲比较；</li>
+    <li>深度缓冲比采样点更浅（邻居比自己更近相机）→ 该方向被遮挡；</li>
+    <li>遮挡比率作为 AO 系数输出，存入 AO Mask；</li>
+    <li>用高斯/双边模糊平滑噪声。</li>
+  </ol>
+
+  <pre><code><span class="cmt">// PostProcessAmbientOcclusion.usf（核心逻辑示意）</span>
+<span class="typ">float</span> Occlusion = 0.0;
+<span class="kw">for</span> (<span class="typ">int</span> i = 0; i &lt; NumSamples; i++)
+{
+    <span class="typ">float3</span> SampleDir = <span class="fn">TBN_Rotate</span>(HemisphereSamples[i], N, RandomRot);
+    <span class="typ">float3</span> SamplePos = ViewPos + SampleDir * SampleRadius;
+    <span class="typ">float2</span> SampleUV  = <span class="fn">ProjectToScreen</span>(SamplePos);
+    <span class="typ">float</span>  SampleDepth = SceneDepth.<span class="fn">SampleLevel</span>(SampleUV, 0).r;
+    <span class="cmt">// 如果深度缓冲里比采样点更近 → 被遮</span>
+    Occlusion += (SampleDepth &lt; SamplePos.z - Bias) ? 1.0 : 0.0;
+}
+OutAO = 1.0 - (Occlusion / NumSamples);</code></pre>
+  <p class="code-cap">半球采样+深度比较是 SSAO 的本质。采样数和半径决定质量与性能的权衡。</p>
+
+  <div class="callout knowledge">
+    <span class="label">SSAO 作用在间接光，不是直接光</span>
+    <p>SSAO 的 AO 系数被乘到<strong>间接（环境/天光）分量</strong>上，而不是直接阴影——因为直接光的阴影已由 0026 的 ShadowDepth + Projection 处理。把 SSAO 应用到直接光会让有阴影的区域变两次暗，造成过暗 artifact。代码里的 <code>AmbientOcclusionIntensity</code> 和 <code>r.AmbientOcclusionLevels</code> 都只控制间接光路径。</p>
+  </div>
+
+  <h2><span class="num">3</span>SSR：屏幕空间反射</h2>
+  <p>代码：<code class="file">ScreenSpaceReflections.cpp</code>，着色器：<code class="file">ScreenSpaceReflections.usf</code>。</p>
+
+  <p>SSR 给镜面/光滑表面提供屏幕内的反射信息。方法是<strong>屏幕空间光线步进（Ray March）</strong>：</p>
+  <ol>
+    <li>读 GBuffer 法线和粗糙度，反向计算反射光线方向（视图空间）；</li>
+    <li>沿反射方向在屏幕上步进，每步把当前 3D 位置重投影到屏幕 UV，查 <strong>HZB</strong>（层级 Z 缓冲，0017）判断是否与场景几何相交——用 HZB 的 mip 级别控制步进粒度，远处用粗粒度快速跳步；</li>
+    <li>找到相交点后，采样 <strong>SceneColor</strong> 得到反射颜色；</li>
+    <li>粗糙度越高，反射越模糊（采样 SceneColor 的模糊 mip）；</li>
+    <li>根据步进路径的置信度输出 alpha，边缘渐变，供反射合成 Pass（0028）混合。</li>
+  </ol>
+
+  <div class="callout insight">
+    <span class="label">HZB 在 SSR 里的作用（呼应 0017）</span>
+    <p>SSR 的光线步进如果逐像素检测，代价极高。HZB 把深度缓冲做成 mip 金字塔，粗 mip 存一个区域内的最小深度（最近物体）。步进时先用粗粒度 HZB 大跨步前进，当 mip-0 层检测到潜在交叉时才细步确认——这就是 Hierarchical Ray March，让步进次数从 O(屏幕宽高) 降到 O(log)。</p>
+  </div>
+
+  <pre><code><span class="cmt">// SSR HZB 层级步进（伪代码）</span>
+<span class="typ">int</span> MipLevel = MaxMip;
+<span class="kw">while</span> (MipLevel &gt;= 0 &amp;&amp; StepCount &lt; MaxSteps)
+{
+    <span class="typ">float2</span> UV = <span class="fn">ProjectToScreen</span>(RayPos);
+    <span class="typ">float</span>  HZBDepth = HZBTexture.<span class="fn">SampleLevel</span>(UV, MipLevel).r;
+    <span class="kw">if</span> (RayPos.z &gt; HZBDepth)  <span class="cmt">// 射线在场景后面 → 相交</span>
+        MipLevel--;            <span class="cmt">// 细化步进</span>
+    <span class="kw">else</span>
+        RayPos += RayDir * StepSize[MipLevel]; <span class="cmt">// 前进</span>
+    StepCount++;
+}</code></pre>
+
+  <h2><span class="num">4</span>SSGI：屏幕空间全局光照</h2>
+  <p>SSGI（Screen Space Global Illumination）在 UE 4.26 中通过 <code>r.SSGI.Enable 1</code> 开启（实验性功能）。思路与 SSR 相近，但目标是<strong>漫反射间接光</strong>（一次弹射）而非镜面反射：</p>
+  <ul>
+    <li>在法线半球内发射多条光线，同样用 HZB 层级步进；</li>
+    <li>命中后采样 SceneColor（包含直接光照信息）作为该方向的入射辐亮度；</li>
+    <li>按 Lambert 余弦加权积分，近似一次弹射漫反射全局光；</li>
+    <li>时域降噪（复用 TAA 历史帧信息）平滑低采样率带来的噪声。</li>
+  </ul>
+  <p>SSGI 与 SSAO 的区别：SSAO 只算遮蔽率（标量），SSGI 算带颜色的入射辐照（向量）——SSGI 包含了 SSAO 的遮蔽信息，两者同时开启时 SSAO 可关闭。</p>
+
+  <h2><span class="num">5</span>三者对照：输入 / 输出 / 局限</h2>
+  <table>
+    <thead>
+      <tr><th>技术</th><th>主要输入</th><th>输出</th><th>核心局限</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>SSAO</b></td>
+        <td>GBuffer 深度、世界法线</td>
+        <td>AO 系数（灰度，乘间接光）</td>
+        <td>采样半径内才能检测遮挡；法线不够精确时伪影明显</td>
+      </tr>
+      <tr>
+        <td><b>SSR</b></td>
+        <td>GBuffer 法线/粗糙度、HZB、SceneColor</td>
+        <td>镜面反射色 + 置信 alpha</td>
+        <td>屏幕外物体无法反射；步进交叉深度正面时有缺失；高粗糙度质量差</td>
+      </tr>
+      <tr>
+        <td><b>SSGI</b></td>
+        <td>GBuffer 法线、HZB、SceneColor（含直接光）</td>
+        <td>漫反射间接光（彩色辐照）</td>
+        <td>只有一次弹射；屏幕外 / 被遮挡表面不贡献；噪声需时域降噪</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">统一局限：屏幕空间的天花板</span>
+    <p>三种技术共享一个根本限制：<strong>只有屏幕内可见的几何才能参与计算</strong>。当视角转动、物体离开视野时，SSAO 角落遮蔽消失，SSR 反射闪烁，SSGI 间接光跳变——这些 artifact 不是 bug，是方法论的边界。UE5 的 Lumen 系统用场景级别的 SDF + 探针缓存来绕过屏幕限制，但那超出 4.26 范围（超纲）。</p>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">SSR 为什么要用 HZB（层级 Z 缓冲）而不是直接用原始深度缓冲做光线步进？</p>
+    <button class="q-opt">HZB 存储了法线信息，可以直接判断反射角</button>
+    <button class="q-opt">HZB 是深度的 mip 金字塔，可以大步跳过空白区域，让步进次数从线性降到对数级</button>
+    <button class="q-opt">原始深度缓冲不支持在着色器中采样，只有 HZB 可以</button>
+    <div class="q-feedback"
+      data-ok="对。HZB 的粗 mip 存区域最小深度，步进时先用粗粒度大跨步前进，接近几何时再细化，总步数 O(log)，比逐像素的 O(N) 快得多。"
+      data-no="再想想：原始深度缓冲完全可以在着色器中采样，问题是步进次数太多。HZB 的价值在于层级结构——用粗粒度快速跳过没有几何的空白区域。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>从帧内顺序出发，依次说出 SSAO / SSGI / SSR 的输入、输出与核心局限（不看表格）。</summary>
+    <div class="answer">
+      <p><strong>帧内顺序</strong>：直接光照（0025）→ SSAO → SSGI → SSR → 反射合成（0028）。</p>
+      <ul>
+        <li><b>SSAO</b>：输入 GBuffer 深度+法线，半球采样统计遮挡率，输出 AO 系数乘间接光；局限：采样半径外无法检测，屏幕外几何不参与。</li>
+        <li><b>SSGI</b>：输入 GBuffer 法线 + HZB + SceneColor，发射漫反射光线命中后读 SceneColor 积分，输出一次弹射漫反射间接光（彩色）；局限：单次弹射，屏幕外无贡献，需时域降噪。</li>
+        <li><b>SSR</b>：输入 GBuffer 法线/粗糙度 + HZB + SceneColor，镜面反射方向层级步进，输出反射颜色+置信 alpha；局限：屏幕外无反射，步进缺失高粗糙度质量差。</li>
+      </ul>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>SSAO</strong>（<code>PostProcessAmbientOcclusion.cpp</code>）：深度+法线半球采样，输出 AO 系数，仅作用于间接光分量。</li>
+      <li><strong>SSR</strong>（<code>ScreenSpaceReflections.cpp</code>）：HZB 层级步进 + SceneColor 采样，输出带置信度的镜面反射，进入 0028 反射合成。</li>
+      <li><strong>SSGI</strong>（<code>r.SSGI.Enable</code>，4.26 实验性）：漫反射方向 HZB 步进 + SceneColor，一次弹射间接光，包含 SSAO 遮蔽信息。</li>
+      <li>三者共享的天花板：<strong>仅屏幕内可见信息</strong>，屏外几何不参与，边缘/遮挡处有 artifact。</li>
+      <li>UE5 Lumen 替代了这三者，4.26 不存在（超纲）。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》part 3</a>——含 SSAO、SSR 的抓帧截图与分析，是本课最直接的对照材料。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："SSAO 的采样半径和样本数怎么调？""SSR 的步进为什么在光滑地面边缘有黑边？""SSGI 时域降噪用的是什么 buffer？" 我直接展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0026-shadows-csm-shadowdepth.html"><span class="nav-dir">← 上一课</span>0026 · 阴影：ShadowDepth、CSM</a>
+    <a class="next" href="0028-reflections-environment-ibl.html"><span class="nav-dir">下一课 →</span>0028 · 反射与环境光：IBL</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 屏幕空间三件套：快速近似，局限明确，理解边界才能正确使用。</footer>
+  </article>
+</div>
+</body>
+</html>

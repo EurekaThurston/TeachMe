@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0019 · Pass 处理器与着色器绑定、绘制命令缓存</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 4 · 几何与可见性</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 4 · 几何与可见性 · Lesson 0019</p>
+  <h1>Pass 处理器与着色器绑定、绘制命令缓存</h1>
+  <p class="subtitle"><code>FMeshPassProcessor</code> 是 <code>FMeshBatch</code> 到 <code>FMeshDrawCommand</code> 转换的执行者：它选定着色器排列、构建完整绑定、排序命令、支撑并行构建。这节课把这个"转换核心"拆开讲透。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0018（Mesh Drawing Pipeline 全貌）、0003（PSO 与描述符）</span>
+    <span><b>产出</b> 能说出 FMeshPassProcessor 如何选着色器并生成 FMeshDrawCommand、绑定如何存储、命令如何排序与并行构建</span>
+  </div>
+
+  <p class="lead">0018 建立了整条流水线的骨架，这节课聚焦在"骨架的心脏"——<code>FMeshPassProcessor::AddMeshBatch</code> 内部。它要完成三件事：①根据材质和顶点工厂选定一套着色器（VS/PS 排列）；②把所有运行时参数打包进 <code>FMeshDrawShaderBindings</code>；③把最终的 <code>FMeshDrawCommand</code> 按排序键插入队列。并行构建机制让这三件事可以多线程同时进行。</p>
+
+  <h2><span class="num">1</span>着色器选择：材质 × 顶点工厂 → 排列</h2>
+  <p>UE 的着色器系统预编译了大量<strong>排列（Permutation）</strong>：同一段材质代码在不同顶点工厂（静态网格 vs 骨骼网格 vs 实例化）、不同 Pass（DepthPass vs BasePass）、不同特性开关（是否有方向光、是否开 GI…）下会编译成不同的 HLSL 二进制。<code>FMeshPassProcessor</code> 的 <code>AddMeshBatch</code> 实现在运行时根据当前上下文，从已编译的排列库里<strong>查找</strong>（而非编译）正确的 VS/PS 组合。</p>
+
+  <pre><code><span class="cmt">// FBasePassMeshProcessor::AddMeshBatch 内部（简化流程）</span>
+<span class="kw">bool</span> <span class="fn">TryAddMeshBatch</span>(<span class="kw">const</span> <span class="typ">FMeshBatch</span>&amp; Batch, ...)
+{
+    <span class="cmt">// 1. 从 MaterialRenderProxy 取着色器排列键</span>
+    <span class="typ">FMaterialShaderTypes</span> ShaderTypes;
+    ShaderTypes.<span class="fn">AddShaderType</span>&lt;<span class="typ">TBasePassVS</span>&lt;LightMapPolicyType&gt;&gt;();
+    ShaderTypes.<span class="fn">AddShaderType</span>&lt;<span class="typ">TBasePassPS</span>&lt;LightMapPolicyType&gt;&gt;();
+
+    <span class="cmt">// 2. 结合顶点工厂，取出编译好的着色器对象</span>
+    <span class="typ">FMaterialShaders</span> Shaders;
+    <span class="kw">if</span> (!Material.<span class="fn">TryGetShaders</span>(ShaderTypes, Batch.VertexFactory-&gt;GetType(), Shaders))
+        <span class="kw">return false</span>; <span class="cmt">// 排列不存在，跳过</span>
+
+    <span class="cmt">// 3. 构建 FMeshDrawCommand</span>
+    <span class="fn">BuildMeshDrawCommands</span>(Batch, Shaders, ...);
+    <span class="kw">return true</span>;
+}</code></pre>
+  <p class="code-cap">着色器查找的逻辑骨架：排列键 = 材质 + 顶点工厂类型 + Pass 特性开关</p>
+
+  <h2><span class="num">2</span>顶点工厂的作用：同材质适配不同几何</h2>
+  <p><span class="term">Vertex Factory</span> 抽象了"顶点数据从哪来、怎么送给 VS"。对于同一个材质（同一段 PS 逻辑），静态网格、骨骼网格、实例化网格各自有不同的顶点输入布局，需要不同的 VS 排列——VS 里的骨骼蒙皮逻辑只出现在 <code>FSkeletalMeshVertexFactory</code> 的排列里。</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">FLocalVertexFactory</span><span class="lane-body">静态网格：位置/法线/UV 直接读，无蒙皮</span></div>
+    <div class="lane render"><span class="lane-name">FSkeletalMeshVertexFactory</span><span class="lane-body">骨骼网格：在 VS 里做骨骼权重蒙皮，影响位置/法线</span></div>
+    <div class="lane rhi"><span class="lane-name">FInstancedStaticMeshVertexFactory</span><span class="lane-body">实例化网格：每实例读不同变换，一次 DrawInstanced</span></div>
+  </div>
+
+  <p>同一个材质 M 应用到三种几何上，<code>FMeshPassProcessor</code> 会查找三种 VS 排列（<code>TBasePassVS&lt;..., FLocalVertexFactory&gt;</code>、<code>TBasePassVS&lt;..., FSkeletalMeshVertexFactory&gt;</code>……），PS 可以共用同一排列。这正是"同材质适配不同几何来源"的实现机制。</p>
+
+  <h2><span class="num">3</span>FMeshDrawShaderBindings：绑定即描述符表</h2>
+  <p>着色器确定后，<code>BuildMeshDrawCommands</code> 把所有运行时参数收集进 <code>FMeshDrawShaderBindings</code>。它在逻辑上等价于 0003 讲的描述符堆/根签名——记录每个着色器阶段（VS/PS）需要绑定的资源句柄：</p>
+
+  <table>
+    <thead><tr><th>绑定类型</th><th>典型内容</th><th>D3D12 对应</th></tr></thead>
+    <tbody>
+      <tr><td>Uniform Buffer（常量缓冲）</td><td>变换矩阵、材质参数、View 参数</td><td>CBV / Root Constant</td></tr>
+      <tr><td>SRV（Shader Resource View）</td><td>贴图、结构化缓冲</td><td>Descriptor Table SRV</td></tr>
+      <tr><td>Sampler</td><td>纹理采样状态</td><td>Descriptor Table Sampler</td></tr>
+      <tr><td>UAV（Unordered Access View）</td><td>可写缓冲（较少见于网格 Pass）</td><td>Descriptor Table UAV</td></tr>
+    </tbody>
+  </table>
+
+  <p>所有这些句柄在 <code>BuildMeshDrawCommands</code> 里通过 <code>ShaderBindings.Add(ShaderParam, Resource)</code> 逐条填入，最终打包进 <code>FMeshDrawCommand</code>。提交时只需遍历这张表做绑定，不需要再次查找材质或调用任何 UObject。</p>
+
+  <div class="callout knowledge">
+    <span class="label">为什么把绑定存进命令而不是每帧重新查找</span>
+    <p>资源句柄查找涉及字符串查找、哈希表等操作，每帧对每个网格重复执行代价不菲。一旦绑定存进 <code>FMeshDrawCommand</code>，提交时只是遍历一个连续数组——缓存友好，完全没有查找开销。这和 0003 讲的"预构建描述符表"思路完全一致。</p>
+  </div>
+
+  <h2><span class="num">4</span>FMeshDrawCommandSortKey：排序与状态切换最小化</h2>
+  <p><code>FMeshDrawCommand</code> 附带一个 64 位排序键 <code>FMeshDrawCommandSortKey</code>，控制命令在 Pass 内的提交顺序。排序键的字段按优先级从高到低包含：</p>
+  <ul>
+    <li><strong>PSO 哈希</strong>（最高优先级）：相同 PSO 的命令聚在一起，避免频繁切换管线状态对象——这是 GPU 最昂贵的状态切换。</li>
+    <li><strong>着色器绑定哈希</strong>：相同着色器+纹理组合的命令连续提交，减少描述符表切换。</li>
+    <li><strong>深度/距离</strong>（BasePass 里次要，DepthPass 里由近到远以利用 Early-Z）。</li>
+  </ul>
+
+  <p>收集完一个 Pass 的所有命令后，<code>FMeshDrawCommandPassSetupTask</code> 对命令列表排序，再走 <code>SubmitMeshDrawCommands</code>。排序这一步的 CPU 开销换来的是 GPU 端大量减少的状态切换——通常是值得的。</p>
+
+  <h2><span class="num">5</span>并行构建：FParallelMeshDrawCommandPass</h2>
+  <p>构建 <code>FMeshDrawCommand</code> 的工作（调用 <code>AddMeshBatch</code>、收集绑定）可以在多个工作线程上并行完成。<code>FParallelMeshDrawCommandPass</code> 把图元列表切分成多个块，每个工作线程处理自己的块，最终合并。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">可见图元列表</span><span class="s-sub">PrimitiveVisibilityMap</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">分块</span><span class="s-sub">按图元索引范围切割</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">N 个工作线程</span><span class="s-sub">各自 AddMeshBatch<br>→ BuildMeshDrawCommands</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">合并 + 排序</span><span class="s-sub">FMeshDrawCommandSortKey</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">SubmitMeshDrawCommands</span></div>
+  </div>
+
+  <p>并行构建与 0006（多线程渲染）、0003（并行命令列表）的原理一脉相承：CPU 侧工作分解给多核，RHI 侧最终合并提交。</p>
+
+  <h2><span class="num">6</span>PSO 收集：与 0003 的关联</h2>
+  <p>在 <code>BuildMeshDrawCommands</code> 执行期间，每个唯一的 PSO 配置（着色器+混合+光栅状态）都会被登记进 PSO 缓存（<code>PipelineStateCache</code>）。如果缓存命中，直接取回已编译的 GPU Pipeline；如果未命中，则触发一次耗时的编译——也就是你在游戏加载或首次渲染新材质时可能看到的卡顿。这是 0003 讲的 PSO 缓存机制在 Mesh Draw Pipeline 里的落地点。</p>
+
+  <div class="callout warn">
+    <span class="label">PSO 缺失卡顿的根源</span>
+    <p>PSO 编译是阻塞的，耗时可达几十到几百毫秒。UE 4.26 通过 PSO 预缓存（<code>r.ShaderPipelineCache.Enabled</code>）在加载期提前编译已知 PSO 来缓解。但材质的每一种排列 × 每一种顶点工厂 × 每一个 Pass，都是一个潜在的 PSO——组合爆炸是真实工程挑战。</p>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text"><code>FMeshDrawCommandSortKey</code> 的首要排序字段是什么，目的是什么？</p>
+    <button class="q-opt">按图元到相机的距离排序，让近处物体先渲染以触发 Early-Z</button>
+    <button class="q-opt">按 PSO 哈希排序，让使用相同管线状态的命令聚在一起，减少昂贵的 PSO 切换</button>
+    <button class="q-opt">按材质 ID 排序，合并相同材质的网格以减少贴图绑定次数</button>
+    <div class="q-feedback"
+      data-ok="对。PSO 切换是 GPU 最昂贵的状态变更之一，把相同 PSO 的命令聚合提交，能大幅减少管线刷新次数。深度排序只是次级排序字段。"
+      data-no="近处优先（Early-Z 利用）确实有价值，但它是次级键。首要键是 PSO——切换 PSO 会导致 GPU 管线刷新，代价远高于失去 Early-Z 机会。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出 FMeshPassProcessor 的完整工作流：从接收 FMeshBatch 到产出 FMeshDrawCommand，涉及哪四个关键步骤？</summary>
+    <div class="answer">
+      ① <strong>着色器排列查找</strong>：根据材质 + <span class="term">顶点工厂</span>类型 + Pass 特性开关，从预编译排列库查找正确的 VS/PS 对。<br>
+      ② <strong>绑定构建</strong>（<code>BuildMeshDrawCommands</code>）：把所有运行时参数（常量缓冲、纹理 SRV、采样器）填入 <code>FMeshDrawShaderBindings</code>。<br>
+      ③ <strong>PSO 收集</strong>：把当前着色器+混合+光栅状态组合登记进 PSO 缓存，未命中则触发编译。<br>
+      ④ <strong>命令入队 + 排序键赋值</strong>：把完整的 <code>FMeshDrawCommand</code> 附上 <code>FMeshDrawCommandSortKey</code> 插入 Pass 命令列表，后续排序 + 提交。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FMeshPassProcessor::AddMeshBatch</code> → <code>BuildMeshDrawCommands</code> 是着色器选择 + 绑定构建的执行位置；着色器排列键 = 材质 + 顶点工厂类型 + Pass 特性。</li>
+      <li><span class="term">顶点工厂</span>让同一材质的 PS 适配不同几何来源（静态/骨骼/实例化），只需切换 VS 排列。</li>
+      <li><code>FMeshDrawShaderBindings</code> 是"命令自带的描述符表"——所有参数打包进命令，提交时无需再查找。</li>
+      <li><code>FMeshDrawCommandSortKey</code> 按 PSO 优先排序，减少管线状态切换；<code>FParallelMeshDrawCommandPass</code> 多线程并行构建命令。</li>
+      <li>PSO 在此被收集进缓存——PSO 缺失会触发阻塞编译，是真实工程里性能卡顿的常见原因。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方，<a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/MeshDrawingPipeline">《Mesh Drawing Pipeline》— UE 4.27 Docs</a>——官方文档有专节讲 <code>FMeshPassProcessor</code> 的扩展点与着色器绑定机制。配合 Matt Hoffman，<a href="https://medium.com/@lordned/unreal-engine-4-rendering-part-3-drawing-policies">Part 3 Drawing Policies</a>（注意：这是<em>旧版</em> Drawing Policy 的说明，当前已被本课机制取代，阅读时对比新旧差异有助于理解设计演进）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："材质的排列爆炸问题 UE 怎么管控？""FMeshDrawShaderBindings 和 D3D12 的根签名具体怎么对应？""并行构建时多线程写同一个 Pass 命令列表如何避免竞争？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0018-mesh-drawing-pipeline.html"><span class="nav-dir">← 上一课</span>0018 · Mesh Drawing Pipeline</a>
+    <a class="next" href="0020-gpu-scene-instancing-merging.html"><span class="nav-dir">下一课 →</span>0020 · GPU Scene、实例化与合批</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 4 几何与可见性 · Pass 处理器是着色器选择与绑定的执行核心。</footer>
+  </article>
+</div>
+</body>
+</html>

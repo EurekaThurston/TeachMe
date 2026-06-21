@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0041 · ProfileGPU 与 GPU 时间统计</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 8 · 调试与性能</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 8 · 调试与性能 · Lesson 0041</p>
+  <h1>ProfileGPU 与 GPU 时间统计</h1>
+  <p class="subtitle"><code>ProfileGPU</code> 命令和 <code>stat GPU</code> 把 GPU 上每个 Pass 的耗时直接打到屏幕上。这节课教你读懂这些数字的含义，理解 UE 4.26 内部的计时机制（<code>FRealtimeGPUProfiler</code>、<code>RDG_GPU_STAT_SCOPE</code>），以及如何把时间开销归因到之前学过的具体管线阶段。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0005（帧全景）、0040（RenderDoc 事件树）、0015/0016（RDG）</span>
+    <span><b>产出</b> 能用 ProfileGPU/stat GPU 读出各 Pass 耗时，并将时间热点归因到具体管线阶段</span>
+  </div>
+
+  <p class="lead">RenderDoc 给你结构——哪个 Pass 输出了什么。GPU Profiler 给你时间——哪个 Pass 花了多少。两者配合才能做完整的性能分析：先用 <code>stat GPU</code> 找最贵的 Pass，再用 RenderDoc（0040）深入那个 Pass 看是哪个 draw call 在拖时间。本节专注于"时间"这一半。</p>
+
+  <h2><span class="num">1</span><code>ProfileGPU</code> 命令与 GPU Visualizer</h2>
+
+  <p>在 UE 编辑器或 PIE 的控制台（<kbd>~</kbd> 键）输入：</p>
+
+  <pre><code>ProfileGPU</code></pre>
+
+  <p>引擎会在下一帧采集一次完整的 GPU 时间树，然后<strong>弹出 GPU Visualizer 窗口</strong>（也叫 GPU Profile 窗口）。这个窗口是一个时间轴视图：横轴是时间（毫秒），每一行是一个 GPU 事件（与 RenderDoc 事件树名称相同，来自同样的 <code>SCOPED_DRAW_EVENT</code>/<code>RDG_GPU_STAT_SCOPE</code> 标记），长度代表 GPU 耗时，颜色按层级区分。</p>
+
+  <div class="callout knowledge">
+    <span class="label">原理 · GPU 时间戳查询</span>
+    <p>UE 4.26 里，<code>FRealtimeGPUProfiler</code>（定义在 <span class="file">Engine/Source/Runtime/RenderCore/Public/RealtimeGPUProfiler.h</span>，实现在对应 <code>.cpp</code>）在每个被标记的 Pass 前后向命令列表插入一对 GPU <strong>时间戳查询</strong>（D3D12 里是 <code>QueryHeap</code> 的 <code>EndQuery(Timestamp)</code>）。GPU 执行到那条命令时写入自己的计数器值；一帧结束后 CPU 读回查询结果，换算成毫秒。这就是"GPU 时间"的来源——不是 CPU 侧的计时，而是 GPU 时钟本身的差值。</p>
+    <p>注意：GPU 时间戳的精度受 GPU 频率影响（典型精度在微秒级），且 <strong>读回需要等 GPU 完成</strong>——所以 <code>FRealtimeGPUProfiler</code> 的查询结果默认<strong>延迟一帧</strong>可用，和遮挡查询同理（见 0004）。</p>
+  </div>
+
+  <h2><span class="num">2</span><code>stat GPU</code> 与持续帧统计</h2>
+
+  <p><code>ProfileGPU</code> 是单帧快照。想<strong>持续</strong>监控 GPU 各 Pass 耗时，用：</p>
+
+  <pre><code>stat GPU</code></pre>
+
+  <p>这会在屏幕上叠加一个持续刷新的统计面板，列出各个 GPU 事件名及其当前帧耗时（毫秒）。关闭用同一命令再输入一次，或输入 <code>stat none</code> 清除所有统计。</p>
+
+  <p>典型输出（数字仅示意）：</p>
+
+  <pre><code><span class="cmt">// stat GPU 输出示例（括号内为典型中端 GPU 参考值）</span>
+[GPU]              <span class="str">12.3 ms</span>
+  PrePass          <span class="str"> 0.8 ms</span>
+  BasePass         <span class="str"> 3.1 ms</span>
+  ShadowDepths     <span class="str"> 1.4 ms</span>
+  Lights           <span class="str"> 2.2 ms</span>
+  Translucency     <span class="str"> 0.6 ms</span>
+  PostProcessing   <span class="str"> 1.8 ms</span>
+  <span class="cmt">// …（其余 Pass 依次列出）</span></code></pre>
+  <p class="code-cap">stat GPU 的层级与 GPU Visualizer 一致；各 Pass 耗时之和可能小于总 GPU 时间，因为部分操作未被标记或存在并行执行。</p>
+
+  <div class="callout warn">
+    <span class="label">注意 · 并行执行与时间叠加</span>
+    <p>GPU 可以<strong>并行执行</strong>图形队列和异步计算队列（见 0016 RDG 异步计算）。<code>stat GPU</code> 显示的是每个 Pass 自身的 GPU 时间，不是墙钟时间叠加。两个并行 Pass 的时间可能"重叠"在同一时钟段——这意味着 <code>stat GPU</code> 各行求和<strong>可以大于</strong>总帧 GPU 时间，这是正常的，并不是 bug。</p>
+  </div>
+
+  <h2><span class="num">3</span><code>RDG_GPU_STAT_SCOPE</code> 与 Pass 时间归属</h2>
+
+  <p>上一节介绍的 <code>RDG_EVENT_SCOPE</code> 控制 RenderDoc 里的事件名；而 GPU 时间统计用的是另一个宏：</p>
+
+  <pre><code><span class="cmt">// 在渲染函数里，声明一个 RDG GPU 统计作用域</span>
+<span class="fn">RDG_GPU_STAT_SCOPE</span>(GraphBuilder, <span class="str">Foo</span>);
+<span class="cmt">// 或用 DECLARE_GPU_STAT 宏系统（非 RDG Pass 也可用）：</span>
+<span class="fn">DECLARE_GPU_STAT</span>(Foo)
+<span class="fn">SCOPED_GPU_STAT</span>(RHICmdList, Foo);</code></pre>
+  <p class="code-cap">宏定义在 <span class="file">Engine/Source/Runtime/RenderCore/Public/RealtimeGPUProfiler.h</span>。<code>RDG_GPU_STAT_SCOPE</code> 是 RDG-aware 版本，自动与 Pass 生命周期绑定。</p>
+
+  <p><code>DECLARE_GPU_STAT(Foo)</code> 在全局注册一个统计槽（类似 <code>DECLARE_CYCLE_STAT</code>），<code>SCOPED_GPU_STAT</code>/<code>RDG_GPU_STAT_SCOPE</code> 在它前后插入时间戳。这套系统让 <code>stat GPU</code> 能按自定义粒度显示统计。</p>
+
+  <p>UE 4.26 里已有大量内置统计项，你在 <code>stat GPU</code> 里看到的所有行名都对应源码里的一个 <code>DECLARE_GPU_STAT</code> 注册。用这些名字在源码里搜索，就能找到相应 Pass 的实现入口。</p>
+
+  <h2><span class="num">4</span>读懂 GPU Visualizer：各 Pass 时间含义</h2>
+
+  <p>打开 GPU Visualizer 后，关注几件事：</p>
+
+  <h3>4.1 时间块的宽度与嵌套</h3>
+
+  <p>宽度越大 = 耗时越长。嵌套关系代表 Pass 层级：外层是父作用域（如 <code>BasePass</code>），内层是子 draw call 或子 Pass。如果看到外层 <code>BasePass</code> 很宽，但内部有很多细碎的窄块，说明 draw call 数量多但单次较廉价——CPU-bound 信号（0042 详解）。如果内层少数块特别宽，说明某个着色器或某批物体极贵。</p>
+
+  <h3>4.2 把时间热点映射回管线阶段</h3>
+
+  <table>
+    <thead><tr><th>时间最贵的 Pass</th><th>可能的根因</th><th>对应课程章节</th></tr></thead>
+    <tbody>
+      <tr><td><code>BasePass</code></td><td>材质着色器复杂度高、纹理采样多（带宽）、overdraw（Depth Prepass 未生效）</td><td>0022（Prepass）、0023（BasePass）</td></tr>
+      <tr><td><code>ShadowDepths</code></td><td>动态阴影投射物多、多个 CSM 级联、多个点光源阴影</td><td>0026（阴影）</td></tr>
+      <tr><td><code>Lights</code> / <code>DirectLighting</code></td><td>动态光源多、Light Grid 填充率高、不透明物体 overdraw 叠光照</td><td>0024（Light Grid）、0025（光照）</td></tr>
+      <tr><td><code>AmbientOcclusion</code></td><td>SSAO 半径/采样数配置高、分辨率未降频</td><td>0027</td></tr>
+      <tr><td><code>Reflections</code> / <code>ScreenSpaceReflections</code></td><td>SSR 步进步数多、屏幕空间覆盖率大</td><td>0027</td></tr>
+      <tr><td><code>PostProcessing</code></td><td>TAA 开销（速度缓冲、历史帧重投影）、Bloom、Tonemap</td><td>0031–0035</td></tr>
+      <tr><td><code>Translucency</code></td><td>半透明物体多、overdraw 严重（无 Early-Z）</td><td>0029</td></tr>
+      <tr><td><code>VolumetricFog</code></td><td>Froxel 网格分辨率高、体积雾范围大</td><td>0030</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · BasePass 贵未必是材质的问题</span>
+    <p>新手常见误判：<code>BasePass</code> 耗时高 → 立刻去简化材质。但 BasePass 的时间来自三个完全不同的来源：①着色器 ALU（材质数学）②纹理带宽（采样数×贴图分辨率）③ overdraw（Depth Prepass 没有有效剔除）。正确做法是先用 <code>r.BasePassForceFullyRoughSurface 1</code> 强制最简材质——如果 BasePass 时间<strong>没有显著下降</strong>，说明瓶颈不在材质着色器，而在带宽或 overdraw。再用 <code>viewmode overdraw</code>（编辑器 Viewport → View Mode → Shader Complexity）目测 overdraw 区域。</p>
+  </div>
+
+  <h2><span class="num">5</span><code>stat SceneRendering</code> 辅助统计</h2>
+
+  <p><code>stat GPU</code> 看的是纯 GPU 耗时；<code>stat SceneRendering</code> 补充了渲染线程侧的 CPU 统计，包括 draw call 数量、三角形数量、动态网格数等：</p>
+
+  <pre><code>stat SceneRendering</code></pre>
+
+  <p>关注以下几行：</p>
+
+  <table>
+    <thead><tr><th>统计项</th><th>含义</th><th>调优方向</th></tr></thead>
+    <tbody>
+      <tr><td><code>DrawPrimitiveCalls</code></td><td>渲染线程实际发出的 draw call 总数</td><td>高 → 检查合批（0020）、GPU Scene 实例化</td></tr>
+      <tr><td><code>MeshDrawCalls</code></td><td>通过 <code>FMeshDrawCommand</code> 提交的网格绘制数（包含各 Pass）</td><td>高 → 查各 Pass 是否有冗余 draw</td></tr>
+      <tr><td><code>DynamicPathMeshDrawCalls</code></td><td>走动态路径（不可缓存）的 draw 数，这些每帧重新构建开销更高</td><td>尽量减少、改走静态缓存路径（0019）</td></tr>
+      <tr><td><code>Primitives</code></td><td>当前场景里的图元总数（FScene 里）</td><td>高本身不是问题，关键看剔除后有多少可见</td></tr>
+      <tr><td><code>VisibleStaticMeshElements</code></td><td>剔除后的可见静态网格数量</td><td>应远小于 Primitives；若接近则剔除效率低（0017）</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">6</span>多视角：GPU Visualizer + stat GPU + RenderDoc 配合使用</h2>
+
+  <p>三个工具各有侧重，组合使用的典型流程：</p>
+
+  <div class="pipeline">
+    <div class="stage game"><span class="s-name">stat GPU</span><span class="s-sub">持续帧监控<br>找时间热点</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage render"><span class="s-name">GPU Visualizer</span><span class="s-sub">单帧精确时间树<br>确认热点 Pass</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">RenderDoc</span><span class="s-sub">热点 Pass 的结构<br>找具体 draw / 着色器</span></div>
+  </div>
+
+  <figure>
+    <figcaption>三工具协作流程。stat GPU 提供持续趋势，GPU Visualizer 提供单帧精确树，RenderDoc 深入结构细节。性能调优通常沿着这个方向依次收窄范围。</figcaption>
+  </figure>
+
+  <div class="callout knowledge">
+    <span class="label">补充工具 · r.ProfileGPU.ShowLeafEvents</span>
+    <p>控制台变量 <code>r.ProfileGPU.ShowLeafEvents 1</code> 让 GPU Visualizer 显示更细粒度的叶节点（单个 draw call 级别）。默认为 0 只显示 Pass 级别。打开后时间轴会变得很密，但能精确定位到哪个网格的 draw 最贵。</p>
+  </div>
+
+  <h2><span class="num">7</span>常见误读与陷阱</h2>
+
+  <p><strong>陷阱 1：GPU 时间 vs 帧时间</strong><br>
+  <code>stat GPU</code> 的 GPU 总时间不等于帧率对应的帧时间（1000/FPS）。帧时间由 CPU 和 GPU 里最慢的那条决定（见 0004）。GPU 总时间反映的是纯 GPU 工作量，与 CPU 侧无关。</p>
+
+  <p><strong>陷阱 2：Pass 顺序不等于时间起点</strong><br>
+  在 GPU Visualizer 的时间轴上，Pass 的起点是 GPU 实际开始执行的时刻。由于 GPU 可能在等待之前 Pass 的资源屏障（见 0003、0015），两个 Pass 的时间块可能有间隙——这些间隙是 GPU 空闲等待，也是优化目标（RDG 的异步计算调度试图填满这些间隙）。</p>
+
+  <p><strong>陷阱 3：VSync 把 GPU 时间"撑大"</strong><br>
+  如果开了 VSync，GPU 在完成所有工作后会等下一个 VBlank。这段等待时间会出现在 <code>stat GPU</code> 的总 GPU 时间里（以一个宽 <code>Present</code> 块的形式），让你误以为 GPU 工作量很重。诊断时应先关 VSync（<code>r.VSync 0</code>）再测量。</p>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text"><code>stat GPU</code> 里各 Pass 耗时之和<strong>大于</strong>总 GPU 时间，最可能的原因是什么？</p>
+    <button class="q-opt">异步计算队列与图形队列并行执行，两个 Pass 的时间戳在相同时钟段内重叠</button>
+    <button class="q-opt">GPU 频率不稳定，导致时间戳换算出现误差</button>
+    <button class="q-opt">stat GPU 统计了被剔除（未实际执行）的 Pass</button>
+    <div class="q-feedback"
+      data-ok="对。RDG 异步计算调度允许计算 Pass 与图形 Pass 并行。每个 Pass 的 GPU 时间是自己的起止时间戳差，不是墙钟段。并行执行时两段在时钟上重叠，求和自然大于总墙钟时间。"
+      data-no="再想：GPU 时间戳记录的是各 Pass 在 GPU 时钟上的自身耗时；并行执行意味着两段可以在时间轴上重叠，所以求和可以大于总墙钟时间。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出 UE 4.26 里 GPU 时间统计的两套宏（RDG Pass 用的和非 RDG Pass 用的），以及为什么 GPU 时间结果总是延迟一帧可用。</summary>
+    <div class="answer">
+      <p>RDG Pass 用 <code>RDG_GPU_STAT_SCOPE(GraphBuilder, Name)</code>；非 RDG Pass 用 <code>DECLARE_GPU_STAT(Name)</code> 注册 + <code>SCOPED_GPU_STAT(RHICmdList, Name)</code> 标记。两者最终都通过 <code>FRealtimeGPUProfiler</code> 在命令列表里插入 GPU 时间戳查询对。</p>
+      <p>延迟一帧的原因：GPU 时间戳查询结果必须等 GPU <strong>实际执行完</strong>那段命令后才写入查询堆；CPU 读取查询结果需要等 GPU 完成，而 CPU 与 GPU 异步流水线化运行（0004），所以读取只能在下一帧（或更晚）进行，否则会强制 CPU 等待 GPU 完成——打断流水线。延迟一帧使用查询结果避免了这个同步点。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>ProfileGPU</code> 触发单帧 GPU Visualizer；<code>stat GPU</code> 持续刷新各 Pass 耗时——两者结合是 GPU 性能分析的主入口。</li>
+      <li>GPU 时间来自 <code>FRealtimeGPUProfiler</code> 插入的时间戳查询对，读取结果<strong>延迟一帧</strong>，与遮挡查询同理。</li>
+      <li><code>RDG_GPU_STAT_SCOPE</code>（RDG Pass）和 <code>SCOPED_GPU_STAT</code>（非 RDG）是 Pass 时间出现在统计里的源码机制——grep 名字可定位实现。</li>
+      <li>各 Pass 时间热点与本课程 Part 5–6 的 Pass 直接对应：BasePass贵→看材质/overdraw；ShadowDepths贵→看动态阴影投射物；Lights贵→看动态光源数量。</li>
+      <li>诊断时先关 VSync（<code>r.VSync 0</code>），再用 <code>stat GPU</code> 确定热点 Pass，再用 RenderDoc 深入细节——是标准三步流程。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p><a href="https://unrealartoptimization.github.io/book/profiling/passes/">Unreal Art Optimization —— "Unreal's Rendering Passes"</a>——以 TA 视角把 ProfileGPU 输出和各 Pass 对应起来，与本课直接互补。配套：<a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">UE 4.27 Graphics Programming Overview</a> 的"GPU Profiling"小节。更深入的时间戳机制见 UE 源码 <code>RealtimeGPUProfiler.h/.cpp</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："GPU Visualizer 里 PostProcessing 占了 40% 时间，怎么细分到是 TAA 还是 Bloom？""为什么 stat GPU 里 BasePass 时间忽高忽低？""r.ProfileGPU.ShowLeafEvents 打开后时间轴太密看不了，怎么过滤？" 随时找我。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0040-renderdoc-frame-capture.html"><span class="nav-dir">← 上一课</span>0040 · RenderDoc 抓帧调试</a>
+    <a class="next" href="0042-perf-cpu-gpu-bound.html"><span class="nav-dir">下一课 →</span>0042 · 性能方法论：CPU-bound vs GPU-bound</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 8 调试与性能 · GPU 的时间账本——把 Part 5–6 每个 Pass 的代价以毫秒单位量化出来。</footer>
+  </article>
+</div>
+</body>
+</html>

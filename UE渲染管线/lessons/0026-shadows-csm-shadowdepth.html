@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0026 · 阴影：ShadowDepth、CSM、阴影贴图</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0026</p>
+  <h1>阴影：ShadowDepth、CSM、阴影贴图</h1>
+  <p class="subtitle">阴影在 UE 4.26 里是独立的渲染阶段：先从光源视角渲染深度，再把深度贴图的遮挡结果投影回屏幕空间，供延迟光照整合。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0025（延迟直接光照）、0001（深度缓冲与 Early-Z）</span>
+    <span><b>产出</b> 能描述阴影深度渲染、CSM 级联、阴影投影到屏幕遮罩的完整流程</span>
+  </div>
+
+  <p class="lead">延迟着色在光照阶段（0025）需要知道"这个像素是否在阴影中"。这个信息不能从 GBuffer 直接读出，必须另外生成——UE 的做法是在光照之前，从<strong>每个光源的视角</strong>把场景深度渲染进阴影贴图，然后用一个投影 Pass 把它转化为屏幕空间的阴影遮罩（Shadow Mask），让光照着色器查询。理解这条路径，就能理解为什么方向光的阴影精度随距离下降，以及 <code>r.Shadow.*</code> 那些 cvar 调的是什么。</p>
+
+  <h2><span class="num">1</span>阴影渲染的整体流程</h2>
+  <p>阴影相关的工作大致分三个阶段，按帧内执行顺序排：</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">ShadowSetup</span><span class="s-sub">InitViews 阶段<br>分配 FProjectedShadowInfo</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">ShadowDepth Pass</span><span class="s-sub">从光源视角<br>渲染深度贴图</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Shadow Projection</span><span class="s-sub">深度比较→写<br>屏幕空间 Shadow Mask</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">光照整合</span><span class="s-sub">0025 延迟光照<br>查询 Shadow Mask</span></div>
+  </div>
+
+  <p>主要代码文件：<code class="file">ShadowDepthRendering.cpp</code>（深度 Pass）、<code class="file">ShadowRendering.cpp</code>（投影 Pass），核心数据结构 <code>FProjectedShadowInfo</code> 贯穿始终。</p>
+
+  <h2><span class="num">2</span>FProjectedShadowInfo：阴影的"配置表"</h2>
+  <p><code>FProjectedShadowInfo</code> 是整个阴影系统的中枢数据结构，每个需要渲染阴影的灯光/阴影类型都有一个（或多个）实例。它记录了：</p>
+  <ul>
+    <li><strong>灯光视角的投影矩阵</strong>（ShadowViewMatrix、SubjectAndReceiverMatrix）——把世界坐标变换到光源的 clip 空间；</li>
+    <li><strong>阴影贴图在图集（shadow depth atlas）中的位置</strong>（X/Y 偏移与尺寸）——多个阴影共享一张大纹理；</li>
+    <li><strong>阴影类型标志</strong>：是否为 CSM 级联、是否为全场景阴影、是否为逐物体阴影（Per-Object Shadow）；</li>
+    <li><strong>Subject Primitives</strong>：哪些图元要向阴影贴图投影（cast shadow），哪些要接收（receive shadow）。</li>
+  </ul>
+
+  <p><code>FDeferredShadingSceneRenderer::InitDynamicShadows()</code> 在 InitViews 阶段为每个灯光创建并初始化这些实例，决定本帧需要哪些阴影贴图，分配其在图集里的区域。</p>
+
+  <div class="callout knowledge">
+    <span class="label">全场景阴影 vs 逐物体阴影</span>
+    <p><strong>全场景阴影（Whole Scene Shadow）</strong>：一张阴影贴图覆盖整个可见场景，供方向光 CSM 使用，场景里所有 cast shadow 的图元都渲染进去。<strong>逐物体阴影（Per-Object Shadow）</strong>：每个动态物体/角色有自己的小阴影贴图，精度高但贴图数量多；用于点光、聚光灯，或当方向光 CSM 无法覆盖某物体时的补充。两者可共存，都挂在 <code>FProjectedShadowInfo</code> 上，只是标志位不同。</p>
+  </div>
+
+  <h2><span class="num">3</span>ShadowDepth Pass：从光源视角渲染深度</h2>
+  <p>函数入口：<code>FDeferredShadingSceneRenderer::RenderShadowDepthMaps()</code>（位于 <code class="file">ShadowDepthRendering.cpp</code>）。它遍历本帧所有 <code>FProjectedShadowInfo</code>，对每个实例：</p>
+  <ol>
+    <li>设置渲染目标为阴影深度图集（shadow depth atlas）的对应区域；</li>
+    <li>用<strong>灯光视角的投影矩阵</strong>代替相机矩阵，执行一次几何渲染；</li>
+    <li>像素着色器极简：只写深度，不需要材质颜色——这是最便宜的 Pass 之一；</li>
+    <li>启用 Early-Z（<code>ShadowDepth</code> 材质域使用 <code>SE_BLEND_Masked</code> 时才需要 PS，默认完全不跑 PS）。</li>
+  </ol>
+
+  <p>HLSL 着色器路径：<code class="file">ShadowDepthVertexShader.usf</code> / <code class="file">ShadowDepthPixelShader.usf</code>。顶点着色器把顶点变换到光源的裁剪空间；像素着色器在蒙版材质时输出深度偏移，否则为空。</p>
+
+  <pre><code><span class="cmt">// ShadowDepthVertexShader.usf（简化示意）</span>
+<span class="typ">void</span> <span class="fn">Main</span>(
+    <span class="typ">FVertexFactoryInput</span> Input,
+    <span class="kw">out</span> <span class="typ">float4</span> OutPosition : SV_POSITION)
+{
+    <span class="typ">float4</span> WorldPos = VertexFactory.<span class="fn">GetWorldPosition</span>(Input);
+    <span class="cmt">// 用光源的 ViewProjection 矩阵，不是相机矩阵</span>
+    OutPosition = <span class="fn">mul</span>(WorldPos, ShadowDepthPass.WorldToClip);
+}</code></pre>
+  <p class="code-cap">关键差异只有一行：用的是灯光的 WorldToClip 矩阵。</p>
+
+  <h2><span class="num">4</span>CSM：级联阴影贴图</h2>
+  <p><span class="term">CSM</span>（Cascaded Shadow Maps，级联阴影贴图）是方向光（Directional Light）的标准阴影方案。它解决了一个根本矛盾：方向光覆盖整个可见场景，若用单张阴影贴图，近处精度低；但若把贴图全给近处，远处就没有阴影了。</p>
+
+  <p>CSM 的做法：把相机视锥按距离切成<strong>多个 Sub-Frustum（级联）</strong>，每个级联各自有一张方向光的正交投影阴影贴图，近处的级联贴图覆盖范围小（精度高），远处的覆盖范围大（精度低）。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">级联 0</span><span class="s-sub">0 ~ Split0<br>近处·高精度</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">级联 1</span><span class="s-sub">Split0 ~ Split1<br>中距离</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">级联 2</span><span class="s-sub">Split1 ~ Split2<br>远距离</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">级联 3</span><span class="s-sub">Split2 ~ MaxDist<br>远处·低精度</span></div>
+  </div>
+
+  <p>UE 4.26 默认 4 个级联（可通过 <code>r.Shadow.CSM.MaxCascades</code> 调整上限）。每个级联对应一个 <code>FProjectedShadowInfo</code>，且标有 <code>bWholeSceneShadow = true</code>。<strong>级联分割点</strong>用 PSSM（Parallel-Split Shadow Maps）公式，结合线性与对数分割——控制台变量 <code>r.Shadow.CSM.TransitionScale</code> 调过渡柔化。</p>
+
+  <div class="callout insight">
+    <span class="label">为什么远处阴影会"糊"或消失</span>
+    <p>最远的级联贴图覆盖面积最大，同样分辨率下每个 texel 对应的世界面积也最大，因此阴影边缘呈现块状（texel aliasing）。超过 <code>r.Shadow.CSM.MaxCascadeDistance</code> 的距离不再渲染 CSM——方向光不会有 per-object shadow 兜底（点/聚光灯才有），所以方向光阴影在极远处直接消失。这是 CSM 的固有局限，UE5 VSM（Virtual Shadow Maps）解决了此问题——但那是超纲内容。</p>
+  </div>
+
+  <h2><span class="num">5</span>Shadow Projection：把深度贴图投影成屏幕遮罩</h2>
+  <p>深度贴图生成后，还需要一个 Pass 把它"问询"结果写成屏幕空间的 <strong>Shadow Mask</strong>（阴影遮罩纹理），供延迟光照（0025）查询。这个 Pass 叫 <strong>Shadow Projection</strong>，着色器在 <code class="file">ShadowProjectionPixelShader.usf</code>（对应 C++ 入口 <code>ProjectShadows()</code>）。</p>
+
+  <p>每个屏幕像素的处理步骤：</p>
+  <ol>
+    <li>从深度缓冲重建该像素的<strong>世界坐标</strong>（反投影，与 0025 光照 Pass 相同的手法）；</li>
+    <li>用光源的 WorldToLight 矩阵把世界坐标变换到<strong>光源 UV 空间</strong>，得到采样坐标 (u, v) 和深度 d_receiver；</li>
+    <li>对阴影深度贴图采样得到 d_occluder；</li>
+    <li>比较 d_receiver 与 d_occluder（加 bias 防自阴影 acne）：若 d_receiver &gt; d_occluder + bias，该像素在阴影中；</li>
+    <li>用 PCF（Percentage Closer Filtering）在周围多点采样取平均，得到 [0,1] 的软阴影值，写入 Shadow Mask 对应通道。</li>
+  </ol>
+
+  <pre><code><span class="cmt">// ShadowProjectionPixelShader.usf（逻辑简化）</span>
+<span class="typ">float</span> ShadowTerm = <span class="fn">ManualPCF</span>(
+    ShadowDepthTexture,
+    ShadowUV,          <span class="cmt">// 世界坐标 → 光源 UV</span>
+    ReceiverDepth,     <span class="cmt">// 当前像素在灯光空间的深度</span>
+    DepthBias          <span class="cmt">// 防自阴影偏移</span>
+);
+OutColor = <span class="typ">float4</span>(ShadowTerm, 0, 0, 0); <span class="cmt">// 写 Shadow Mask R 通道</span></code></pre>
+  <p class="code-cap">Shadow Mask 是一张屏幕分辨率的纹理；对于方向光，R 通道存 CSM 的遮蔽值，光照 Pass 乘以它即得到阴影光照。</p>
+
+  <h2><span class="num">6</span>距离场阴影（Distance Field Shadows）</h2>
+  <p>UE 4.26 支持 <strong>Ray Traced Distance Field Shadows</strong>（<code class="file">DistanceFieldShadowing.cpp</code>）：预计算每个 Mesh 的有向距离场（SDF），在阴影投影阶段用计算着色器向距离场发射光线，求遮挡距离。相比 CSM，距离场阴影：</p>
+  <ul>
+    <li>不受贴图分辨率限制，远处也能有清晰边缘（软阴影通过锥形追踪实现）；</li>
+    <li>适合方向光中远距离的软阴影补充；</li>
+    <li>需要额外显存存储每个 Mesh 的 SDF 图集，且在场景几何极复杂时构建耗时；</li>
+    <li>开关：<code>r.GenerateMeshDistanceFields 1</code>，光源组件勾选 Distance Field Shadows。</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">UE5 超纲：Virtual Shadow Maps</span>
+    <p>UE5 引入了 <strong>Virtual Shadow Maps（VSM）</strong>，用虚拟纹理思路把阴影贴图分辨率提升到极限，完全替代 CSM + Per-Object Shadow 的组合。VSM 是 UE5 Lumen/Nanite 套件的一部分，在 UE 4.26 中<strong>不存在</strong>，仅此提及以防混淆。</p>
+  </div>
+
+  <h2><span class="num">7</span>常用控制台变量</h2>
+  <table>
+    <thead><tr><th>CVar</th><th>含义</th><th>典型范围</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.Shadow.MaxResolution</code></td><td>单张阴影贴图最大分辨率</td><td>512–4096</td></tr>
+      <tr><td><code>r.Shadow.CSM.MaxCascades</code></td><td>方向光最大级联数</td><td>1–4</td></tr>
+      <tr><td><code>r.Shadow.CSM.MaxCascadeDistance</code></td><td>CSM 最远覆盖距离（cm）</td><td>场景相关</td></tr>
+      <tr><td><code>r.Shadow.RadiusThreshold</code></td><td>灯光屏幕半径低于此值跳过阴影</td><td>0.01–0.1</td></tr>
+      <tr><td><code>r.Shadow.DepthBias</code></td><td>全局深度偏移，防自阴影</td><td>0.01–1.0</td></tr>
+      <tr><td><code>r.Shadow.FilterMethod</code></td><td>软阴影滤波：0=PCF，1=PCSS</td><td>0/1</td></tr>
+      <tr><td><code>r.Shadow.WholeSceneShadowCacheMb</code></td><td>静态阴影缓存显存预算</td><td>150–500 MB</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">CSM 中，近处级联的阴影贴图与远处级联相比，以下哪项描述正确？</p>
+    <button class="q-opt">近处级联覆盖面积更大，因此单 texel 精度更低</button>
+    <button class="q-opt">近处级联覆盖面积更小，因此单 texel 精度更高</button>
+    <button class="q-opt">每个级联的覆盖面积相同，只是贴图分辨率不同</button>
+    <div class="q-feedback"
+      data-ok="对。近处级联的正交投影覆盖面积小，同样分辨率下每个 texel 映射的世界面积更小，阴影精度更高。远处级联面积大、精度低——这是 CSM 用多贴图换精度的核心机制。"
+      data-no="再想想：CSM 各级联的贴图分辨率可以相同，区别在于各级联的正交视锥覆盖的世界空间范围大小不同。近处覆盖范围小 → 单 texel 精度高。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出从"光源深度贴图"到"延迟光照看到的阴影系数"之间经历的所有步骤（不看图）。</summary>
+    <div class="answer">
+      <ol>
+        <li><strong>ShadowDepth Pass</strong>：从灯光视角（用灯光的 ViewProjection 矩阵），把场景几何渲染到阴影深度图集，只写深度，不跑材质颜色。</li>
+        <li><strong>Shadow Projection Pass</strong>：对屏幕每个像素，从 GBuffer 深度重建世界坐标，变换到光源 UV 空间，与深度贴图比较（加 depth bias），PCF 多点采样取平均，得到 [0,1] 阴影系数，写入 Shadow Mask 纹理。</li>
+        <li><strong>延迟光照（0025）</strong>：读取 Shadow Mask，把灯光辐照度乘以阴影系数，输出带阴影的光照结果。</li>
+      </ol>
+      对于方向光，步骤 1 重复 N 次（每个 CSM 级联一次），步骤 2 按像素深度选择对应级联的贴图采样。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FProjectedShadowInfo</code> 是阴影的核心数据结构，记录灯光视角矩阵、图集位置、类型标志。</li>
+      <li><strong>ShadowDepth Pass</strong>（<code>RenderShadowDepthMaps</code>）：从灯光视角只渲染深度，极度轻量。</li>
+      <li><strong>CSM</strong>（Cascaded Shadow Maps）：按距离把视锥分 N 段，每段一张方向光深度贴图，近精远粗。</li>
+      <li><strong>Shadow Projection</strong>：深度比较 + PCF 输出屏幕空间 Shadow Mask，供延迟光照乘以遮蔽系数。</li>
+      <li>距离场阴影（Distance Field Shadows）不依赖贴图分辨率，适合远处软阴影补充。</li>
+      <li>UE5 Virtual Shadow Maps 解决了 CSM 远处精度问题，UE 4.26 中不存在（超纲）。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-2/">《How Unreal Renders a Frame》part 2</a>——含 ShadowDepth 与阴影投影 Pass 的抓帧实录，与本课一一对应。补充：<a href="https://docs.unrealengine.com/4.27/en-US/BuildingWorlds/LightingAndShadows/Shadows/">UE 4.27 Shadows 文档</a>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："depth bias 怎么取值才不产生 peter-panning？""PCF 和 PCSS 有什么区别？""CSM 级联间的过渡怎么做到无缝？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0025-deferred-direct-lighting.html"><span class="nav-dir">← 上一课</span>0025 · 延迟直接光照</a>
+    <a class="next" href="0027-screen-space-ssao-ssr-ssgi.html"><span class="nav-dir">下一课 →</span>0027 · 屏幕空间：SSAO / SSR / SSGI</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 阴影是光照的前置 Pass，深度贴图 + 投影是其两条腿。</footer>
+  </article>
+</div>
+</body>
+</html>

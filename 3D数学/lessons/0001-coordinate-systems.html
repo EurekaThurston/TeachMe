@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 课 · 坐标系与空间:给每个点编号</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  .hand { display:flex; gap:1.2rem; flex-wrap:wrap; margin:1rem 0; }
+  .hand figure { margin:0; text-align:center; flex:1; min-width:12rem; }
+  .hand figcaption { font-size:0.85rem; color:var(--muted); margin-top:0.3rem; }
+  svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 1 课 · 模块 0 地基</div>
+<h1>坐标系与空间:给每个点编号</h1>
+<p class="subtitle">在算任何东西之前,先得能<strong>指着空间里一个点说出它叫什么</strong>。坐标系就是这套编号规则——也是后面所有数学的舞台。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清楚:一个坐标系 = <strong>一个原点 origin + 几条带方向和刻度的轴 axis</strong>;空间里每个点都被一组数(坐标)唯一编号。并且记住 <strong>UE 的约定:左手系,X=前、Y=右、Z=上,单位 cm</strong>;UV 只是一个 2D 坐标系。
+</div>
+
+<h2>从一条数轴说起</h2>
+<p>
+最小的坐标系是一条<strong>数轴</strong>:选一个点叫 <strong>0(原点)</strong>,选一个方向叫正、定一个刻度叫 1。现在这条线上每个点都有一个名字——它的坐标。「3」就是从 0 朝正方向走 3 格的那个点。
+</p>
+<p>
+关键在于:<strong>坐标不是点本身,而是点相对于这套规则的「地址」</strong>。换一个原点或换一个刻度,同一个物理点的坐标就变了。这句话现在听着像废话,但它是模块 2「坐标空间」整章的种子——记住它。
+</p>
+
+<h2>加一根轴:2D 平面</h2>
+<p>
+再拉一条和第一条垂直的轴,共享同一个原点,就得到一个 2D 坐标系。现在描述一个点要<strong>两个数</strong>:(x, y)。横着走 x 格,竖着走 y 格,就到了。
+</p>
+<svg viewBox="0 0 320 220" role="img" aria-label="2D 坐标系示意">
+  <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#16181d"/></marker></defs>
+  <line x1="20" y1="180" x2="300" y2="180" stroke="#16181d" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="40" y1="200" x2="40" y2="20" stroke="#16181d" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="292" y="172" font-size="13">x</text><text x="30" y="30" font-size="13">y</text>
+  <text x="30" y="196" font-size="12" fill="#6a6c74">O</text>
+  <line x1="200" y1="180" x2="200" y2="90" stroke="#3a55b4" stroke-width="1" stroke-dasharray="4 3"/>
+  <line x1="40" y1="90" x2="200" y2="90" stroke="#3a55b4" stroke-width="1" stroke-dasharray="4 3"/>
+  <circle cx="200" cy="90" r="5" fill="#c0392b"/>
+  <text x="208" y="86" font-size="13" fill="#c0392b">P = (4, 3)</text>
+  <text x="120" y="196" font-size="11" fill="#6a6c74">x = 4</text>
+  <text x="46" y="140" font-size="11" fill="#6a6c74">y = 3</text>
+</svg>
+<p>
+你已经天天在用这个,只是没把它当数学:<strong>UV 就是一个 2D 坐标系</strong>。贴图左下角是 (0, 0),右上角是 (1, 1),uv = (0.5, 0.5) 是正中间。材质里你对 UV 做的一切——平铺、偏移、旋转——都是在这个 2D 坐标系里搬点。
+</p>
+
+<h2>再加一根轴:3D 空间</h2>
+<p>
+第三条轴垂直于前两条,描述一个点就要<strong>三个数</strong> (x, y, z)。这就是「3D」的字面意思:three dimensions,三个独立的方向、三个数。粒子的位置、顶点的位置、相机的位置,全是 3D 坐标。
+</p>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  Niagara 里粒子的 <code>Position</code> 是 <code>Vector</code>(三个 float:X、Y、Z)。当你写 <code>Particles.Position</code> 时,你拿到的就是这个粒子在某个坐标系里的三数地址。它在<strong>哪个</strong>坐标系(Local 还是 World)——是模块 2 的核心问题,这里先埋个钩子。
+</div>
+
+<h2>手性:左手系还是右手系(UE 的坑)</h2>
+<p>
+三条轴互相垂直,但有<strong>两种搭法</strong>,像左右手镜像、无法旋转重合。区别在于:当 X 指向你、Y 指向右,Z 是朝<strong>上</strong>还是朝<strong>下</strong>。这叫<strong>手性 handedness</strong>。
+</p>
+<div class="hand">
+  <figure>
+    <svg viewBox="0 0 180 150" role="img" aria-label="右手系坐标轴">
+      <line x1="58" y1="92" x2="150" y2="92" stroke="#c0392b" stroke-width="2"/><text x="154" y="96" font-size="12" fill="#c0392b">X 右</text>
+      <line x1="58" y1="92" x2="58" y2="14" stroke="#2e7d32" stroke-width="2"/><text x="48" y="13" font-size="12" fill="#2e7d32">Y 上</text>
+      <line x1="58" y1="92" x2="22" y2="126" stroke="#3a55b4" stroke-width="2" stroke-dasharray="5 3"/><text x="2" y="139" font-size="10" fill="#3a55b4">Z 出屏·朝你</text>
+      <circle cx="58" cy="92" r="2.5" fill="#16181d"/>
+    </svg>
+    <figcaption>右手系(OpenGL / 多数数学书)<br>Z = X×Y 指向你</figcaption>
+  </figure>
+  <figure>
+    <svg viewBox="0 0 180 150" role="img" aria-label="UE 左手系坐标轴">
+      <line x1="48" y1="100" x2="48" y2="16" stroke="#3a55b4" stroke-width="2"/><text x="30" y="14" font-size="12" fill="#3a55b4">Z 上</text>
+      <line x1="48" y1="100" x2="140" y2="100" stroke="#2e7d32" stroke-width="2"/><text x="118" y="114" font-size="12" fill="#2e7d32">Y 右</text>
+      <line x1="48" y1="100" x2="114" y2="42" stroke="#c0392b" stroke-width="2" stroke-dasharray="5 3"/><text x="100" y="38" font-size="10" fill="#c0392b">X 前·进屏</text>
+      <circle cx="48" cy="100" r="2.5" fill="#16181d"/>
+    </svg>
+    <figcaption><strong>UE:左手系,X前 Y右 Z上</strong><br>前(X)指向屏幕里</figcaption>
+  </figure>
+</div>
+<p style="font-size:0.85rem;color:var(--muted);margin:-0.3rem 0 0.8rem">
+  虚线那根是「深度轴」(指向你/离开你)。<strong>判手性的关键就看深度轴朝哪</strong>:右手系里 X右、Y上,则 Z 朝你(出屏);UE 左手系里 Y右、Z上,则 X(前)朝屏幕里(进屏)。同样三根轴,深度轴反一下,手性就反。
+</p>
+<p>
+为什么 TA 必须知道这个?因为<strong>手性决定了叉积的方向</strong>(第 8 课)和<strong>「正向旋转」是顺时针还是逆时针</strong>(模块 3)。你照搬一段网上的 shader 公式,发现法线朝里、旋转反了——十有八九是手性 / 轴向约定不一致。Unreal 用 <strong>左手系、Z 朝上、单位厘米</strong>,这和很多教程(右手、Y 朝上)不同,搬代码时要会换。
+</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>把坐标当成点的「本质」。</strong> 坐标永远是相对某个原点+轴的地址。换坐标系,数就变,点没变。这是后面不踩空间坑的根。</li>
+  <li><strong>默认 Y 朝上。</strong> 屏幕、UV、很多教程 Y 朝上;但 <strong>UE 世界空间 Z 朝上</strong>。混用会让你「往上」加错了轴。</li>
+  <li><strong>忽略单位。</strong> UE 世界单位是<strong>厘米</strong>。一个粒子速度填 100,是 100 cm/s = 1 m/s,不是 100 米。</li>
+  <li><strong>以为 UV 和世界坐标是一回事。</strong> UV 是贴图上的 2D 坐标 [0,1],和物体在世界里的 3D 位置是两套独立的坐标系。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<p>凭理解作答,答完马上给对错和原因。</p>
+<div class="quiz" id="quiz1"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://gamemath.com/book/cartesianspace.html" target="_blank">《3D Math Primer》第 1 章 — Cartesian Coordinate Systems</a>
+  —— 本门旗舰书,免费在线。这一章把「数轴→2D→3D→手性」讲得极清楚,正是本课的权威完整版。读不动英文也没关系,先看图和公式,有疑问问我。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我拿你正在做的某个 Niagara 效果,指出它的 Position 在哪个坐标系、Z 为什么朝上?或者想搞清「为什么我抄的 shader 旋转方向反了」?直接在对话里问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>角度与三角——sin/cos 与单位圆</strong>。我们会用一个能拖的单位圆,让你一眼看穿「sin 就是 y、cos 就是 x」,从此不再怕 shader 里满屏的 sin。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz1", [
+  {
+    q: "一个坐标系最少需要哪两样东西才能给点编号?",
+    options: ["一个原点和带刻度方向的轴", "一台相机和一束光源", "一张贴图和一组 UV", "一个网格和一个材质"],
+    correct: 0,
+    why: "坐标系=原点(从哪算起)+ 轴(往哪走、一格多大)。有了它,每个点才有唯一的数字地址。"
+  },
+  {
+    q: "「同一个物理点,换一个坐标系后坐标会变」这句话?",
+    options: ["对,坐标是相对地址", "错,坐标是点的固有属性", "对,但仅限 2D 情形", "错,只有原点变才会变"],
+    correct: 0,
+    why: "坐标永远相对原点+轴。换原点或换轴向,同一个点的坐标就不同——这是模块 2 坐标空间的种子。"
+  },
+  {
+    q: "在 Unreal Engine 的世界空间里,哪个轴朝上?",
+    options: ["Z 轴朝上", "Y 轴朝上", "X 轴朝上", "没有固定约定"],
+    correct: 0,
+    why: "UE 约定:左手系,X=前、Y=右、Z=上,单位厘米。很多教程是 Y 朝上,搬代码要换。"
+  },
+  {
+    q: "材质里的 UV 本质上是什么?",
+    options: ["一个 2D 坐标系", "一个 3D 世界位置", "一种颜色编码", "一个光照方向"],
+    correct: 0,
+    why: "UV 是贴图上的二维坐标(通常 [0,1]²)。你对 UV 的平铺/偏移/旋转,都是在这个 2D 坐标系里搬点。"
+  },
+  {
+    q: "「手性 handedness」在实践中主要影响什么?",
+    options: ["叉积方向与正旋转方向", "贴图的分辨率", "粒子的数量上限", "材质的渲染顺序"],
+    correct: 0,
+    why: "左/右手系决定叉积指向哪一侧、以及「正角度」是顺时针还是逆时针。抄来的法线朝里/旋转反了常因手性不一致。"
+  },
+  {
+    q: "在 UE 里给粒子速度填了 200,物理上大约是?",
+    options: ["200 cm/s,即 2 m/s", "200 m/s", "200 像素每秒", "无法判断单位"],
+    correct: 0,
+    why: "UE 世界单位是厘米。200 = 200 cm/s = 2 m/s。忽略单位是新人常见的「数量级翻车」。"
+  }
+]);
+</script>
+</body>
+</html>

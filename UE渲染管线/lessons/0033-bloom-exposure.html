@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0033 · 泛光与自动曝光</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 6 · 后处理</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 6 · 后处理 · Lesson 0033</p>
+  <h1>泛光与自动曝光</h1>
+  <p class="subtitle">泛光通过高斯下采样/上采样金字塔提取高亮并柔和扩散；自动曝光用亮度直方图计算曝光值，在色调映射前把 SceneColor 缩放到合适范围。两者都在 HDR 线性域工作，都在色调映射之前完成。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0031（后处理概述）、0032（TAA）</span>
+    <span><b>产出</b> 能解释泛光金字塔的下/上采样链、自动曝光直方图的工作机制及两者相对色调映射的顺序</span>
+  </div>
+
+  <p class="lead">泛光（Bloom）和自动曝光（Eye Adaptation）是最能影响游戏画面"感觉"的后处理效果，但它们的底层都是直接操作 HDR 线性颜色值。理解它们需要先接受一个前提：在物理摄影中，传感器会对过曝区域产生光晕（Bloom），人眼在明暗环境间需要适应（Eye Adaptation）。UE 的这两个 Pass 是在渲染管线层面对这两个物理/感知现象的模拟。</p>
+
+  <h2><span class="num">1</span>泛光的整体流程：高斯金字塔</h2>
+  <p>UE 4.26 的泛光实现基于<strong>高斯金字塔（Gaussian Pyramid）</strong>：先对 SceneColor 做一系列下采样（每级分辨率减半），再反向做上采样并叠加，产生具有不同频率宽度的柔和光晕。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">SceneColor</span><span class="s-sub">HDR 全分辨率</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">亮度提取</span><span class="s-sub">阈值滤波<br>仅保留高亮</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">下采样 ×N</span><span class="s-sub">每级 ½ 分辨率<br>高斯卷积</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">上采样 ×N</span><span class="s-sub">逐级放大<br>叠加低频</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">泛光纹理</span><span class="s-sub">输出给色调映射</span></div>
+  </div>
+
+  <p>代码路径：<code class="file">PostProcessBloom.cpp</code>，着色器：<code class="file">PostProcessBloom.usf</code>。整个泛光链不修改主 SceneColor 缓冲——它产生一张独立的<strong>泛光纹理</strong>，在色调映射 Pass 内以加法方式叠加到 SceneColor 上。这很重要：泛光 Pass 本身不输出最终结果，它只是为色调映射准备一个"光晕分量"。</p>
+
+  <h2><span class="num">2</span>亮度提取：保留高于阈值的部分</h2>
+  <p>金字塔的第一步是从 SceneColor 中提取"超亮"部分。实现是一个简单的线性阈值滤波：</p>
+
+  <pre><code><span class="cmt">// PostProcessBloom.usf — 亮度提取（示意）</span>
+<span class="typ">float3</span> SceneColorRGB = <span class="fn">SceneColorTexture.SampleLevel</span>(Sampler, UV, 0).rgb;
+<span class="cmt">// 用感知亮度（dot 为 BT.709 权重）</span>
+<span class="typ">float</span>  Luminance  = <span class="fn">dot</span>(SceneColorRGB, <span class="typ">float3</span>(0.2126, 0.7152, 0.0722));
+<span class="cmt">// BloomThreshold 是 FPostProcessSettings::BloomThreshold，默认 -1（禁用阈值，提取全部）</span>
+<span class="typ">float</span>  BloomBlend = <span class="fn">max</span>(0, Luminance - BloomThreshold) / <span class="fn">max</span>(Luminance, 0.0001);
+<span class="typ">float3</span> Extracted  = SceneColorRGB * BloomBlend;</code></pre>
+  <p class="code-cap">当 <code>BloomThreshold = -1</code>（UE 默认）时阈值禁用，整个 SceneColor 都进入泛光处理，但金字塔本身的卷积会自然压制暗区的贡献。</p>
+
+  <p class="marginnote">UE 4.26 的泛光阈值（<code>r.BloomThreshold</code>）默认为 -1，意味着对整个 SceneColor 做泛光而非只对高亮处理——这种"全带宽泛光"更接近真实摄影的镜头光晕，但对暗场景也有轻微辉光。若要节省性能，设为正数（如 1.0）可跳过暗像素。</p>
+
+  <h2><span class="num">3</span>下采样链：构建高斯金字塔</h2>
+  <p>UE 4.26 泛光默认使用 <strong>6 级下采样</strong>（可由 <code>r.Bloom.Quality</code> 调整，0–5 级）。每级分辨率减半，使用一个 <strong>13-tap 下采样滤波器</strong>（来自 Siggraph 2014 "Next Generation Post Processing in Call of Duty: Advanced Warfare" 的双线性 13-tap 采样方案）：</p>
+
+  <pre><code><span class="cmt">// 13-tap 双线性下采样（4+8+1 中心对称布局，示意）</span>
+<span class="cmt">// 用 4 个 2×2 双线性采样点 + 8 个偏移点 + 1 中心 = 13 tap</span>
+<span class="typ">float3</span> a = <span class="fn">SampleBilinear</span>(UV + <span class="typ">float2</span>(-HalfTexel.x,  HalfTexel.y));
+<span class="typ">float3</span> b = <span class="fn">SampleBilinear</span>(UV + <span class="typ">float2</span>( HalfTexel.x,  HalfTexel.y));
+<span class="cmt">// ... 其余 tap 略 ...</span>
+<span class="cmt">// 加权平均合并所有 tap，权重和为 1</span>
+<span class="typ">float3</span> Result = 0.5 * (a + b + ...) * Weight;</code></pre>
+  <p class="code-cap">13-tap 滤波在每步下采样时提供了比简单 4-tap 双线性更好的频率响应，避免混叠；双线性采样使用硬件插值，等效采样数更高但 texel 抓取数只有 13。</p>
+
+  <p>6 级下采样对应的分辨率（以 1920×1080 为例）：</p>
+  <table>
+    <thead><tr><th>金字塔层级</th><th>分辨率</th><th>主要捕获的频率</th></tr></thead>
+    <tbody>
+      <tr><td>Level 0（输入）</td><td>1920×1080</td><td>高频边缘高亮</td></tr>
+      <tr><td>Level 1</td><td>960×540</td><td>中高频光晕</td></tr>
+      <tr><td>Level 2</td><td>480×270</td><td>中频光晕</td></tr>
+      <tr><td>Level 3</td><td>240×135</td><td>中低频扩散</td></tr>
+      <tr><td>Level 4</td><td>120×68</td><td>低频大范围辉光</td></tr>
+      <tr><td>Level 5</td><td>60×34</td><td>最宽频率，远距离光晕</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">4</span>上采样链：叠加各级频率</h2>
+  <p>下采样完成后，从最小的层级（Level 5）开始反向<strong>上采样</strong>，每级放大一倍，并与上一级叠加。UE 4.26 采用带<strong>Tent 滤波</strong>的 3×3 上采样（9-tap，双线性采样等效）：</p>
+
+  <pre><code><span class="cmt">// 3×3 Tent 上采样（示意）</span>
+<span class="typ">float3</span> Result =
+    <span class="fn">SampleBilinear</span>(UV + <span class="typ">float2</span>(-TexelSize.x,  TexelSize.y)) * 1.0 +
+    <span class="fn">SampleBilinear</span>(UV + <span class="typ">float2</span>(           0,  TexelSize.y)) * 2.0 +
+    <span class="fn">SampleBilinear</span>(UV + <span class="typ">float2</span>( TexelSize.x,  TexelSize.y)) * 1.0 +
+    <span class="cmt">// ... 中间行权重 2/4/2 ...</span>
+    <span class="cmt">// ... 底行权重 1/2/1 ...</span>
+    ; <span class="cmt">// 除以 16（权重和）</span>
+Result = Result / 16.0;
+<span class="cmt">// 叠加：当前级 + 放大后的下级</span>
+Result = Result + <span class="fn">SampleLevel</span>(DownsampleLevel, UV);</code></pre>
+  <p class="code-cap">每个上采样级别叠加该级的下采样内容，最终 Level 0 处的结果是所有频率光晕的叠加：宽度不同的泛光分量混合在一起，产生"内紧外松"的自然光晕形态。</p>
+
+  <p>各层级的叠加权重由 <code>FPostProcessSettings::Bloom1Tint</code>…<code>Bloom6Tint</code>（颜色分层染色）和 <code>Bloom1Size</code>…<code>Bloom6Size</code>（尺寸比例）控制，美术可以对不同频率的泛光单独调色，产生更丰富的光晕效果。</p>
+
+  <h2><span class="num">5</span>自动曝光：亮度直方图</h2>
+  <p>自动曝光（Eye Adaptation，眼部适应）模拟人眼从暗处到亮处或反向的亮度适应过程。在 UE 4.26 里默认用<strong>亮度直方图</strong>方法实现，分两个计算着色器 Pass：</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">直方图构建</span><span class="s-sub">CS：遍历 SceneColor<br>统计亮度分布</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">曝光值计算</span><span class="s-sub">CS：从直方图<br>提取目标曝光 EV100</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">1×1 曝光缓冲</span><span class="s-sub">输出给色调映射<br>乘 SceneColor</span></div>
+  </div>
+
+  <p>代码：<code class="file">PostProcessEyeAdaptation.cpp</code>，着色器：<code class="file">PostProcessEyeAdaptation.usf</code>（或 <code>AutoExposureCommon.usf</code>）。</p>
+
+  <h3>直方图构建 Pass</h3>
+  <p>第一个 CS Pass 对 SceneColor（通常是下采样后的低分辨率版本以节省性能）的每个像素计算对数亮度，然后用<strong>原子加法</strong>（<code>InterlockedAdd</code>）把它累加进一个共享的 64 桶直方图缓冲：</p>
+
+  <pre><code><span class="cmt">// 直方图构建 CS（示意）</span>
+<span class="typ">float3</span> Color = <span class="fn">SceneColorTexture.Load</span>(PixelPos).rgb;
+<span class="typ">float</span>  LogLuminance = <span class="fn">log2</span>(<span class="fn">dot</span>(Color, LuminanceWeights) + 1e-5);
+<span class="cmt">// 映射到直方图 Bin [0, 63]</span>
+<span class="typ">float</span>  NormLuminance = (<span class="fn">clamp</span>(LogLuminance, MinLogLuminance, MaxLogLuminance)
+                        - MinLogLuminance) / (MaxLogLuminance - MinLogLuminance);
+<span class="typ">uint</span>   BinIndex = (<span class="typ">uint</span>)(NormLuminance * 63.0);
+<span class="fn">InterlockedAdd</span>(HistogramBuffer[BinIndex], 1);</code></pre>
+  <p class="code-cap">对数亮度域的直方图对高动态范围场景比线性域更均匀：暗区和亮区都能获得足够的桶宽，避免全部样本堆在少数几个线性桶里。</p>
+
+  <h3>曝光值计算 Pass</h3>
+  <p>第二个 CS Pass（通常是 1 个线程组，64 个线程，每个线程处理一个 Bin）从直方图中计算出<strong>目标曝光值（EV100）</strong>：</p>
+  <ol>
+    <li>丢弃最暗的 N% 和最亮的 M% 的像素（<code>AutoExposureLowPercent</code> / <code>AutoExposureHighPercent</code>，默认 80%/95%），避免极端像素（黑角、高光源）主导曝光；</li>
+    <li>对剩余桶计算加权平均亮度；</li>
+    <li>转换为目标曝光 EV100，与上一帧的 EV100 做<strong>时间平滑</strong>（速度由 <code>AutoExposureSpeedUp</code>/<code>AutoExposureSpeedDown</code> 控制）；</li>
+    <li>将最终 EV100 转换为线性曝光倍数，写入一个 1×1 的 R32F 缓冲。</li>
+  </ol>
+
+  <div class="callout knowledge">
+    <span class="label">EV100、曝光倍数与 SceneColor 缩放的关系</span>
+    <p>EV100 是摄影中的曝光值（Exposure Value），以 ISO 100、光圈 f/1.0 为基准。EV100 增大 1 = 曝光减半（场景变暗），减小 1 = 曝光翻倍（场景变亮）。转换公式：<code>ExposureScale = 1 / (2^EV100 × 1.2)</code>（其中 1.2 是 UE 的经验系数）。色调映射 Pass 把 SceneColor 乘以这个 ExposureScale，使平均亮度落在色调映射曲线的理想工作点。</p>
+  </div>
+
+  <h2><span class="num">6</span>曝光方法：直方图 vs. 基础（Basic）</h2>
+  <p>UE 4.26 的自动曝光有两种模式，通过 <code>AutoExposureMethod</code>（<code>FPostProcessSettings</code>）选择：</p>
+  <table>
+    <thead><tr><th>模式</th><th>实现</th><th>优点</th><th>缺点</th></tr></thead>
+    <tbody>
+      <tr><td><b>Histogram</b>（默认）</td><td>64-桶对数亮度直方图 + 百分位提取</td><td>抗极端像素干扰，可精细控制百分位</td><td>两个 CS Pass，共享内存原子操作</td></tr>
+      <tr><td><b>Basic</b></td><td>对 SceneColor 的小尺寸 mip 做简单平均亮度</td><td>极低开销，移动平台可用</td><td>容易被单个极亮/暗区域拉偏</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">7</span>泛光与曝光相对色调映射的顺序</h2>
+  <p>理解顺序的关键问题：泛光和曝光在色调映射之前还是之后？</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 泛光和曝光必须在色调映射之前</span>
+    <p><strong>为什么泛光在色调映射之前</strong>：色调映射是非线性压缩，如果先色调映射再加泛光，两个亮度不同的像素混合后的结果会与物理不符（因为非线性压缩打破了叠加性）。在线性 HDR 域加泛光，高亮部分的溢出（超过 1.0 的值）才能正确"扩散"出光晕。色调映射把这个扩散后的 HDR 整体压缩到 LDR。</p>
+    <p><strong>为什么曝光在色调映射之前</strong>：曝光是对 SceneColor 的整体线性缩放（乘一个标量），它需要在色调映射的非线性曲线之前工作，否则同一个 EV100 在不同输入亮度下的效果会不一致（因为色调映射曲线不是线性的）。</p>
+  </div>
+
+  <p>最终进入色调映射 Pass 的输入是：</p>
+  <ul>
+    <li><code>SceneColor × ExposureScale</code>（已曝光校正的 HDR 线性色）；</li>
+    <li><code>BloomTexture</code>（独立的泛光纹理，在色调映射 PS 里以加法叠加到 SceneColor）；</li>
+    <li>颜色分级 LUT（0034 会详细介绍）。</li>
+  </ul>
+
+  <h2><span class="num">8</span>关键 CVars 速查</h2>
+  <table>
+    <thead><tr><th>CVar</th><th>默认值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.Bloom.Quality</code></td><td>5</td><td>泛光金字塔级数（0=关，1–5 增加精度）</td></tr>
+      <tr><td><code>r.BloomThreshold</code></td><td>-1</td><td>亮度提取阈值（-1=禁用阈值，全图处理）</td></tr>
+      <tr><td><code>r.EyeAdaptation.ExponentialTransitionDistance</code></td><td>1.5</td><td>曝光时间平滑的指数过渡距离（EV 单位）</td></tr>
+      <tr><td><code>r.EyeAdaptation.HistogramLogMin</code></td><td>-16</td><td>直方图对数亮度最小值（EV）</td></tr>
+      <tr><td><code>r.EyeAdaptation.HistogramLogMax</code></td><td>0</td><td>直方图对数亮度最大值（EV）</td></tr>
+      <tr><td><code>r.AutoExposure.MethodOverride</code></td><td>-1</td><td>-1=使用 PostProcessSettings 设置，0=Basic，1=Histogram</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">手动曝光 vs. 自动曝光</span>
+    <p>当 <code>AutoExposureMethod = Manual</code> 时，曝光由 <code>AutoExposureBias</code>（EV 偏移）和 <code>CameraISO</code>、<code>CameraAperture</code>、<code>CameraShutterSpeed</code> 的物理摄影参数固定，不做直方图计算，曝光缓冲值是一个常数。这适合需要精确控制画面亮度的影视/建筑可视化场景。手动曝光下，自动曝光的两个 CS Pass 跳过，只在 CPU 算出一个固定 ExposureScale 传入色调映射。</p>
+  </div>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">UE 4.26 泛光 Pass 的输出是直接叠加到 SceneColor，还是产生一张独立纹理供色调映射使用？为什么这样设计？</p>
+    <button class="q-opt">产生独立泛光纹理，在色调映射 Pass 内以加法叠加——保证泛光在线性 HDR 域与 SceneColor 正确相加，而不是在非线性色调映射后叠加</button>
+    <button class="q-opt">直接写回 SceneColor（叠加），色调映射看到的已经是含泛光的颜色</button>
+    <button class="q-opt">泛光结果存入 GBuffer，供后续 Pass 读取</button>
+    <div class="q-feedback"
+      data-ok="对。泛光是独立纹理，输入给色调映射 Pass 做加法合并，这样整个加法发生在 HDR 线性域，色调映射的非线性压缩才能正确作用于含泛光的完整 HDR 信号。"
+      data-no="再想想：如果在色调映射之后叠加泛光，高亮光晕的亮度就在非线性后加，物理上不正确（等效于用 LDR 做 HDR 效果），所以 UE 的做法是把泛光作为独立输入传给色调映射一起处理。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出泛光金字塔的 4 个步骤（亮度提取、下采样、上采样、输出），每步的具体操作和输入/输出是什么。</summary>
+    <div class="answer">
+      <ol>
+        <li><strong>亮度提取</strong>：输入全分辨率 SceneColor HDR；用亮度阈值滤波器保留高于阈值的部分（默认阈值 -1 即全部通过），输出第一级提取纹理。</li>
+        <li><strong>下采样（6 级）</strong>：逐级分辨率减半，每步使用 13-tap 高斯卷积滤波（抗混叠）；产生从 1/2 到 1/64 分辨率的 6 张纹理，存储不同尺度的高亮信息。</li>
+        <li><strong>上采样（6 级）</strong>：从最小层级开始反向，使用 Tent 3×3 滤波上采样，每级放大后与上一级叠加，逐步把所有频率的泛光合并。</li>
+        <li><strong>输出</strong>：最终产生一张与 SceneColor 同分辨率的泛光纹理（独立于 SceneColor），传入色调映射 Pass 作为加法输入。</li>
+      </ol>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>泛光通过<strong>高斯下采样→上采样金字塔</strong>（默认 6 级）产生多频率光晕，输出是独立泛光纹理（不直接写 SceneColor）。</li>
+      <li>下采样用 <strong>13-tap 双线性滤波</strong>，上采样用 <strong>Tent 3×3</strong>，在上采样时逐级叠加，保证不同尺度泛光混合。</li>
+      <li>自动曝光默认用<strong>亮度直方图</strong>（64 桶对数空间），两个 CS Pass：构建直方图 → 百分位提取曝光 EV100 → 时间平滑 → 写 1×1 R32F 缓冲。</li>
+      <li>泛光和曝光都必须在色调映射<strong>之前</strong>完成，因为它们需要在线性 HDR 域工作——色调映射的非线性压缩会破坏加法叠加的物理正确性。</li>
+      <li>色调映射 Pass 的输入是：<code>SceneColor × ExposureScale</code> + 泛光纹理（加法）+ 颜色分级 LUT。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》Part 3</a>——泛光和曝光 Pass 的帧分析。源码：<code>Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessBloom.cpp</code>，<code>PostProcessEyeAdaptation.cpp</code>。延伸：Jorge Jimenez，《Next Generation Post Processing in Call of Duty Advanced Warfare》（Siggraph 2014）——13-tap 下采样和 Tent 上采样的原始来源。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："Bloom1Tint 到 Bloom6Tint 分别对应哪一级的金字塔，对应什么尺度的光晕？""直方图百分位提取的数学是什么？""Lens Flare 和 Streak 是泛光金字塔的变体吗？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0032-taa.html"><span class="nav-dir">← 上一课</span>0032 · 时间抗锯齿（TAA）</a>
+    <a class="next" href="0034-tonemapping-color.html"><span class="nav-dir">下一课 →</span>0034 · 色调映射与颜色分级</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 6 后处理 · 泛光把 HDR 溢出变成光晕，曝光把场景亮度导向色调映射曲线的甜点——两者都是在线性域整备 SceneColor 的工序。</footer>
+  </article>
+</div>
+</body>
+</html>

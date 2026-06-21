@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0039 · GPU 执行时间线与扫描输出</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 7 · RHI 与显示</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 7 · RHI 与显示 · Lesson 0039</p>
+  <h1>GPU 执行时间线与扫描输出</h1>
+  <p class="subtitle">GPU 消费命令队列、Signal 围栏、DXGI 把后缓冲送到显示控制器，显示控制器按刷新率逐行扫描——这条链的每一环都有固定时序，也各自引入延迟。本课把这条链从头到尾走完，闭合整个课程的大循环：从 0008 的 CPU Tick，到光子击中玩家眼睛。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~25 分钟</span>
+    <span><b>前置</b> 0008（EngineLoop Tick）、0036（RHI 线程）、0038（交换链与 Present）</span>
+    <span><b>产出</b> 能画出一帧从 CPU Tick 到像素发光的完整时间线；理解 GPU Fence 机制、扫描输出时序、撕裂成因、VRR 原理和输入-到-光子延迟的各组成部分</span>
+  </div>
+
+  <p class="lead">整条课程从"GPU 有哪些硬件阶段"讲到"RHI 线程把命令提交给 D3D12 队列"。但 Present 之后 GPU 还要实际执行命令，执行完了 DXGI 才把缓冲交给显示控制器，显示控制器还要等下一个 VBlank 才能扫描。这最后一英里，也是帧率和延迟数字的真正来源。</p>
+
+  <h2><span class="num">1</span>GPU 命令队列的执行模型</h2>
+  <p>CPU 提交的 D3D12 命令列表进入 GPU 的<strong>命令队列</strong>（<code>ID3D12CommandQueue</code>）后，GPU 异步地、串行地（在该队列内）消费它们。这里有几个关键特性：</p>
+
+  <ul>
+    <li><strong>命令列表是原子单元</strong>：队列内的命令列表按提交顺序执行，不会乱序——但不同命令列表内部的 Draw Call 可以被 GPU 内部并行（固定管线的各阶段在不同 Shader Core 上流水）。</li>
+    <li><strong>GPU 不回报进度</strong>：CPU 无法得知 GPU 当前执行到哪条命令——只能用<span class="term">围栏</span>（Fence）确认"GPU 已执行到某个提交点"。</li>
+    <li><strong>多个队列可并行</strong>：D3D12 有图形队列、计算队列、复制队列。UE 的 RDG 异步 Compute Pass 利用计算队列与图形队列并行（0016 已述），它们之间用队列间 Fence 同步。</li>
+  </ul>
+
+  <h2><span class="num">2</span>GPU Fence：CPU 与 GPU 的同步原语</h2>
+  <p><code>ID3D12Fence</code> 是 CPU 与 GPU 之间（也可以是 GPU 队列间）的同步原语。使用模式：</p>
+
+  <pre><code><span class="cmt">// D3D12RHI 层的简化示意</span>
+
+<span class="cmt">// 1. CPU 把"到达这个 Signal 时请把 Fence 值设为 N"插入命令队列</span>
+CommandQueue-&gt;<span class="fn">Signal</span>(Fence, FenceValue);
+
+<span class="cmt">// 2. GPU 执行完 Signal 之前所有命令后，异步地把 Fence 值置为 N</span>
+
+<span class="cmt">// 3. CPU 等待（可选：阻塞或轮询）</span>
+<span class="kw">if</span> (Fence-&gt;<span class="fn">GetCompletedValue</span>() &lt; FenceValue)
+{
+    Fence-&gt;<span class="fn">SetEventOnCompletion</span>(FenceValue, WaitEvent);
+    <span class="fn">WaitForSingleObject</span>(WaitEvent, INFINITE); <span class="cmt">// CPU 睡眠直到 GPU 完成</span>
+}</code></pre>
+  <p class="code-cap">GPU Fence 等待范式（D3D12 标准用法）</p>
+
+  <p>UE 4.26 的 D3D12RHI 在以下场景使用 Fence：</p>
+  <ul>
+    <li><strong>后缓冲复用保护</strong>（0038 已述）：Present 后对命令队列 Signal，下帧开始前等待该 Fence 确认 GPU 已完成对该后缓冲的所有写入。</li>
+    <li><strong>命令分配器复用</strong>：确认 GPU 已执行完对应命令列表后，才允许 Reset 并复用命令分配器（<code>FD3D12CommandAllocatorManager</code>）。</li>
+    <li><strong>异步 Compute 同步</strong>：图形队列等待计算队列完成 SSAO/SSGI 等异步 Pass 后，才读取其结果缓冲。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">GetCompletedValue() — GPU 时间线的"里程碑"</span>
+    <p><code>ID3D12Fence::GetCompletedValue()</code> 返回 GPU 最后一次 Signal 写入的值。CPU 用它判断"GPU 走到哪了"。这是 CPU 与 GPU 之间仅有的同步语义——CPU 无法拿到 GPU 当前指令地址，只能靠预先插入的 Signal 标记划分已完成区间。设计上和 Git 的 "tagged commit" 很像：你不知道仓库正在写第几行代码，但你知道某个 tag 已经出现了。</p>
+  </div>
+
+  <h2><span class="num">3</span>DXGI Present 队列与 VBlank</h2>
+  <p>调用 <code>IDXGISwapChain::Present()</code> 后，该后缓冲进入 DXGI 的 <strong>Present 队列</strong>（也叫"显示队列"）。DXGI 在下一个 VBlank 信号到来时，把队列头部的缓冲"翻"到前台（即把显示控制器的扫描指针切换到该缓冲）。</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">GPU 执行完</span><span class="s-sub">所有命令<br>Signal Fence</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">Present</span><span class="s-sub">DXGI 收到<br>后缓冲</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">等待 VBlank</span><span class="s-sub">显示器消隐期<br>16.67ms @60Hz</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">扫描输出</span><span class="s-sub">显示控制器<br>逐行读前缓冲</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">光子发出</span><span class="s-sub">像素发光<br>击中玩家眼睛</span></div>
+  </div>
+
+  <h2><span class="num">4</span>扫描输出时序详解</h2>
+  <p>显示控制器（Display Controller，GPU 的一个固定功能单元）按显示器的刷新时序把前缓冲逐行读出：</p>
+  <ul>
+    <li><strong>有效扫描区（Active Scan）</strong>：每 1/刷新率 秒，显示控制器从左上到右下逐行扫描前缓冲，把每个像素的 RGB 值发送给显示面板（信号编码后经 DP/HDMI 传输）。</li>
+    <li><strong>垂直消隐区（VBlank / Vertical Blanking Interval）</strong>：扫描完最后一行后，有一段极短的消隐期（几百微秒到数毫秒）——这是翻转缓冲的安全窗口。VSync 就是让 Present 对齐这个窗口。</li>
+    <li><strong>帧到达时刻 vs. 扫描开始时刻</strong>：即使 Present 在 VBlank 前一瞬完成，第一行像素也要等到下一个活跃扫描期才会真正显示——这意味着"上屏"本身就至少有 0–16.67ms（@60Hz）的显示器扫描延迟。</li>
+  </ul>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 撕裂的物理成因</span>
+    <p>若 Present（缓冲翻转）发生在<strong>活跃扫描期中段</strong>，显示控制器上半段读的是旧缓冲数据，下半段读的是新缓冲数据——同一帧画面上出现水平"撕裂线"。VSync（<code>SyncInterval=1</code>）通过把翻转锁定到 VBlank 消隐期来避免这一现象。</p>
+  </div>
+
+  <h2><span class="num">5</span>VRR：G-Sync 与 FreeSync</h2>
+  <p><span class="term">可变刷新率</span>（Variable Refresh Rate, VRR）技术（NVIDIA G-Sync、AMD FreeSync，底层协议为 VESA Adaptive-Sync）允许显示器的刷新率动态跟随游戏的帧率，而不是固定在 60Hz。工作原理：</p>
+  <ul>
+    <li>GPU 在 Present 时通知显示器"我有一帧准备好了"，显示器<strong>按需触发扫描</strong>，而不是每 16.67ms 固定扫描一次。</li>
+    <li>在帧率范围内（通常 48–144Hz），每帧结束立即显示，无需等待下一个固定 VBlank——兼得无撕裂和低延迟。</li>
+    <li>帧率超出 VRR 上限时，退化到固定刷新率；低于下限时用"LFC（低帧率补偿）"重复帧避免闪烁。</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">UE 4.26 与 VRR：引擎侧没有特殊适配</span>
+    <p>UE 4.26 的 Present 路径本身不包含 VRR 专用代码——VRR 由 DXGI 翻转模型 + 驱动 + 显示器硬件自动协商。开发者需要做的是：① 关闭 <code>r.VSync</code>（<code>SyncInterval=0</code>，让驱动控制刷新时机）；② 若需要 Tearing 标志兼容，在 Present Flags 里加 <code>DXGI_PRESENT_ALLOW_TEARING</code>（G-Sync Compatible / FreeSync Premium 需要）。UE 4.26 的 <code>r.D3D12.AllowTearing</code> 控制台变量管理这个标志。注意：UE5 的 Reflex/VRR 深度集成不属于 4.26 范围，不在本课讨论。</p>
+  </div>
+
+  <h2><span class="num">6</span>帧节奏（Frame Pacing）</h2>
+  <p>即使平均帧率达标，帧间时间不均匀（一帧 8ms、下一帧 24ms 交替）会让玩家感受到明显卡顿（"感知帧率"远低于平均帧率）。这就是<strong>帧节奏</strong>问题。</p>
+  <p>根源在于 CPU/GPU 流水线的三级滞后（0005/0006）：游戏线程、渲染线程、GPU 各落后一帧，任何一级出现抖动都会向下游传播并放大。常见抖动来源：</p>
+  <ul>
+    <li>游戏线程上的垃圾收集 GC 停顿。</li>
+    <li>渲染线程遭遇 PSO 缓存未命中（大量阻塞）。</li>
+    <li>GPU 某帧 DrawCall 骤增（如 LOD 级别跳变、阴影图重建）。</li>
+    <li>VSync 模式下 GPU 帧时间略超 16.67ms 导致整帧"错过" VBlank，下帧等待时间变成 33.33ms。</li>
+  </ul>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · "VSync 截止"引发的延迟翻倍</span>
+    <p>60Hz VSync 下，若某帧 GPU 帧时间是 17ms（仅多 0.3ms），该帧会错过当前 VBlank，必须等下一个——延迟从 16.7ms 跳到 33.3ms。玩家感受到明显卡顿。解决方案：确保 GPU 帧时间有余量（≤14ms），或使用 VRR 消除"截止"效应，或使用 NVIDIA Reflex 等框架优化 Present 时机。</p>
+  </div>
+
+  <h2><span class="num">7</span>输入-到-光子延迟：完整分解</h2>
+  <p>从玩家按下按键到眼睛看到画面变化，延迟由以下部分累加：</p>
+
+  <table>
+    <thead><tr><th>阶段</th><th>典型延迟（@60fps）</th><th>UE 内对应的位置</th></tr></thead>
+    <tbody>
+      <tr><td>操作系统输入采样延迟</td><td>1–4ms</td><td>Windows 消息队列 → UE 输入系统</td></tr>
+      <tr><td>游戏线程 Tick（处理输入 → 更新 Actor 状态）</td><td>0–16.7ms（等下一帧 Tick）</td><td><code>FEngineLoop::Tick()</code>（0008）</td></tr>
+      <tr><td>渲染线程延迟（落后游戏线程约 1 帧）</td><td>~16.7ms</td><td><code>ENQUEUE_RENDER_COMMAND</code> 队列（0012）</td></tr>
+      <tr><td>GPU 执行延迟（命令队列排队 + 执行）</td><td>2–10ms（取决于 GPU 负载）</td><td>D3D12 命令队列 → GPU 执行</td></tr>
+      <tr><td>Present + VBlank 等待</td><td>0–16.7ms（VSync 开）</td><td><code>IDXGISwapChain::Present()</code>（0038）</td></tr>
+      <tr><td>显示器扫描延迟（像素实际点亮到眼睛接收）</td><td>1–5ms（响应时间）</td><td>物理层，与 UE 无关</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>典型总延迟</strong>：开 VSync 时约 50–80ms；关 VSync 且帧率高时可降至 20–30ms；使用 VRR（无截止效应）+ 降低渲染线程滞后帧数可进一步缩减。</p>
+
+  <h2><span class="num">8</span>大循环闭合：从 CPU Tick 到光子</h2>
+  <p>用一张完整时间线把整个课程串联：</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body">← 0008 → FEngineLoop::Tick() → Actor 更新 → UWorld::Tick → ENQUEUE_RENDER_COMMAND 入队 ← 0010/0012</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">← 0013–0035 → 可见性剔除 → Pass 组织（Depth/Base/Light/Shadow/PostProcess） → FRHICommandListImmediate 录制命令 → RHIEndDrawingViewport ← 0038</span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程</span><span class="lane-body">← 0036/0037 → 遍历 FRHICommand* 链表 → FD3D12CommandContext → PSO/描述符/屏障 → ID3D12GraphicsCommandList → IDXGISwapChain::Present()</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU → 显示</span><span class="lane-body">← 0001–0004, 本课 → 消费 D3D12 命令队列 → Signal Fence → DXGI Present 队列 → VBlank → 显示控制器扫描输出 → 光子击中眼睛</span></div>
+  </div>
+
+  <p>每一行对应一段 CPU 或硬件时间线，括号里标出了授课位置。从最顶层（玩家按键）到最底层（光子），整条链没有神秘环节——每一段延迟都有工程上的根因和可能的优化路径。</p>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">开启 VSync（r.VSync=1，SyncInterval=1）时，某帧 GPU 帧时间为 17ms（60Hz，周期 16.67ms）——该帧的实际显示延迟最接近哪个值？</p>
+    <button class="q-opt">约 33.3ms（错过当前 VBlank，等下一个）</button>
+    <button class="q-opt">约 17ms（精确等于 GPU 帧时间，立即显示）</button>
+    <button class="q-opt">约 16.7ms（VSync 把延迟固定为刷新周期）</button>
+    <div class="q-feedback" data-ok="正确。GPU 帧时间 17ms 超过了 16.67ms 的 VBlank 周期，Present 错过了当前 VBlank，只能等下一个——延迟从 16.7ms 跳到 33.3ms。这就是 VSync 截止效应：多出区区 0.3ms 却让延迟翻倍。" data-no="再想：VSync 模式下 Present 必须对齐 VBlank。GPU 帧时间一旦超过刷新周期哪怕一点点，就整整错过一个周期——延迟变为两倍刷新周期。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>GPU Fence 的使用方式是什么？UE D3D12RHI 中哪两个场景强制等待 Fence？</summary>
+    <div class="answer">
+      <p>GPU Fence 使用步骤：① CPU 调用 <code>ID3D12CommandQueue::Signal(fence, value)</code>，在命令队列里插入一个"到达此处时把 fence 值写为 value"的标记；② GPU 异步执行到该标记后，把 fence 对象的值更新为 value；③ CPU 调用 <code>fence->GetCompletedValue()</code> 轮询，或用 <code>SetEventOnCompletion</code> 让 CPU 睡眠等待，任选其一。</p>
+      <p>UE D3D12RHI 中两个典型等待场景：① <b>后缓冲复用保护</b>——每帧开始时等待上一轮使用同一后缓冲的 GPU Fence，确认 GPU 已完成对该缓冲的写入，才允许 CPU 重新指定它为本帧渲染目标；② <b>命令分配器复用</b>——<code>FD3D12CommandAllocatorManager</code> 等待对应 GPU Fence 确认分配器对应的命令列表已执行完毕，才调用 <code>ID3D12CommandAllocator::Reset()</code>。</p>
+    </div>
+  </details>
+
+  <details class="recall">
+    <summary>列出"输入-到-光子"延迟的 5 个主要组成部分，并指出哪一部分在 VSync 关闭 + 高帧率下缩减最显著。</summary>
+    <div class="answer">
+      <p>五个主要组成部分：① OS 输入采样延迟（1–4ms）；② 游戏线程 Tick 延迟（0–16.7ms，等待下一帧 Tick 到来）；③ 渲染线程滞后（约 1 帧，~16.7ms）；④ GPU 执行延迟（2–10ms，取决于帧工作量和命令队列积压深度）；⑤ Present + VBlank 等待（0–16.7ms，VSync 开时最坏情况为完整刷新周期）。</p>
+      <p>VSync 关闭 + 高帧率下缩减最显著的是 ⑤（Present 等待）和 ② （帧率越高，Tick 间隔越短，输入等待越少）。VSync 关闭让 Present 无需等 VBlank，消除了最坏 16.7ms 的等待；帧率从 60fps 升到 240fps 时，游戏线程 Tick 间隔从 16.7ms 缩到 4.2ms，输入被更快处理。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条——也是整个课程的总结</h3>
+    <ul>
+      <li>GPU 以命令队列异步消费命令列表；CPU 用 <code>ID3D12Fence::Signal/Wait</code> 确认 GPU 到达某个提交点——这是 CPU 与 GPU 同步的唯一语义。</li>
+      <li>Present 把后缓冲推入 DXGI Present 队列；显示控制器在下一个 VBlank 翻转到前台扫描输出——这是"像素真正被看到"的最后一步。</li>
+      <li>撕裂 = 翻转发生在活跃扫描期中段；VSync（SyncInterval=1）把翻转锁到 VBlank 消隐期避免撕裂，但 GPU 帧时间超过刷新周期哪怕一点点，延迟就翻倍（VSync 截止效应）。</li>
+      <li>VRR（G-Sync/FreeSync）让显示器按需触发扫描，同时消除撕裂和 VSync 截止效应；UE 4.26 通过 <code>r.D3D12.AllowTearing</code> 配合 DXGI 翻转模型支持 VRR，无需引擎特殊适配。</li>
+      <li>输入-到-光子延迟 = OS采样 + Tick等待 + 渲染线程滞后 + GPU执行 + Present等待 + 扫描延迟；每一环都有工程根因，也都有对应的优化手段——这条分解是性能调优的地图。</li>
+      <li><strong>大循环闭合</strong>：从 0008 的 <code>FEngineLoop::Tick()</code> 到本课的光子——整条管线是一个确定性的数据流，没有黑盒，每个延迟都有出处。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame, Part 3》</a>——后处理到上屏的金标准逐帧分析。<a href="https://docs.microsoft.com/en-us/windows/win32/direct3ddxgi/dxgi-flip-model">Microsoft Docs — DXGI Flip Model</a>（Present 时序、VRR/Tearing 标志）。《Real-Time Rendering》第 23 章（帧延迟与显示同步原理）。源码：<span class="file">Engine/Source/Runtime/D3D12RHI/Private/D3D12Viewport.cpp</span>（Present 路径）、<span class="file">D3D12CommandList.cpp</span>（Fence Signal 与等待）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："GPU 命令队列'串行消费'是指什么——同一命令列表内不同 Draw Call 能并行吗？""DXGI Present 队列积压超过后缓冲数量时会发生什么？""NVIDIA Reflex 是如何减少输入延迟的——与普通低 VSync 有什么本质区别？""LFC（低帧率补偿）在 FreeSync 里是怎么工作的？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0038-swapchain-present.html"><span class="nav-dir">← 上一课</span>0038 · 交换链与 Present</a>
+    <a class="next" href="0040-renderdoc-frame-capture.html"><span class="nav-dir">下一课 →</span>0040 · RenderDoc 抓帧实战</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 7 RHI 与显示 · 本课闭合了整个课程的大循环——从 CPU Tick 到光子击中玩家眼睛，每一段延迟都有名字，每一个名字背后都有代码。</footer>
+  </article>
+</div>
+</body>
+</html>

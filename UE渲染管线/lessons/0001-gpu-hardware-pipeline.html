@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0001 · GPU 硬件管线：从三角形到像素</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 0 · 基础</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 0 · 基础 · Lesson 0001</p>
+  <h1>GPU 硬件管线：从三角形到像素</h1>
+  <p class="subtitle">在拆解 Unreal 之前，先把"GPU 拿到一堆三角形之后到底做了什么"搞透。整条 UE 渲染管线，无论多复杂，最终都坍缩成一句话：<em>让 GPU 把三角形变成像素</em>。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~15 分钟</span>
+    <span><b>前置</b> 写过 HLSL（会顶点/像素着色器即可）</span>
+    <span><b>产出</b> 能凭记忆复述光栅化管线的每个阶段及其固定/可编程属性</span>
+  </div>
+
+  <p class="lead">你写过像素着色器，所以你知道"管线末端"长什么样。这节课要补的是：那个 <code>float4 PS(...)</code> 被调用<strong>之前和之后</strong>，硬件替你做了什么。这套阶段顺序是后面理解 UE 每一个 Pass 的物理基底——Depth Prepass、Base Pass、阴影、后处理，全都是"换一组着色器和渲染目标，再把同一条硬件管线跑一遍"。</p>
+
+  <h2><span class="num">1</span>一次绘制调用，走过的七个阶段</h2>
+  <p>当 CPU 发出一次 draw call（"用这个 PSO，画这 1200 个顶点"），GPU 内部按固定顺序推进下面这条逻辑管线。绿色是<strong>可编程</strong>（你写着色器），灰色是<strong>固定功能</strong>（硬件电路，你只能配置不能改写）。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">IA</span><span class="s-sub">输入装配<br>读顶点/索引</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">VS</span><span class="s-sub">顶点着色<br>变换到裁剪空间</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">图元装配</span><span class="s-sub">组三角形<br>裁剪/剔除</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">光栅化</span><span class="s-sub">三角形→片元<br>插值属性</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">PS</span><span class="s-sub">像素着色<br>算颜色/GBuffer</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">OM</span><span class="s-sub">输出合并<br>深度测试/混合</span></div>
+  </div>
+  <p class="marginnote">这里省略了可选的几何阶段（Hull/Tessellation/Domain/Geometry Shader）。它们插在 VS 和图元装配之间，绝大多数 UE 物体不用，本课先不展开。</p>
+
+  <p>记住这条线，因为它是<strong>不变量</strong>。UE 的 Renderer 再花哨，本质都是在反复配置"这次用哪个 VS+PS、读写哪些缓冲"，然后让上面这条线跑一遍。下面逐段拆。</p>
+
+  <h2><span class="num">2</span>顶点的旅程：从模型空间到屏幕</h2>
+  <p>IA 阶段把显存里的顶点缓冲（位置、UV、法线…）和索引缓冲取出来，按图元拓扑（通常是三角形列表）喂给顶点着色器。VS 对<strong>每个顶点跑一次</strong>，最核心的职责是把顶点位置从模型空间一路变换到<span class="term">裁剪空间</span>（clip space）。</p>
+
+  <div class="pipeline">
+    <div class="stage"><span class="s-name">模型空间</span><span class="s-sub">Object</span></div>
+    <span class="flow-arrow">×M</span>
+    <div class="stage"><span class="s-name">世界空间</span><span class="s-sub">World</span></div>
+    <span class="flow-arrow">×V</span>
+    <div class="stage"><span class="s-name">视图空间</span><span class="s-sub">View/相机</span></div>
+    <span class="flow-arrow">×P</span>
+    <div class="stage"><span class="s-name">裁剪空间</span><span class="s-sub">Clip (xyzw)</span></div>
+    <span class="flow-arrow">÷w</span>
+    <div class="stage fixed"><span class="s-name">NDC</span><span class="s-sub">[-1,1]³</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage fixed"><span class="s-name">屏幕空间</span><span class="s-sub">像素坐标</span></div>
+  </div>
+
+  <p>VS 输出的是裁剪空间的 <code>float4 (x,y,z,w)</code>。注意：<strong>透视除法（÷w）和视口变换不是你做的</strong>——你只负责输出到裁剪空间，剩下的 NDC 归一化、映射到屏幕像素，是图元装配/光栅化阶段的固定功能硬件做的。</p>
+
+  <div class="callout knowledge">
+    <span class="label">为什么停在裁剪空间而不是直接给屏幕坐标</span>
+    <p>裁剪（clipping）必须在透视除法<em>之前</em>做。<code>w</code> 分量携带了透视信息，硬件要用它判断顶点是否在相机背后或视锥外、并对跨越视锥边界的三角形做正确切割。如果你提前除掉 <code>w</code>，相机背后的点会被错误地翻到屏幕上。所以管线约定：着色器交付裁剪空间，硬件负责裁剪与除法。</p>
+  </div>
+
+  <p>VS 还会输出一组<strong>插值变量</strong>（UV、世界法线、顶点色等，HLSL 里随 <code>SV_Position</code> 一起 return 的那些）。这些值会在光栅化阶段被插值后送进像素着色器——下一段就是它。</p>
+
+  <h2><span class="num">3</span>光栅化：三角形如何变成一堆片元</h2>
+  <p><span class="term">光栅化</span>是整条管线的心脏，也是"几何世界"和"像素世界"的分界线。它的输入是屏幕空间里的一个三角形，输出是这个三角形覆盖的所有<strong>片元（fragment）</strong>——可以理解成"候选像素"。<span class="sn-ref">1</span></p>
+  <span class="sidenote">片元 ≠ 像素：一个像素位置可能被多个三角形各产生一个片元（重叠时），最终谁写进帧缓冲由深度测试决定。MSAA 下一个像素还有多个覆盖采样点。</span>
+
+  <p>硬件怎么知道一个像素在不在三角形内？用<strong>边函数（edge function）</strong>：对三角形的三条边各算一个有符号距离，三个符号一致就说明像素在内部。GPU 把屏幕切成小块（tile），对每块并行测试所有像素，所以光栅化天然是大规模并行的。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 属性是"透视校正插值"出来的</span>
+    <p>像素着色器拿到的 UV、法线，不是简单地在屏幕上线性插值三个顶点——那样会在透视下扭曲（想象铁轨贴图近大远小）。硬件用 <code>1/w</code> 加权做<strong>透视校正插值</strong>，才能让纹理在斜面上看起来正确。这是固定功能硬件免费帮你做的事，但理解它能解释很多采样 artifact。</p>
+  </div>
+
+  <p>光栅化还顺手算两样东西：每个片元的<strong>深度值</strong>（用于下一步的深度测试）和（在 PS 里可取的）屏幕坐标 <code>SV_Position</code>。到此，几何信息已经"拍扁"成屏幕上一格一格的片元，准备逐个着色。</p>
+
+  <h2><span class="num">4</span>像素着色与输出合并：决定最终写什么</h2>
+  <p>像素着色器对<strong>每个片元跑一次</strong>，算出要输出的颜色（或者——在 UE 的 Base Pass 里——一整组 GBuffer 通道）。这是你最熟悉的部分，但它后面还有一道固定功能关卡：<span class="term">输出合并</span>（Output Merger, OM）。OM 决定 PS 的输出到底<strong>能不能、以及如何</strong>写进渲染目标，做两件事：</p>
+
+  <table>
+    <thead><tr><th>OM 子阶段</th><th>做什么</th><th>UE 里的体现</th></tr></thead>
+    <tbody>
+      <tr><td><b>深度/模板测试</b></td><td>拿片元深度和深度缓冲比较，没通过就<strong>丢弃</strong>该片元（PS 可能根本不运行）。</td><td>Depth Prepass 建立的 Early-Z 让 Base Pass 省掉大量被遮挡片元的着色。</td></tr>
+      <tr><td><b>混合 (Blend)</b></td><td>把 PS 输出和目标已有颜色按公式合成（如半透明 <code>src·α + dst·(1−α)</code>）。</td><td>不透明物体关混合（直接覆盖）；半透明 Pass 开混合。</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">Early-Z 与 Overdraw —— 后面整条 UE 主线的动机</span>
+    <p>深度测试默认在 PS <em>之后</em>。但若 PS 不改深度、不丢弃片元，硬件可把测试提前到 PS <em>之前</em>（<strong>Early-Z</strong>），从而跳过被遮挡片元的昂贵着色。<span class="term">Overdraw</span>（同一像素被反复着色）是延迟着色管线的头号敌人——这正是 UE 先跑一遍只写深度的 <strong>Depth Prepass</strong> 的全部理由（见 <a href="../index.html">0022</a>）。你现在就能理解那节课的动机了。</p>
+  </div>
+
+  <h2><span class="num">5</span>多渲染目标：GBuffer 的硬件基础</h2>
+  <p>一个像素着色器可以同时往<strong>多个渲染目标</strong>（Multiple Render Targets, MRT）写不同数据：<code>SV_Target0</code>、<code>SV_Target1</code>…… 这就是 UE <span class="term">GBuffer</span> 的硬件机制——Base Pass 的 PS 一次性把基础色、法线、粗糙度、金属度分别写进 4~6 张 RT。延迟着色之所以可行，靠的就是 MRT 这个硬件能力。你在 0021/0023 会看到 UE 的具体 GBuffer 布局，但底层就是"一个 PS，多个 SV_Target"。</p>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">顶点着色器输出的位置处于哪个空间，谁负责把它变成屏幕像素坐标？</p>
+    <button class="q-opt">屏幕空间，由顶点着色器自己完成视口变换</button>
+    <button class="q-opt">裁剪空间，由光栅化阶段的固定功能硬件除以 w 并做视口变换</button>
+    <button class="q-opt">视图空间，由像素着色器在采样时换算</button>
+    <div class="q-feedback" data-ok="对。VS 只交付裁剪空间 (x,y,z,w)，透视除法与视口变换是固定功能硬件的事——这样裁剪才能在除 w 之前正确进行。" data-no="再想想：裁剪必须在透视除法之前发生，所以 VS 停在裁剪空间，÷w 和视口映射由硬件做。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不开混合的不透明物体，深度测试为什么能搬到像素着色器之前？这对性能意味着什么？</summary>
+    <div class="answer">当像素着色器<strong>不修改深度</strong>、<strong>不做 clip/discard</strong>、<strong>不开 alpha-to-coverage</strong> 时，片元的最终深度在光栅化后就已确定，硬件可以在运行昂贵的 PS 之前先做深度测试（Early-Z），把被遮挡的片元直接丢弃、根本不着色。意义：消除 overdraw 的着色开销。代价是 UE 愿意先花一个只写深度的 <strong>Depth Prepass</strong> 把深度缓冲填满，换来 Base Pass 几乎零浪费。这是延迟着色性能模型的基石。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>一次 draw call 的硬件管线固定为：<code>IA → VS → 图元装配 → 光栅化 → PS → OM</code>。绿色（VS/PS）可编程，其余固定功能。</li>
+      <li>VS 只把顶点送到<strong>裁剪空间</strong>；透视除法与视口变换是硬件做的——为了让裁剪发生在除 w 之前。</li>
+      <li>光栅化是几何与像素的分界线，用边函数判定覆盖，并对属性做<strong>透视校正插值</strong>。</li>
+      <li><strong>Early-Z</strong> 让深度测试前移、跳过被遮挡片元的着色——这是 UE Depth Prepass 存在的理由。</li>
+      <li><strong>MRT</strong>（一个 PS 写多个 SV_Target）是 GBuffer 与延迟着色的硬件基础。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Fabian Giesen，<a href="https://fgiesen.wordpress.com/2011/07/09/a-trip-through-the-graphics-pipeline-2011-index/">《A trip through the Graphics Pipeline 2011》</a>——从 GPU 真实实现角度讲完整条管线，本课每一段都能在其中找到更深的硬件细节。配套：NVIDIA《<a href="https://developer.nvidia.com/content/life-triangle-nvidias-logical-pipeline">Life of a triangle</a>》与《Real-Time Rendering》第 2、23 章。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："边函数具体怎么算的？""透视校正插值的公式推一下""为什么 MSAA 只在光栅化层做超采样、不重复跑 PS？" 我是你的老师，随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="../index.html"><span class="nav-dir">← 返回</span>课程地图</a>
+    <a class="next" href="0002-gpu-parallel-machine.html"><span class="nav-dir">下一课 →</span>0002 · GPU 是一台什么样的并行机器</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 0 基础 · 本课为硬件管线的逻辑骨架，下一课讲它"为何快"。</footer>
+  </article>
+</div>
+</body>
+</html>

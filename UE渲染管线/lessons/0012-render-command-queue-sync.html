@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0012 · 渲染命令队列与线程同步</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 3 · 渲染线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 3 · 渲染线程 · Lesson 0012</p>
+  <h1>渲染命令队列与线程同步</h1>
+  <p class="subtitle">游戏线程永远不直接调图形 API。它做的所有事都先打包成 lambda，通过 <code>ENQUEUE_RENDER_COMMAND</code> 投递到渲染线程队列——弄清楚这条传送带的机制，是读懂整个 CPU 侧的前提。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0005（三线程架构）、0006（FScene/Proxy）、0010（视图创建）</span>
+    <span><b>产出</b> 能解释 ENQUEUE_RENDER_COMMAND 如何经 TaskGraph 到渲染线程、FlushRenderingCommands 何时阻塞、FRenderCommandFence 的作用</span>
+  </div>
+
+  <p class="lead">你在 0005 看到了"游戏线程把变化<strong>入队</strong>给渲染线程"这句话。这节课把这句话拆开：队列是什么结构、TaskGraph 如何调度、渲染线程在哪个 CPU 核上、<code>FlushRenderingCommands()</code> 为什么是把双刃剑、<code>FRenderCommandFence</code> 又解决什么问题。这几个机制理解到位，后面读任何跨线程代码都会顺畅。</p>
+
+  <h2><span class="num">1</span>ENQUEUE_RENDER_COMMAND：宏展开与执行路径</h2>
+  <p><code>ENQUEUE_RENDER_COMMAND</code> 定义在 <span class="file">Engine/Source/Runtime/RenderCore/Public/RenderingThread.h</span>。它把一个 lambda 包成一个 TaskGraph 任务，投递到全局渲染线程任务队列。</p>
+
+  <pre><code><span class="cmt">// RenderingThread.h — 简化展示宏的意图</span>
+<span class="kw">#define</span> <span class="fn">ENQUEUE_RENDER_COMMAND</span>(Type) \
+    <span class="kw">struct</span> <span class="typ">ERC_Struct_##Type</span> { \
+        <span class="kw">static</span> <span class="kw">void</span> <span class="fn">DoTask</span>(<span class="typ">FRHICommandListImmediate</span>&amp; RHICmdList, <span class="typ">auto</span>&amp;&amp; Lambda) \
+        { Lambda(RHICmdList); } \
+    }; \
+    <span class="fn">EnqueueUniqueRenderCommand</span>&lt;<span class="typ">ERC_Struct_##Type</span>&gt;</code></pre>
+
+  <p>游戏线程调用这个宏时：</p>
+  <ol>
+    <li>lambda（含捕获变量）被移动进一个堆分配的任务对象。</li>
+    <li>任务被推入渲染线程的 TaskGraph 队列（<code>ENamedThreads::GetRenderThread()</code>）。</li>
+    <li>游戏线程立即返回——不阻塞。</li>
+    <li>渲染线程在自己的事件循环里取任务，以 <code>FRHICommandListImmediate&amp;</code> 为参数调用 lambda。</li>
+  </ol>
+
+  <div class="callout knowledge">
+    <span class="label">GRenderingThread 与 TaskGraph</span>
+    <p>渲染线程是 UE TaskGraph 的一个具名线程（Named Thread），由全局指针 <code>GRenderingThread</code>（<span class="file">RenderingThread.cpp</span>）标识。TaskGraph 为它单独维护一条优先队列；正常情况下渲染线程运行在一个专属 CPU 核，以 <code>ENamedThreads::NormalTaskPriority</code> 消费队列。"渲染命令"就是 TaskGraph 里的一条任务记录，本质与异步 I/O 任务没有结构差异，只是目标线程固定。</p>
+  </div>
+
+  <p>一个典型的游戏线程侧调用——把图元变换更新同步给 Proxy：</p>
+
+  <pre><code><span class="cmt">// 游戏线程：PrimitiveComponent.cpp 类似位置</span>
+<span class="typ">FPrimitiveSceneProxy</span>* Proxy = SceneProxy;
+<span class="typ">FMatrix</span> NewTransform = GetComponentTransform().<span class="fn">ToMatrixWithScale</span>();
+
+<span class="fn">ENQUEUE_RENDER_COMMAND</span>(UpdateTransform)(
+    [Proxy, NewTransform](<span class="typ">FRHICommandListImmediate</span>&amp; RHICmdList)
+    {
+        Proxy-&gt;<span class="fn">SetTransform_RenderThread</span>(NewTransform);
+    });</code></pre>
+
+  <p>注意：lambda 里操作的是 <code>FPrimitiveSceneProxy*</code>（渲染线程对象），而不是 <code>UPrimitiveComponent*</code>（游戏线程对象）。这条规则贯穿整个 UE 渲染侧——你在渲染线程绝不碰 <code>U*</code> 对象。</p>
+
+  <h2><span class="num">2</span>渲染线程上的 FRHICommandList</h2>
+  <p>lambda 的参数是 <code>FRHICommandListImmediate&amp; RHICmdList</code>。这是渲染线程独有的 RHI 命令列表，定义在 <span class="file">RHI/Public/RHICommandList.h</span>。<code>Immediate</code> 意味着提交时机：这里录制的命令会立即排进 RHI 线程的翻译队列，而不是像 <code>FRHICommandList</code> 那样先缓冲成独立记录（用于并行 Pass 录制，Part 5 细讲）。</p>
+
+  <p>在 4.26 中越来越多的 Pass 改用 RDG（<code>FRDGBuilder</code>），RHI 命令由 RDG 在 Execute 时统一录制，但底层仍流经同一条 <code>FRHICommandListImmediate</code>（见 0015/0016）。</p>
+
+  <h2><span class="num">3</span>同步机制：三种情况</h2>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body">ENQUEUE_RENDER_COMMAND(A) → 继续做其他工作 → ENQUEUE_RENDER_COMMAND(B) → … → <b>FlushRenderingCommands()</b> ← 阻塞在此，等待渲染线程清空</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">消费 A → 执行 A → 消费 B → 执行 B → … → <b>TaskGraph 队列空</b> → 通知游戏线程</span></div>
+    <div class="lane rhi"><span class="lane-name">FRenderCommandFence</span><span class="lane-body">游戏线程 BeginFence() 在队列尾部插入一个标记任务 → 游戏线程之后 WaitFence() 等待该标记被渲染线程执行 → 比 Flush 更轻量</span></div>
+  </div>
+
+  <h3>3.1 正常非阻塞入队（绝大多数情况）</h3>
+  <p>游戏线程入队后立即返回，两线程并行：游戏线程继续 Tick 下一帧，渲染线程处理上一帧的队列。这就是 0005 提到的"三级流水"——三者各落后一帧。</p>
+
+  <h3>3.2 FlushRenderingCommands()：全清空阻塞</h3>
+  <p><code>FlushRenderingCommands()</code> 定义在 <span class="file">RenderingThread.cpp</span>，它在游戏线程阻塞等待，直到渲染线程把当前队列里<strong>所有命令</strong>都执行完。典型使用场景：</p>
+  <ul>
+    <li>销毁一个 <code>FPrimitiveSceneProxy</code>——必须等渲染线程不再引用它</li>
+    <li>修改全局渲染状态（如切换 Feature Level）</li>
+    <li>资产热重载后重建渲染数据</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">Flush 代价极大，不要在逐帧逻辑里调</span>
+    <p><code>FlushRenderingCommands()</code> 会把游戏线程和渲染线程的流水线打断——游戏线程白白等待，渲染帧率直接受损。它只应出现在：关卡加载边界、资产重载、引擎子系统初始化/销毁。任何逐帧触发路径里出现 Flush 都是性能红灯。</p>
+  </div>
+
+  <h3>3.3 FRenderCommandFence：轻量围栏</h3>
+  <p><code>FRenderCommandFence</code> 定义在 <span class="file">RenderCore/Public/RenderingThread.h</span>，提供比 Flush 更细粒度的等待：</p>
+
+  <pre><code><span class="typ">FRenderCommandFence</span> Fence;
+
+<span class="cmt">// 在游戏线程某处：把"围栏标记"插入渲染队列尾部</span>
+Fence.<span class="fn">BeginFence</span>();
+
+<span class="cmt">// 继续做其他游戏线程工作……</span>
+
+<span class="cmt">// 确认渲染线程已处理完 BeginFence() 之前的所有命令</span>
+Fence.<span class="fn">Wait</span>();   <span class="cmt">// 若渲染线程还未到达标记，游戏线程在此睡眠</span></code></pre>
+
+  <p><code>BeginFence()</code> 向队列尾部追加一个空任务，该任务执行时会原子地置位一个标志。<code>Wait()</code> 轮询/等待该标志。相比 Flush，Fence 只等到某个已知提交点，不强制清空整条队列——代价低得多。典型用途：游戏线程要复用某块数据之前，确认渲染线程已读完上次的副本。</p>
+
+  <h2><span class="num">4</span>TaskGraph 优先级与渲染线程调度</h2>
+  <p>渲染线程是 TaskGraph 的 <code>ENamedThreads::RenderThread</code>。普通 <code>ENQUEUE_RENDER_COMMAND</code> 插入 <code>NormalTaskPriority</code> 队列。引擎内部少数高优先路径（如 Present 的回调）会用 <code>HighTaskPriority</code>。TaskGraph 用优先级桶排序，高优先任务先出队，保证 Present 路径不被普通命令积压阻塞。</p>
+
+  <div class="callout insight">
+    <span class="label">为什么不用锁，而用消息队列？</span>
+    <p>如果游戏线程和渲染线程共享同一套 <code>FScene</code> 数据并用互斥锁保护，锁争用会让两个线程频繁互相阻塞，流水线白搭。消息队列（入队-消费）让两线程各跑各的，只在入队这一刻有极短的无锁原子操作——这是典型的"生产者-消费者异步解耦"模式，在 UE 渲染侧贯穿始终。</p>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">游戏线程调用 ENQUEUE_RENDER_COMMAND 之后，该 lambda 何时被执行？</p>
+    <button class="q-opt">立即在游戏线程同步执行，函数返回前完成</button>
+    <button class="q-opt">被放入 TaskGraph 渲染线程队列，渲染线程在自己的事件循环中取出执行</button>
+    <button class="q-opt">由 RHI 线程取出，翻译成 D3D12 调用后执行</button>
+    <div class="q-feedback" data-ok="对。ENQUEUE_RENDER_COMMAND 只做入队操作后立即返回；lambda 由渲染线程自己的 TaskGraph 事件循环消费和执行，不是游戏线程，也不是 RHI 线程。" data-no="再想：ENQUEUE_RENDER_COMMAND 的核心语义是把工作"推迟到渲染线程"——游戏线程入队后立即返回，渲染线程异步消费。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>列举三个必须调 FlushRenderingCommands() 的合法场景，并解释为什么 FRenderCommandFence 在逐帧逻辑中比 Flush 更合适。</summary>
+    <div class="answer">
+      <p>必须 Flush 的场景：① 销毁 <code>FPrimitiveSceneProxy</code> 时——必须确认渲染线程不再持有对该对象的引用；② 切换 Feature Level / 渲染路径——全局状态改变前要清空队列；③ 资产热重载重建渲染数据——避免渲染线程读到一半被替换的旧数据。</p>
+      <p><code>FRenderCommandFence</code> 优于 Flush 的原因：Fence 只等待到某个已知的队列提交点（<code>BeginFence()</code> 时刻之前的命令），游戏线程可以在 <code>BeginFence()</code> 与 <code>Wait()</code> 之间继续做其他不依赖该数据的工作。Flush 则会等待整条队列全部清空，并强制打断流水线，代价是 Fence 的数倍。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>ENQUEUE_RENDER_COMMAND</code>（<span class="file">RenderingThread.h</span>）：把 lambda 包成 TaskGraph 任务投到渲染线程，游戏线程立即返回——不阻塞。</li>
+      <li>渲染线程是 TaskGraph 的 Named Thread，由 <code>GRenderingThread</code> 标识，在自己的事件循环里消费队列，以 <code>FRHICommandListImmediate</code> 录制 RHI 命令。</li>
+      <li><code>FlushRenderingCommands()</code>：清空渲染线程整条队列后才返回——代价极大，只用于加载边界/销毁/全局状态变更，绝不逐帧调。</li>
+      <li><code>FRenderCommandFence</code>：在队列里插标记，游戏线程稍后等该标记执行完——比 Flush 细粒度、代价低，适合逐帧"等上帧渲染线程读完数据"的场景。</li>
+      <li>设计原则：消息队列（异步解耦）而非共享锁——两线程各跑各的，交汇点只在入队的原子操作。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a>——线程模型与命令入队机制的官方描述。源码真相：<span class="file">Engine/Source/Runtime/RenderCore/Public/RenderingThread.h</span> 与 <span class="file">RenderingThread.cpp</span>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 例如："lambda 的捕获变量如果在渲染线程执行前就被游戏线程销毁会怎样？""TaskGraph 里的 NormalTaskPriority 和 HighTaskPriority 具体是什么机制？""FRenderCommandFence 的 Wait() 内部是自旋还是条件变量？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0011-view-creation-fviewinfo.html"><span class="nav-dir">← 上一课</span>0011 · View 创建与 FViewInfo</a>
+    <a class="next" href="0013-scenerenderer-entry-beginrendering.html"><span class="nav-dir">下一课 →</span>0013 · 场景渲染入口：BeginRenderingViewFamily → SceneRenderer</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 3 渲染线程 · 命令队列与同步机制是 CPU 侧所有跨线程代码的底层基础。</footer>
+  </article>
+</div>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0005 · 一帧的生命周期：三线程渲染架构总览</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 1 · 骨架</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 1 · 骨架 · Lesson 0005</p>
+  <h1>一帧的生命周期：三线程渲染架构总览</h1>
+  <p class="subtitle">这节课是整门课程的<strong>脊柱</strong>。我们用一张图把"从 <code>FEngineLoop::Tick</code> 的第一行，到像素被 Present 上屏"的全过程串起来——之后每一节课，都是在放大这张图里的某一段。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~18 分钟</span>
+    <span><b>前置</b> Part 0 全部（尤其 0004 流水线）</span>
+    <span><b>产出</b> 能凭记忆画出三线程 + GPU 的一帧全景，并说出每段的入口与职责</span>
+  </div>
+
+  <p class="lead">UE 一帧看似有几百个步骤，但骨架只有四个角色，按固定顺序接力：<strong>游戏线程</strong>决定"这帧场景是什么样"，<strong>渲染线程</strong>把它翻译成"该画哪些 Pass、怎么画"，<strong>RHI 线程</strong>把指令翻译成 D3D12 调用，<strong>GPU</strong> 真正画并 Present 上屏。Part 0 学的命令列表、围栏、CPU/GPU-bound，全在这张图里各就各位。</p>
+
+  <h2><span class="num">1</span>四个角色，一条接力线</h2>
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body"><b>决定场景内容</b> · <code>FEngineLoop::Tick</code> → World/Actor Tick → 更新变换/动画 → 把变化<strong>入队</strong>给渲染线程</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body"><b>组织怎么画</b> · 消费命令 → 可见性/剔除 → 构建 RDG → 逐 Pass 录制 RHI 命令</span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程</span><span class="lane-body"><b>翻译成图形 API</b> · 把平台无关的 RHI 命令翻成 D3D12 命令列表 → 提交队列</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body"><b>执行 + 上屏</b> · 跑光栅化管线 → 写各缓冲 → 后处理 → Present</span></div>
+  </div>
+  <figure>
+    <figcaption>四角色接力。注意它们<strong>不是同一帧</strong>同时干活——按 0004 的流水线，游戏线程在帧 N、渲染线程在帧 N-1、GPU 在帧 N-2。这就是 <code>stat unit</code> 里 Game / Draw / GPU 三个独立计时的来源。</figcaption>
+  </figure>
+
+  <div class="callout knowledge">
+    <span class="label">核心切分 · 为什么是"两份场景"</span>
+    <p>游戏线程持有 <code>UWorld</code> / <code>AActor</code> / <code>UPrimitiveComponent</code>（可被 Gameplay 任意修改）；渲染线程持有它们的<strong>只读镜像</strong> <code>FScene</code> / <code>FPrimitiveSceneProxy</code>。渲染从不直接碰游戏对象——否则两线程并行时必然数据竞争。两份表达之间靠 <code>ENQUEUE_RENDER_COMMAND</code> 单向同步。这条"游戏态 vs 渲染态"的分界，是理解整个 CPU 侧的总钥匙（Part 2 全在讲它）。</p>
+  </div>
+
+  <h2><span class="num">2</span>游戏线程：从 Tick 到入队</h2>
+  <p>一切始于引擎主循环 <code>FEngineLoop::Tick()</code>。<span class="sn-ref">1</span> 它驱动 <code>UWorld::Tick</code>，逐个 Tick Actor 与 Component——移动、动画、物理、Gameplay 逻辑都在这里改变世界状态。Tick 结束后，引擎把这一帧的<strong>变化</strong>（新的变换、新生成/销毁的图元、可见性变更）通过渲染命令<strong>投递</strong>给渲染线程，然后调用 <code>UGameViewportClient::Draw</code> 一路触发 <code>FRendererModule::BeginRenderingViewFamily</code>，把"渲染这一帧"这件事踢给渲染线程。</p>
+  <span class="sidenote">代码锚点（先记位置，Part 2 精读）：<code>FEngineLoop::Tick</code> 在 <span class="file">LaunchEngineLoop.cpp</span>；<code>UWorld::Tick</code> 在 <span class="file">LevelTick.cpp</span>；入队宏 <code>ENQUEUE_RENDER_COMMAND</code> 在 <span class="file">RenderingThread.h</span>。</span>
+
+  <pre><code><span class="cmt">// 游戏线程把"修改渲染状态"打包成 lambda 投给渲染线程</span>
+<span class="fn">ENQUEUE_RENDER_COMMAND</span>(UpdatePrimitiveTransform)(
+    [Proxy, NewTransform](<span class="typ">FRHICommandList</span>&amp; RHICmdList)
+    {
+        Proxy-&gt;<span class="fn">SetTransform</span>(NewTransform);   <span class="cmt">// 在渲染线程上安全执行</span>
+    });</code></pre>
+  <p class="code-cap">两线程间的基本通信单元：一段被推迟到渲染线程执行的 lambda</p>
+
+  <h2><span class="num">3</span>渲染线程：场景渲染器的总调度</h2>
+  <p>渲染线程拿到 <code>ViewFamily</code> 后，创建一个<strong>场景渲染器</strong>。PC 延迟着色路径用的是 <code>FDeferredShadingSceneRenderer</code>，它的 <code>Render()</code> 函数就是整条 GPU 管线的<strong>总编排者</strong>。<span class="sn-ref">2</span> 它大致分两段：</p>
+  <span class="sidenote">代码锚点：<code>FDeferredShadingSceneRenderer::Render</code> 在 <span class="file">DeferredShadingRenderer.cpp</span>；可见性在 <code>InitViews</code>（<span class="file">SceneVisibility.cpp</span>）。0014 会逐段精读这个函数。</span>
+  <ol>
+    <li><strong>InitViews（准备）</strong>：视锥/距离/遮挡剔除算出每个视图能看见哪些图元（Part 4），为各 Pass 生成 <code>FMeshDrawCommand</code>，建立动态阴影等。这一段决定"画什么"。</li>
+    <li><strong>Render（执行）</strong>：按延迟着色顺序，用 <span class="term">RDG</span> 把每个 Pass 声明进依赖图，再编译执行（Part 3 / Part 5 / Part 6）。这一段决定"怎么画、画成什么"。</li>
+  </ol>
+
+  <p>在 4.26 里，<code>Render()</code> 内部越来越多地用 <strong>RDG</strong> 来组织 Pass：不立即执行，而是先把整帧 Pass 录成依赖图，让 RDG 自动管理资源生命周期、屏障与异步计算（你在 0003/0002 已理解它要自动化的是什么）。RDG 是 Part 3 的重头戏。</p>
+
+  <h2><span class="num">4</span>GPU 上发生了什么：一帧的 Pass 全景</h2>
+  <p>渲染线程录制的命令，经 RHI 线程翻译后在 GPU 上跑出下面这串 Pass。这正是 Interplay of Light《How Unreal Renders a Frame》里抓帧看到的顺序——也是本课程 Part 4–6 的章节顺序：</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">Prepass</span><span class="s-sub">只写深度·Early-Z</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">Base Pass</span><span class="s-sub">写 GBuffer</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">光照剔除</span><span class="s-sub">Light Grid</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">阴影</span><span class="s-sub">ShadowDepth</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">光照</span><span class="s-sub">延迟光照</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">屏幕空间</span><span class="s-sub">SSAO/SSR</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">半透明</span><span class="s-sub">Translucency</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">后处理</span><span class="s-sub">TAA/Bloom/Tonemap</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">Present</span><span class="s-sub">上屏</span></div>
+  </div>
+  <figure><figcaption>UE 4.26 延迟着色一帧的宏观 Pass 序列。每个方块都是后面一节或几节课。注意它和 0001 那条"硬件管线"的关系：<strong>每个方块内部，都是把 0001 的 IA→VS→光栅化→PS→OM 用一组特定的着色器和渲染目标再跑一遍</strong>。</figcaption></figure>
+
+  <h2><span class="num">5</span>上屏：像素如何到达玩家</h2>
+  <p>后处理链的最后一步把图像写进交换链的<strong>后缓冲</strong>，然后 <strong>Present</strong> 把它提交到显示队列。显示控制器按刷新率把<strong>前缓冲</strong>逐行<strong>扫描输出</strong>到显示器——这一刻，像素真正被玩家看到（细节见 0038/0039）。至此，从游戏线程那一帧的 Tick，到玩家眼睛，闭环完成。</p>
+
+  <h2><span class="num">6</span>这张图就是课程地图</h2>
+  <table>
+    <thead><tr><th>这帧的哪一段</th><th>对应模块</th></tr></thead>
+    <tbody>
+      <tr><td>游戏线程：Tick → 场景表达 → 入队 → View</td><td><b>Part 2</b>（0008–0011）</td></tr>
+      <tr><td>渲染线程：命令队列 → 总调度 <code>Render()</code> → RDG</td><td><b>Part 3</b>（0012–0016）</td></tr>
+      <tr><td>可见性、剔除、Mesh Draw、GPU Scene</td><td><b>Part 4</b>（0017–0020）</td></tr>
+      <tr><td>Prepass → GBuffer → 光照 → 阴影 → 半透明</td><td><b>Part 5</b>（0021–0030）</td></tr>
+      <tr><td>后处理：TAA / Bloom / Tonemap</td><td><b>Part 6</b>（0031–0035）</td></tr>
+      <tr><td>RHI 翻译 → Present → 扫描输出</td><td><b>Part 7</b>（0036–0039）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">渲染线程为什么操作 <code>FScene</code>/<code>FPrimitiveSceneProxy</code> 这套镜像，而不直接读 <code>UWorld</code>/<code>UPrimitiveComponent</code>？</p>
+    <button class="q-opt">因为镜像数据更小，能省显存</button>
+    <button class="q-opt">因为渲染线程不被允许调用 C++ 虚函数</button>
+    <button class="q-opt">因为游戏线程会并行修改游戏对象，渲染直接读会数据竞争；镜像 + 入队提供单向安全同步</button>
+    <div class="q-feedback" data-ok="对。游戏线程与渲染线程并行运行，若渲染直接读正被 Gameplay 修改的对象就会数据竞争。只读镜像 + ENQUEUE_RENDER_COMMAND 单向同步，是整个 CPU 侧切分的根本动机。" data-no="再想：两线程并行，游戏线程随时在改游戏对象。镜像的意义是隔离——渲染只读自己的副本，改动通过入队单向同步过来。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看图，按顺序说出 UE 一帧延迟着色的宏观 Pass 序列（从深度到上屏），并指出每个 Pass 内部与 0001 硬件管线的关系。</summary>
+    <div class="answer">顺序：<strong>Depth Prepass</strong>（只写深度，建 Early-Z）→ <strong>Base Pass</strong>（写 GBuffer）→ <strong>光照剔除</strong>（Light Grid）→ <strong>阴影</strong>（ShadowDepth）→ <strong>延迟光照</strong> → <strong>屏幕空间</strong>（SSAO/SSR/SSGI）→ <strong>半透明</strong> → <strong>后处理</strong>（TAA/Bloom/Tonemap）→ <strong>Present 上屏</strong>。关系：每个 Pass 内部都是把 0001 的固定硬件管线 <code>IA→VS→光栅化→PS→OM</code> 用<strong>一组特定的着色器 + 渲染目标</strong>再跑一遍——例如 Base Pass 用材质着色器把数据写进多个 GBuffer（MRT），阴影 Pass 用极简着色器只写深度。管线不变，变的是"绑哪个 PSO、读写哪些缓冲"。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>一帧四角色接力：<strong>游戏线程</strong>（画什么）→<strong>渲染线程</strong>（怎么画）→<strong>RHI 线程</strong>（翻成 D3D12）→<strong>GPU</strong>（画+Present）；三级流水各落后一帧。</li>
+      <li>CPU 侧的总钥匙是<strong>两份场景</strong>：游戏态 <code>UWorld/Component</code> ↔ 渲染态 <code>FScene/Proxy</code>，靠 <code>ENQUEUE_RENDER_COMMAND</code> 单向同步。</li>
+      <li>渲染编排的核心函数是 <code>FDeferredShadingSceneRenderer::Render()</code>：先 <strong>InitViews</strong>（剔除、生成绘制命令）再 <strong>Render</strong>（用 RDG 逐 Pass 执行）。</li>
+      <li>GPU 一帧的宏观 Pass 序列 = 本课程 Part 4–6 的章节顺序；每个 Pass 内部都是 0001 硬件管线的一次复用。</li>
+      <li>这张全景图就是课程地图——后面每节课都在放大它的某一段。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1</a>——用抓帧逐 Pass 还原本课这张全景图，强烈建议对照阅读。配套：UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a> 看线程与模块划分。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 这节是全局地图，任何一个方块你想现在就深入，我都可以提前展开；或者直接说"按顺序往下出 0006"，我继续产出后续批次。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0004-cpu-gpu-cooperation.html"><span class="nav-dir">← 上一课</span>0004 · CPU 与 GPU 的协作</a>
+    <a class="next" href="../index.html"><span class="nav-dir">课程地图 →</span>0006 起为后续批次</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 1 骨架 · 批次 1 终点。已建立全局脊柱，后续批次沿 Part 2→7 逐段放大。</footer>
+  </article>
+</div>
+</body>
+</html>

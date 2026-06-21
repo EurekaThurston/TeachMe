@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0018 · Mesh Drawing Pipeline：FMeshBatch → FMeshDrawCommand</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 4 · 几何与可见性</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 4 · 几何与可见性 · Lesson 0018</p>
+  <h1>Mesh Drawing Pipeline：FMeshBatch → FMeshDrawCommand</h1>
+  <p class="subtitle">UE 4.22 之后，"绘制一个网格"从即时发射命令改成了 retained-mode：代理提交 <code>FMeshBatch</code> 原料，Pass 处理器把它转成可缓存的 <code>FMeshDrawCommand</code>，最后批量提交到 RHI。这条流水线的设计动机是<strong>激进缓存与减少 CPU 录制成本</strong>。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0009（场景代理）、0014（渲染器总调度）</span>
+    <span><b>产出</b> 能描述 FMeshBatch 经 FMeshPassProcessor 转成 FMeshDrawCommand、再 SubmitMeshDrawCommands 到 RHI 的全过程</span>
+  </div>
+
+  <p class="lead">在 4.22 之前，UE 用"Drawing Policy"模式：每帧逐个物体调用 <code>SetShader</code>、<code>DrawMesh</code>，CPU 录制开销随物体数量线性增长（呼应 0004 CPU-bound 讨论）。新的 Mesh Draw Pipeline 把"准备绑定"和"实际提交"分离：静态物体的绘制命令在 <code>AddToScene</code> 时就缓存好，每帧只需重用；动态物体才在每帧调用 <code>GetDynamicMeshElements</code>。结果是：一个拥有上千静态网格的场景，CPU 录制开销可以接近常数。</p>
+
+  <h2><span class="num">1</span>三个核心数据结构</h2>
+  <p>整条 pipeline 围绕三个结构体展开，弄清楚它们各自代表什么、在哪一步产生，就掌握了主干。</p>
+
+  <table>
+    <thead><tr><th>结构体</th><th>产生时机</th><th>内容</th><th>可缓存？</th></tr></thead>
+    <tbody>
+      <tr><td><code>FMeshBatch</code></td><td>代理每帧提交（或 AddToScene）</td><td>几何来源 + 材质 + LOD 等原料，<strong>不绑定 Pass</strong></td><td>否（描述几何，Pass 无关）</td></tr>
+      <tr><td><code>FMeshDrawCommand</code></td><td>Pass 处理器转换时</td><td>着色器绑定、PSO、顶点/索引缓冲、绘制参数——<strong>完整的一次绘制描述</strong></td><td>是（静态网格可跨帧复用）</td></tr>
+      <tr><td><code>FRHICommandList</code> 调用</td><td>SubmitMeshDrawCommands</td><td>具体的 <code>DrawIndexedPrimitive</code> 等 RHI 调用</td><td>否（每帧重新提交）</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">2</span>数据流：从代理到 RHI</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">FPrimitiveSceneProxy</span><span class="s-sub">场景代理<br>（0009）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">FMeshBatch</span><span class="s-sub">几何+材质原料<br>不绑定 Pass</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">FMeshPassProcessor</span><span class="s-sub">每 Pass 一个<br>选着色器·转换</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">FMeshDrawCommand</span><span class="s-sub">无状态·可缓存<br>含着色器绑定</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">SubmitMeshDrawCommands</span><span class="s-sub">转成 RHI 调用</span></div>
+  </div>
+
+  <h2><span class="num">3</span>FMeshBatch：几何与材质的原料单</h2>
+  <p><code>FMeshBatch</code> 由 <code>FPrimitiveSceneProxy</code> 提交。它描述"这个图元是什么"，包含：</p>
+  <ul>
+    <li><code>FMeshBatchElement</code>：顶点缓冲、索引缓冲、实例数、<code>PrimitiveUniformBuffer</code>（变换矩阵所在的常量缓冲）。</li>
+    <li><code>MaterialRenderProxy</code>：材质实例的渲染代理，指向编译好的着色器资源（但还没选 Pass 变体）。</li>
+    <li><code>VertexFactory</code>：顶点工厂类型（<code>FLocalVertexFactory</code>、<code>FSkeletalMeshVertexFactory</code>…），决定 VS 怎么读顶点数据。</li>
+    <li>LOD 索引、投影阴影标志等元数据。</li>
+  </ul>
+
+  <p>静态网格的 <code>FMeshBatch</code> 在 <code>AddToScene</code> 时收集（<code>FStaticMeshBatch</code>），不需要每帧重新产生。动态物体（骨骼网格、粒子、实例化组件）每帧调用 <code>GetDynamicMeshElements</code> 产生新的 <code>FMeshBatch</code>。</p>
+
+  <h2><span class="num">4</span>EMeshPass：Pass 枚举</h2>
+  <p>UE 4.26 用 <code>EMeshPass::Type</code> 枚举所有网格 Pass，每个 Pass 有自己的 <code>FMeshPassProcessor</code>：</p>
+
+  <pre><code><span class="cmt">// MeshPassProcessor.h（简化）</span>
+<span class="kw">namespace</span> <span class="typ">EMeshPass</span>
+{
+    <span class="kw">enum</span> <span class="typ">Type</span>
+    {
+        DepthPass,          <span class="cmt">// Depth Prepass</span>
+        BasePass,           <span class="cmt">// 写 GBuffer</span>
+        ShadowDepth,        <span class="cmt">// 阴影深度</span>
+        Translucency,       <span class="cmt">// 半透明</span>
+        Velocity,           <span class="cmt">// 速度缓冲</span>
+        <span class="cmt">// ... 共约 20 个</span>
+        Num
+    };
+}</code></pre>
+  <p class="code-cap"><code>EMeshPass</code> 枚举——每个值对应一个 <code>FMeshPassProcessor</code> 子类</p>
+
+  <p>每个 Pass 都有一个对应的 <code>FMeshPassProcessor</code> 子类，例如 <code>FDepthPassMeshProcessor</code>、<code>FBasePassMeshProcessor</code>。这些处理器的 <code>AddMeshBatch</code> 负责把 <code>FMeshBatch</code> 转成对应 Pass 的 <code>FMeshDrawCommand</code>。</p>
+
+  <h2><span class="num">5</span>FMeshDrawCommand：无状态的完整绘制描述</h2>
+  <p><code>FMeshDrawCommand</code> 是这条 pipeline 的核心产物，它是<strong>无状态</strong>的：不依赖任何全局渲染状态，完整描述了一次 draw call 所需的全部信息：</p>
+  <ul>
+    <li><strong>着色器绑定</strong>（<code>FMeshDrawShaderBindings</code>）：每个着色器阶段（VS/PS）用到的所有参数——贴图、常量缓冲、SRV 等的句柄（对应 0003 的描述符/根签名）。</li>
+    <li><strong>PSO 引用</strong>：对应的 <code>FGraphicsPipelineStateInitializer</code>（着色器+混合+光栅状态）。</li>
+    <li><strong>顶点流绑定</strong>：顶点缓冲、索引缓冲的偏移与步长。</li>
+    <li><strong>绘制参数</strong>：<code>DrawIndexedPrimitive</code> 需要的顶点数、实例数等。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">为什么"无状态"是关键设计目标</span>
+    <p>传统即时模式下，着色器绑定散落在各处调用链中；一旦全局状态被意外修改，绘制结果就不可预测。<code>FMeshDrawCommand</code> 把所有绑定自包含，任何线程都可以安全地读取并提交——这是并行录制（<code>FParallelMeshDrawCommandPass</code>，见 0019）和跨帧缓存两个特性的共同前提。</p>
+  </div>
+
+  <h2><span class="num">6</span>Retained Mode：静态缓存的工作方式</h2>
+  <p>静态网格的 <code>FMeshDrawCommand</code> 在 <code>AddToScene</code> 阶段调用 <code>CacheMeshDrawCommands</code> 生成并缓存，存进 <code>FCachedPassMeshDrawList</code>（每个 Pass 一张列表）。每帧 <code>InitViews</code> 结束后，可见性位图告诉系统哪些静态网格可见，系统直接从缓存里取出命令，不需要重新调用 <code>AddMeshBatch</code>。</p>
+
+  <p>动态物体走另一路径：每帧 <code>GetDynamicMeshElements</code> → 实时经 <code>FMeshPassProcessor::AddMeshBatch</code> 转换 → 生成临时 <code>FMeshDrawCommand</code> → 提交。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">静态网格</span><span class="s-sub">AddToScene 时</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage prog"><span class="s-name">CacheMeshDrawCommands</span><span class="s-sub">一次性生成<br>跨帧缓存</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage gpu"><span class="s-name">FCachedPassMeshDrawList</span><span class="s-sub">每帧直接取用</span></div>
+    <span class="flow-arrow">&nbsp;</span>
+    <div class="stage fixed" style="opacity:.3"><span class="s-name">↑ 动态物体</span><span class="s-sub">每帧 GetDynamicMeshElements → 实时转换</span></div>
+  </div>
+
+  <h2><span class="num">7</span>SubmitMeshDrawCommands：命令到 RHI</h2>
+  <p>所有命令收集完毕后，<code>SubmitMeshDrawCommands</code> 遍历 <code>FMeshDrawCommand</code> 列表，将每条命令展开成一系列 <code>FRHICommandList</code> 调用：设置 PSO、绑定描述符、设置顶点流、最终调用 <code>DrawIndexedPrimitive</code>。这一步在渲染线程（或并行工作线程）上完成，RHI 线程再将其翻译为 D3D12 命令列表提交 GPU。</p>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">静态网格的 <code>FMeshDrawCommand</code> 在哪个时机生成，并存放在哪里？</p>
+    <button class="q-opt">在 AddToScene 时由 CacheMeshDrawCommands 生成，存入 FCachedPassMeshDrawList，每帧可见时直接取用</button>
+    <button class="q-opt">在每帧 InitViews 时由 GetDynamicMeshElements 重新生成，存入临时缓冲</button>
+    <button class="q-opt">在 SubmitMeshDrawCommands 时即时生成，不缓存，每帧销毁</button>
+    <div class="q-feedback"
+      data-ok="对。这正是 retained-mode 的核心：静态网格的绘制命令只在首次加入场景时生成一次，之后每帧直接取用——消除了反复调用 AddMeshBatch 和着色器绑定计算的 CPU 开销。"
+      data-no="再想：retained-mode 的意义正在于静态物体不需要每帧重新准备绘制命令。CacheMeshDrawCommands 在 AddToScene 时跑一次，结果存在 FCachedPassMeshDrawList 里。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看图，说出 FMeshBatch → FMeshDrawCommand → RHI 这条流水线的三个阶段：各阶段的输入/输出是什么，静态和动态物体在哪里分叉？</summary>
+    <div class="answer">
+      <strong>阶段一</strong>：<code>FPrimitiveSceneProxy</code> 提交 <code>FMeshBatch</code>——静态网格在 AddToScene 时提交（一次性），动态物体每帧调用 <code>GetDynamicMeshElements</code> 提交。<br>
+      <strong>阶段二</strong>：每个 Pass 的 <code>FMeshPassProcessor::AddMeshBatch</code> 把 <code>FMeshBatch</code> 转成 <code>FMeshDrawCommand</code>（含 PSO、着色器绑定、顶点流、绘制参数）——静态网格的命令缓存进 <code>FCachedPassMeshDrawList</code>，动态物体的命令是临时的。<br>
+      <strong>阶段三</strong>：<code>SubmitMeshDrawCommands</code> 把 <code>FMeshDrawCommand</code> 列表展开成 <code>FRHICommandList</code> 调用，RHI 线程翻译为 D3D12 命令提交 GPU。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>三段式流水：<strong><code>FMeshBatch</code>（原料）→ <code>FMeshPassProcessor</code>（转换）→ <code>FMeshDrawCommand</code>（无状态绘制描述）→ <code>SubmitMeshDrawCommands</code>（RHI）</strong>。</li>
+      <li><code>FMeshDrawCommand</code> 无状态、自包含，可缓存、可合批——这是新管线相比旧 Drawing Policy 的核心优势。</li>
+      <li>静态网格走 <code>CacheMeshDrawCommands</code> 路径，AddToScene 时一次性缓存，每帧直接取用；动态物体每帧调用 <code>GetDynamicMeshElements</code> 实时生成。</li>
+      <li><code>EMeshPass</code> 枚举定义了所有网格 Pass，每个 Pass 有独立的 <code>FMeshPassProcessor</code> 子类负责着色器选择和转换。</li>
+      <li>设计动机根植于 0003/0004：降低 CPU 录制成本、避免 CPU-bound——场景越静态，缓存收益越大。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方，<a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/MeshDrawingPipeline">《Mesh Drawing Pipeline》— UE 4.27 Docs</a>——官方对本课整条流水线的权威说明，包含 <code>FMeshBatch</code>/<code>FMeshDrawCommand</code> 的字段释义和 retained-mode 的设计动机。对照本课阅读。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："FMeshBatch 和 FMeshDrawCommand 分别在哪个线程上创建？""材质实例的 shader permutation 是在 FMeshPassProcessor 里选的吗？""旧的 Drawing Policy 和现在这套到底哪里不一样？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0017-visibility-culling-hzb.html"><span class="nav-dir">← 上一课</span>0017 · 可见性与剔除</a>
+    <a class="next" href="0019-meshpassprocessor-binding-cache.html"><span class="nav-dir">下一课 →</span>0019 · Pass 处理器与着色器绑定</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 4 几何与可见性 · Mesh Draw Pipeline 是 GPU 侧所有 Pass 的共同入口。</footer>
+  </article>
+</div>
+</body>
+</html>

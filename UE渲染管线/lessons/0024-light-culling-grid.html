@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0024 · 光照剔除：Light Grid / 聚簇</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0024</p>
+  <h1>光照剔除：Light Grid / 聚簇</h1>
+  <p class="subtitle">场景里可能有几百盏动态点光和聚光，但每个像素只受其中几盏影响。Light Grid 用计算着色器把光源分配进屏幕 3D 网格，着色时按像素位置 O(1) 取回光源列表，把光照循环从"所有光"压缩到"相关光"。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~15 分钟</span>
+    <span><b>前置</b> 0002（计算着色器 / GPU 并行）、0023（BasePass / GBuffer）</span>
+    <span><b>产出</b> 能解释为什么要把光源分配进屏幕 3D 网格，以及它服务于哪些着色路径</span>
+  </div>
+
+  <p class="lead">延迟着色里，方向光全屏跑一次 pass 即可；但局部光（点光、聚光）每盏都有影响范围，若对每盏光遍历所有可见像素代价太高。另一个极端是在 PS 里对所有光循环并跳过不相关的——条件分支让 warp 里的线程分歧，浪费 GPU 利用率。Light Grid 的思路：在着色之前，用一个独立的计算 Pass 把每盏光的包围体投影到屏幕 3D 网格，把光源 ID 写进对应的簇（cluster）。着色时，任何像素只需查自己所在的簇，取到一个短列表——O(1) 查找，无分歧，无浪费。</p>
+
+  <h2><span class="num">1</span>ComputeLightGrid：入口与数据结构</h2>
+  <p>计算 Light Grid 的入口是 <code>ComputeLightGrid</code>（<code>LightGridInjection.cpp</code>）。它在 RDG 里注册一个计算 Pass，用 <code>LightGridInjection.usf</code> 里的 compute shader 执行以下步骤：</p>
+
+  <ol>
+    <li><b>划分网格</b>：把视图空间深度范围按对数切片分成若干 Z 层（froxel = frustum voxel），屏幕 XY 方向按固定 tile 大小（默认 64px）划格，得到三维网格。</li>
+    <li><b>光源注入</b>：对每盏局部光，计算其在视图空间中覆盖哪些格（包围球/锥体与 froxel AABB 相交测试），把光源 ID 写入这些格的光源链表。</li>
+    <li><b>构建索引缓冲</b>：把每个格的光源列表压缩成连续的索引数组，并在每个格的头部存（offset, count）。着色时按 offset/count 随机访问索引数组，取出光源 ID。</li>
+  </ol>
+
+  <pre><code><span class="cmt">// LightGridInjection.cpp（架构示意）</span>
+<span class="fn">ComputeLightGrid</span>(GraphBuilder, Scene, Views, ...);
+<span class="cmt">// 输出：</span>
+<span class="cmt">//   ForwardLightingViewResources.ForwardLocalLightBuffer  — 光源参数数组</span>
+<span class="cmt">//   ForwardLightingViewResources.NumCulledLightsGrid      — 每格光源数</span>
+<span class="cmt">//   ForwardLightingViewResources.CulledLightDataGrid      — 光源索引列表</span>
+<span class="cmt">// 打包到 FForwardLightData uniform buffer，绑定给多个 Pass</span></code></pre>
+
+  <div class="callout knowledge">
+    <span class="label">froxel 的 Z 分层为什么用对数</span>
+    <p>透视投影下，近处深度范围密集、远处稀疏。线性分层会把大量 Z 层堆在近处而远处过于粗糙。对数分层让每层在视图空间里的"厚度"随深度增加，视觉上均匀分布，兼顾近处精度与远处覆盖。cvar <code>r.Forward.LightGridSizeZ</code> 控制 Z 层数（默认 32），<code>r.Forward.LightGridPixelSize</code> 控制 XY tile 大小（默认 64）。</p>
+  </div>
+
+  <h2><span class="num">2</span>Light Grid 服务哪些路径</h2>
+
+  <div class="lanes">
+    <div class="lane render"><span class="lane-name">前向 / 聚簇着色</span><span class="lane-body">前向路径（Forward Renderer）或延迟路径里的"Clustered Deferred"（r.* cvar 开启）：PS 直接查 Light Grid，在一个 Pass 内对所有相关局部光着色，无需逐光 Pass。</span></div>
+    <div class="lane rhi"><span class="lane-name">半透明光照（0029）</span><span class="lane-body">半透明物体无法写 GBuffer，直接用 Light Grid 在前向 PS 里查询影响自身的光源，实现多光照射。</span></div>
+    <div class="lane gpu"><span class="lane-name">体积雾（0030）</span><span class="lane-body">体积雾的计算 Pass 按 froxel 逐格求光照贡献，直接复用 Light Grid 的分层结构。</span></div>
+    <div class="lane game"><span class="lane-name">纯延迟直接光（0025）</span><span class="lane-body">纯延迟路径（RenderLights）仍按光源逐个画全屏/包围体 Pass，不靠 Light Grid——但 Light Grid 数据对调试和混合路径仍有参考价值。</span></div>
+  </div>
+
+  <p>重点：<strong>Light Grid 是为前向/半透明/体积路径准备的共享资源</strong>，并非延迟直接光照的必要依赖。纯延迟路径里，<code>RenderLights</code>（0025）用模板+裁剪自行限制每盏光的影响区域，无需 Grid。</p>
+
+  <h2><span class="num">3</span>管线示意</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">所有局部光</span><span class="s-sub">点光/聚光<br>包围体参数</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">LightGridInjection<br>Compute</span><span class="s-sub">光源→froxel<br>相交测试</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">ForwardLightData UB</span><span class="s-sub">光源数组<br>+ 索引 Grid</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">前向/半透明 PS</span><span class="s-sub">按像素查 Grid<br>O(1) 取光列表</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">体积雾 Compute</span><span class="s-sub">按 froxel 求<br>光贡献</span></div>
+  </div>
+
+  <h2><span class="num">4</span>关键 cvar</h2>
+  <table>
+    <thead><tr><th>cvar</th><th>含义</th><th>默认值</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.Forward.LightGridSizeZ</code></td><td>Light Grid Z 层数（froxel 深度切片数）</td><td>32</td></tr>
+      <tr><td><code>r.Forward.LightGridPixelSize</code></td><td>XY 方向 tile 像素大小</td><td>64</td></tr>
+      <tr><td><code>r.Forward.MaxCulledLightsPerCell</code></td><td>每个 froxel 最多存多少盏光的索引</td><td>32</td></tr>
+      <tr><td><code>r.ForwardShading</code></td><td>启用前向渲染路径（会激活 Light Grid 作为主要光照来源）</td><td>0（延迟为默认）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">聚簇着色 vs. 分块着色（Tiled vs. Clustered）</span>
+    <p>分块延迟（Tiled Deferred，2D tile + 深度范围裁剪）是更早的方案，Light Grid 是其 3D 扩展（Clustered Deferred / Clustered Forward）。3D 版本在深度不连续（窗口、走廊）的场景里更准确：2D tile 若包含多个深度层（如近处遮挡物和远处窗外）会把所有层的光都纳入，而 3D froxel 精确区分深度层，不会把远处的灯光错误分配给前景像素。</p>
+  </div>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">UE 4.26 的纯延迟直接光照 Pass（RenderLights）是否直接依赖 Light Grid 来决定哪些像素需要着色？</p>
+    <button class="q-opt">是，RenderLights 读取 Light Grid 的 froxel 索引来逐像素分发光源</button>
+    <button class="q-opt">否，RenderLights 用模板测试和裁剪矩形来限制每盏光的影响区域，不依赖 Light Grid；Light Grid 主要服务前向/半透明/体积雾路径</button>
+    <button class="q-opt">是，但只对方向光使用 Light Grid，对局部光走模板路径</button>
+    <div class="q-feedback" data-ok="对。纯延迟路径 RenderLights 按光源逐个 Pass，用 stencil/scissor 自行限制区域；Light Grid 是为前向着色、半透明、体积雾准备的共享数据结构。" data-no="再想：延迟路径和前向路径的光照策略不同。RenderLights 用 stencil/scissor，Light Grid 服务需要在 PS 内查询光源的前向/半透明路径。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看图，解释 Light Grid 的三个构建步骤（划分→注入→索引），并说出它为什么在前向着色 PS 里能做到 O(1) 查询。</summary>
+    <div class="answer">① <b>划分</b>：把视图空间按对数 Z 切片 + 屏幕 XY tile 划成三维网格（froxel）。② <b>注入</b>：Compute Shader 对每盏局部光做包围体与 froxel 的相交测试，把光源 ID 写入所有相交格的链表。③ <b>索引</b>：把每格链表压缩成连续数组，每格头部存（offset, count）。O(1) 的原因：着色时，任何像素根据自己的屏幕坐标和深度，直接计算出所在 froxel 的下标，用 offset 直接跳到光源索引数组对应位置，读 count 个条目——整个过程是固定代价的随机访问，不受场景总光源数影响。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>Light Grid 把光源的影响范围预分配进屏幕 3D froxel 网格，着色时 O(1) 查表取相关光源列表，消除"全光源循环"的分歧开销。</li>
+      <li>入口：<code>ComputeLightGrid</code>（<code>LightGridInjection.cpp</code>）；输出绑定为 <code>FForwardLightData</code> uniform buffer。</li>
+      <li>主要服务：<strong>前向着色</strong>（主路径）、<strong>半透明光照（0029）</strong>、<strong>体积雾（0030）</strong>；纯延迟直接光照（0025）仍按光源逐 Pass，不依赖 Grid。</li>
+      <li>关键 cvar：<code>r.Forward.LightGridSizeZ</code>（Z 层数）、<code>r.Forward.LightGridPixelSize</code>（tile 大小）、<code>r.Forward.MaxCulledLightsPerCell</code>。</li>
+      <li>3D 聚簇比 2D 分块更准确：froxel 精确区分深度层，避免不同深度的光源相互污染。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-2/">《How Unreal Renders a Frame》part 2</a>——Light Grid 构建与 ForwardLightData 的抓帧详析；这是 Light Grid 相关内容的重点参考。引擎源码：<code>Engine/Source/Runtime/Renderer/Private/LightGridInjection.cpp</code>、<code>Engine/Shaders/Private/LightGridCommon.ush</code>、<code>Engine/Shaders/Private/LightGridInjection.usf</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："froxel 的 AABB 与光源包围球相交测试怎么做？""MaxCulledLightsPerCell 溢出了会怎样？""体积雾如何复用 froxel 结构？"随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0023-base-pass.html"><span class="nav-dir">← 上一课</span>0023 · Base Pass：写 GBuffer 与速度</a>
+    <a class="next" href="0025-deferred-direct-lighting.html"><span class="nav-dir">下一课 →</span>0025 · 直接光照：延迟光照通道</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 0024 Light Grid 是前向/半透明/体积雾的共享光源索引。</footer>
+  </article>
+</div>
+</body>
+</html>

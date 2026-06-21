@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0008 · FEngineLoop::Tick 深入：World Tick 与组件 Tick</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 2 · 游戏线程</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 2 · 游戏线程 · Lesson 0008</p>
+  <h1>FEngineLoop::Tick 深入：World Tick 与组件 Tick</h1>
+  <p class="subtitle">游戏线程一帧的完整旅程：从引擎主循环入口，经 <code>UWorld::Tick</code>、Tick 分组调度，到帧末把脏渲染状态刷入 <code>FScene</code>，最终触发渲染。这条链路是 Part 2 其余所有课的地基。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0005（三线程总览）</span>
+    <span><b>产出</b> 能描述从 <code>FEngineLoop::Tick</code> 到 <code>UWorld::Tick</code>、Tick 分组、再到帧末把渲染状态变更发往渲染线程的全过程</span>
+  </div>
+
+  <p class="lead">0005 告诉你游戏线程负责"决定场景内容"——这节课把这句话拆细。<code>FEngineLoop::Tick</code> 是整条链的第一个函数调用；它的职责不是算渲染，而是驱动世界里所有可能改变场景的逻辑——物理、动画、Gameplay——再把这些变化<strong>打包投递</strong>给渲染线程。理解这条链，你才能知道"一个组件移动了，渲染线程什么时候能看见"。</p>
+
+  <h2><span class="num">1</span>调用链顶层：三层入口</h2>
+  <p>主循环驱动是从 <code>FEngineLoop::Tick()</code>（<span class="file">LaunchEngineLoop.cpp</span>）开始的。它做了很多杂活（性能采样、帧率平滑、热重载），但最核心的一步是把帧驱动权交给引擎对象：</p>
+
+  <pre><code><span class="cmt">// LaunchEngineLoop.cpp（精简示意）</span>
+<span class="typ">GEngine</span>-><span class="fn">Tick</span>(DeltaSeconds, bIdleMode);   <span class="cmt">// 进入 UGameEngine::Tick 或 UEditorEngine::Tick</span></code></pre>
+
+  <p><code>GEngine</code> 的类型在 PIE 下是 <code>UGameEngine</code>，在编辑器下是 <code>UEditorEngine</code>，但都重写了 <code>Tick</code>。<code>UGameEngine::Tick</code> 最终调用：</p>
+
+  <pre><code><span class="cmt">// UEngine::Tick 节选（Engine.cpp），简化</span>
+World-><span class="fn">Tick</span>(<span class="typ">LEVELTICK_All</span>, DeltaSeconds);   <span class="cmt">// LevelTick.cpp，驱动所有 Actor/Component</span></code></pre>
+
+  <p>这三层——<code>FEngineLoop::Tick</code> → <code>GEngine->Tick</code> → <code>UWorld::Tick</code>——是游戏线程一帧真正的"主干道"。所有后面要讲的事都发生在 <code>UWorld::Tick</code> 的内部或其返回之后。</p>
+
+  <div class="callout knowledge">
+    <span class="label">文件定位</span>
+    <p><code>FEngineLoop::Tick</code> → <span class="file">Engine/Source/Runtime/Launch/Private/LaunchEngineLoop.cpp</span><br>
+    <code>UWorld::Tick</code> → <span class="file">Engine/Source/Runtime/Engine/Private/LevelTick.cpp</span><br>
+    这两个文件是游戏线程侧最值得反复翻阅的源码，4.26 调用关系在此都能追到。</p>
+  </div>
+
+  <h2><span class="num">2</span>Tick 分组：ETickingGroup 与 FTickTaskManager</h2>
+  <p><code>UWorld::Tick</code> 不是把所有 Actor 线性 tick 一遍——它分成多个<strong>Tick 组</strong>，按依赖顺序执行，且组内可以并行。Tick 分组由枚举 <code>ETickingGroup</code> 定义（<span class="file">TickTaskManagerInterface.h</span>）：</p>
+
+  <table>
+    <thead><tr><th>Tick 组</th><th>含义</th><th>典型用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>TG_PrePhysics</code></td><td>物理模拟之前</td><td>移动角色控制器、应用输入、动画预处理</td></tr>
+      <tr><td><code>TG_DuringPhysics</code></td><td>物理模拟期间</td><td>读物理但不干涉——物理子步在此并行</td></tr>
+      <tr><td><code>TG_PostPhysics</code></td><td>物理模拟之后</td><td>布娃娃、IK、物理读回结果</td></tr>
+      <tr><td><code>TG_PostUpdateWork</code></td><td>最晚更新</td><td>相机、后处理、需要其他组件最终状态的 Tick</td></tr>
+    </tbody>
+  </table>
+
+  <p>调度由 <code>FTickTaskManager</code>（<span class="file">TickTaskManager.cpp</span>）和 <code>FTickFunction</code> 驱动。每个可 Tick 的 Component/Actor 注册一个 <code>FTickFunction</code>，并声明它属于哪个组、依赖哪些其他 Tick Function。<code>FTickTaskManager</code> 在每帧建任务图，组内 Task 通过 TaskGraph 并行执行（在工作线程上，最终由游戏线程等待）。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 并行 Tick 与线程安全</span>
+    <p>同一个 <code>ETickingGroup</code> 内，互不依赖的 <code>FTickFunction</code> 会在工作线程上并发执行——不是只有游戏线程在跑。这意味着：若你在 Tick 里读写同组其他组件的数据而没有声明依赖，就会数据竞争。UE 的 Tick 依赖系统（<code>AddTickPrerequisite</code>）正是为此设计。骨骼网格动画更新（<code>USkeletalMeshComponent::TickComponent</code> → <code>TickPose</code> → <code>RefreshBoneTransforms</code>）默认在 <code>TG_PrePhysics</code> 并行执行。</p>
+  </div>
+
+  <h2><span class="num">3</span>骨骼网格动画在 Tick 里更新</h2>
+  <p>动画不在渲染线程跑——它是游戏线程侧 Tick 的一部分。<code>USkeletalMeshComponent</code> 在 <code>TickComponent</code> 里调用 <code>TickPose</code>，然后 <code>RefreshBoneTransforms</code> 把 <code>AnimInstance</code> 运算出的骨骼矩阵写进组件的本地 bone array。这些结果随后在帧末被"刷"进渲染线程侧的代理——细节见第 4 节。</p>
+
+  <h2><span class="num">4</span>帧末同步：SendAllEndOfFrameUpdates 与 MarkRenderStateDirty</h2>
+  <p>一帧 Tick 结束后，游戏侧有一大批组件"脏了"——变换变了、材质参数变了、骨骼姿势变了——但渲染线程还不知道。这时 <code>UWorld::Tick</code> 在帧末执行：</p>
+
+  <pre><code><span class="cmt">// LevelTick.cpp，帧末</span>
+World-><span class="fn">SendAllEndOfFrameUpdates</span>();   <span class="cmt">// 把所有 MarkRenderStateDirty 的组件刷到 FScene</span></code></pre>
+
+  <p><code>SendAllEndOfFrameUpdates</code> 遍历帧内所有调用过 <code>MarkRenderStateDirty()</code> / <code>MarkRenderTransformDirty()</code> 的组件，对每个组件调用相应的更新函数（如 <code>FScene::UpdatePrimitiveTransform</code>），内部通过 <code>ENQUEUE_RENDER_COMMAND</code> 把变更投到渲染线程的命令队列。</p>
+
+  <p>随后，<code>UGameViewportClient::Draw</code> → <code>FRendererModule::BeginRenderingViewFamily</code> 把"渲染这一帧"踢给渲染线程——这是 0005 讲过的那个入口，渲染线程从此接管（见 0013）。</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">FEngineLoop<br>::Tick</span><span class="s-sub">LaunchEngineLoop.cpp<br>帧入口</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">GEngine<br/>->Tick</span><span class="s-sub">UGameEngine /<br/>UEditorEngine</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">UWorld::Tick<br>LEVELTICK_All</span><span class="s-sub">LevelTick.cpp<br>Tick 分组执行</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">SendAllEndOf<br>FrameUpdates</span><span class="s-sub">刷脏组件<br>ENQUEUE_RENDER_COMMAND</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">触发渲染</span><span class="s-sub">BeginRendering<br>ViewFamily → 0013</span></div>
+  </div>
+  <figure><figcaption>游戏线程一帧的主干链路。前三格在游戏线程上串行/并行跑；第四格通过 <code>ENQUEUE_RENDER_COMMAND</code> 把数据推到渲染线程；最后一格是渲染线程拿到完整场景数据后开始工作的信号。</figcaption></figure>
+
+  <h2><span class="num">5</span>MarkRenderStateDirty 的语义</h2>
+  <p>组件并不在每次 setter 调用时立即通知渲染线程——那样一帧内多次修改就会多次推送。UE 的模式是：修改游戏侧数据时调用 <code>MarkRenderStateDirty()</code>（<span class="file">PrimitiveComponent.h</span>），把组件加入"脏列表"。帧末 <code>SendAllEndOfFrameUpdates</code> 统一处理，保证同一帧内只推送一次、且在所有 Tick 完成后推送。</p>
+
+  <div class="callout warn">
+    <span class="label">常见误区 · 直接读 UPrimitiveComponent 的渲染数据</span>
+    <p>渲染线程<strong>不能直接访问</strong> <code>UPrimitiveComponent</code>。游戏线程的 setter → <code>MarkRenderStateDirty</code> → <code>SendAllEndOfFrameUpdates</code> → <code>ENQUEUE_RENDER_COMMAND</code> 这条链是强制路径。如果你在渲染线程里想读组件数据，必须通过它的 <code>FPrimitiveSceneProxy</code> 副本（见 0009）。跳过这条路会数据竞争。</p>
+  </div>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">一个组件在 <code>TG_PostPhysics</code> Tick 里改了位置，渲染线程最早何时能看到这个变化？</p>
+    <button class="q-opt">同帧 <code>TG_PostPhysics</code> 结束后立即可见，因为游戏线程直接写 <code>FScene</code></button>
+    <button class="q-opt">同帧 <code>SendAllEndOfFrameUpdates</code> 之后，变更经 <code>ENQUEUE_RENDER_COMMAND</code> 入队，渲染线程消费时可见</button>
+    <button class="q-opt">下一帧游戏线程 Tick 开始时，由下一帧的 <code>MarkRenderStateDirty</code> 触发</button>
+    <div class="q-feedback" data-ok="正确。游戏线程调用 MarkRenderStateDirty 标脏，帧末 SendAllEndOfFrameUpdates 统一通过 ENQUEUE_RENDER_COMMAND 推入渲染线程队列，渲染线程消费后才可见。游戏线程绝不直接写 FScene。" data-no="再想：游戏线程不直接写渲染侧数据。MarkRenderStateDirty + SendAllEndOfFrameUpdates + ENQUEUE_RENDER_COMMAND 是强制路径，变更在帧末入队，渲染线程消费后才可见。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看笔记，说出 <code>ETickingGroup</code> 的四个分组和各自典型用途，以及为何同组 Tick 能并行而无需加锁。</summary>
+    <div class="answer"><strong>四组：</strong><code>TG_PrePhysics</code>（输入/移动，物理前）→ <code>TG_DuringPhysics</code>（读物理，物理并行）→ <code>TG_PostPhysics</code>（IK/布娃娃，物理后）→ <code>TG_PostUpdateWork</code>（相机，最晚）。<strong>并行安全的原因：</strong>同组内并行的 FTickFunction 之间不允许直接依赖（若有依赖需通过 <code>AddTickPrerequisite</code> 声明），因此彼此操作的数据不重叠，不需要加锁。声明了依赖的 Tick 会在依赖项完成后才被调度，保证顺序。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>游戏线程一帧的主干：<code>FEngineLoop::Tick</code>（<span class="file">LaunchEngineLoop.cpp</span>）→ <code>GEngine->Tick</code> → <code>UWorld::Tick(LEVELTICK_All, DeltaSeconds)</code>（<span class="file">LevelTick.cpp</span>）。</li>
+      <li>Tick 按 <code>ETickingGroup</code> 四组串行，组内 <code>FTickFunction</code> 可并行（TaskGraph）；声明依赖（<code>AddTickPrerequisite</code>）控制组内顺序。</li>
+      <li>骨骼动画（<code>USkeletalMeshComponent::TickPose</code> → <code>RefreshBoneTransforms</code>）在游戏线程侧、<code>TG_PrePhysics</code> 内完成，结果帧末送往渲染线程。</li>
+      <li>帧末 <code>SendAllEndOfFrameUpdates</code> 统一把 <code>MarkRenderStateDirty</code> 标记的组件通过 <code>ENQUEUE_RENDER_COMMAND</code> 推入渲染线程，游戏线程不直接写 <code>FScene</code>。</li>
+      <li>这条链路是理解 0009–0011 中"游戏态如何变成渲染态"的前提。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Matt Hoffman，<a href="https://medium.com/@lordned/unreal-engine-4-rendering-overview-part-1-c47f2da65346">《Unreal Engine 4 Rendering — Part 1: Introduction》</a>——从游戏线程 Tick 视角介绍帧的起点与线程切分，配合本课效果极好。UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a> 中"Threading"一节是核对线程职责的官方依据。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："<code>FTickTaskManager</code> 具体怎么建 Task 图？""<code>SendAllEndOfFrameUpdates</code> 里具体遍历的是哪个数组？""动画并行 Tick 和物理子步怎么协调？" 我是你的老师，随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0007-renderer-module-map.html"><span class="nav-dir">← 上一课</span>0007 · Renderer 模块地图</a>
+    <a class="next" href="0009-uworld-fscene-component-proxy.html"><span class="nav-dir">下一课 →</span>0009 · 场景的两份表达：UWorld→FScene、Component→Proxy</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 2 游戏线程 · Tick 链是游戏侧对渲染侧输送数据的起点。</footer>
+  </article>
+</div>
+</body>
+</html>

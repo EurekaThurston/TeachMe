@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 13 课 · 法线为什么要用逆转置矩阵</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 13 课 · 模块 2 空间与变换</div>
+<h1>法线为什么要用「逆转置矩阵」</h1>
+<p class="subtitle">这是 TA 最高频的隐形坑:非均匀缩放下,用模型矩阵直接变换法线,法线会<strong>歪掉、不再垂直于表面</strong>,光照随之出错(发暗、边缘漏光)。根因一句话,解法一句话——这一课讲透。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清:<strong>法线不是普通方向</strong>,它是「垂直于表面」的约束。在<strong>非均匀缩放</strong>下,直接用模型矩阵 M 变换法线会破坏垂直性。正确做法是用 <strong>M 的逆转置 (M⁻¹)ᵀ</strong> 变换法线。均匀缩放/纯旋转时可以偷懒直接用 M,但养成习惯总是对的。
+</div>
+
+<h2>法线是「约束」,不是「箭头」</h2>
+<p>
+回忆第 4、9 课:位置和方向要区分。法线比普通方向更特殊——它定义为<strong>垂直于表面的单位向量</strong>。关键词是<strong>垂直</strong>:法线的意义全在于它和表面切向的<strong>夹角是 90°</strong>。一旦这个垂直关系被破坏,法线就失去意义,光照(靠 N·L 算明暗,第 7 课)立刻出错。
+</p>
+<p>
+普通方向向量(比如速度)关心的是「指哪、多长」;法线关心的是「和表面保持垂直」。变换它们的规则因此不同。
+</p>
+
+<h2>翻车现场:把球压扁</h2>
+<p>
+设想一个球,表面某点的法线朝右上 45°,和表面相切线垂直。现在沿 X 轴<strong>压扁</strong>(非均匀缩放,S=(0.5, 1)):
+</p>
+<ul>
+  <li><strong>表面(切线方向)</strong>:被压扁后,切线跟着倾斜——这是对的,切线本来就贴着表面,表面怎么变它怎么变。</li>
+  <li><strong>法线如果也用同样的 S 变换</strong>:它会朝<strong>同一个方向</strong>倾斜。但表面被横向压扁后,真正的垂直方向应该朝<strong>相反方向</strong>偏!结果法线和表面<strong>不再垂直</strong>,扎进表面或翘起来。</li>
+</ul>
+<div class="formula">横向压扁表面 → 法线应当朝「更竖直」偏;但直接乘 S 会让它朝「更横」偏 —— 正好反了</div>
+<p>
+直觉记法:<strong>缩放表面和缩放法线是「相反」的</strong>。表面在某个方向被压扁,法线在那个方向反而要被「拉长」才能维持垂直。这个「相反」,数学上正是<strong>逆矩阵</strong>。
+</p>
+
+<h2>结论与公式:逆转置</h2>
+<p>
+要维持「法线 ⊥ 切线」,变换法线的矩阵必须是模型矩阵 M 的<strong>逆转置</strong>:
+</p>
+<div class="formula">N' = ( <span class="vec">M⁻¹</span> )ᵀ · N　　(只取 M 的 3×3 旋转/缩放部分,平移与法线无关)</div>
+<p>
+推导的核心:法线和切线的垂直关系是 <code>N · T = 0</code>。变换后要求 <code>N' · T' = 0</code> 仍成立。切线 T 跟着表面走,用 M 变换(<code>T' = M·T</code>)。代入解出来,N 必须用 <code>(M⁻¹)ᵀ</code> 变换,点积才恒为 0。你不必会背推导,但要记住<strong>「切线用 M,法线用 M 的逆转置」</strong>这一对。
+</p>
+<div class="callout callout-key">
+  <span class="label">为什么纯旋转时可以偷懒</span>
+  如果 M 是<strong>纯旋转</strong>(正交矩阵,第 10 课),它有个漂亮性质:<strong>逆 = 转置</strong>(<code>M⁻¹ = Mᵀ</code>)。于是逆转置 <code>(M⁻¹)ᵀ = (Mᵀ)ᵀ = M</code>——绕了一圈又变回 M!所以<strong>纯旋转(和均匀缩放)下,法线直接用 M 变换就是对的</strong>。只有<strong>非均匀缩放/剪切</strong>才会让 M 和 (M⁻¹)ᵀ 不同,才必须用逆转置。
+</div>
+
+<h2>接回引擎:你早就在用它</h2>
+<div class="callout callout-vfx">
+  <span class="label">UE / 材质里的逆转置</span>
+  引擎渲染时会自动帮你算好法线矩阵——UE 的 <code>Primitive.LocalToWorld</code> 之外还有专门给法线的矩阵。但当你<strong>手写</strong>变换法线(自定义 HLSL、World Position Offset 里改了几何、程序化网格),就得自己注意:非均匀缩放的物体上,法线要用逆转置,否则光照会出现「缩放越极端、暗部越脏」的现象。「模型一拉伸,光影就发暗/发花」——先怀疑法线没用逆转置。
+</div>
+<pre><code><span class="cmt">// 错:非均匀缩放下直接用模型矩阵变换法线 —— 法线会歪</span>
+<span class="kw">float3</span> N_wrong = <span class="fn">mul</span>((<span class="kw">float3x3</span>)WorldMatrix, normalLocal);
+
+<span class="cmt">// 对:用逆转置矩阵变换法线,维持垂直性</span>
+<span class="kw">float3x3</span> normalMatrix = <span class="fn">transpose</span>(<span class="fn">inverse</span>((<span class="kw">float3x3</span>)WorldMatrix));
+<span class="kw">float3</span> N_world  = <span class="fn">normalize</span>(<span class="fn">mul</span>(normalMatrix, normalLocal)); <span class="cmt">// 变换后务必重新归一化</span>
+</code></pre>
+<p>
+注意最后的 <code>normalize</code>:逆转置维持了<strong>方向(垂直性)</strong>,但不保证<strong>长度</strong>仍为 1,缩放会改变长度。光照前法线必须是单位长(第 6 课),所以变换后总要再归一化。
+</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>对所有物体都用模型矩阵变换法线。</strong> 均匀缩放/旋转没事,但非均匀缩放会让法线歪掉。统一用逆转置最稳。</li>
+  <li><strong>把平移也算进去。</strong> 法线是方向,不吃平移。只用 3×3 部分(回忆第 11 课 w=0)。</li>
+  <li><strong>变换后忘了归一化。</strong> 缩放会改长度,N·L 的明暗就错了。变换法线后永远 normalize。</li>
+  <li><strong>以为切线也要逆转置。</strong> 切线贴着表面、跟表面一起变,用 M 本身;只有法线用逆转置。下一课的 TBN 会用到这个区别。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz13"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/geometry/transforming-normals.html" target="_blank">Scratchapixel — Transforming Normals</a>
+  —— 用图和推导把「为什么法线不能直接乘模型矩阵、为什么是逆转置」讲得很扎实。本课的权威参考。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把那段「N·T=0 → 必须用逆转置」的推导一步步写给你看?或者 debug 你某个非均匀缩放物体「拉伸后光影发暗」是不是法线矩阵的问题?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>切线空间与法线贴图(TBN)</strong>——法线贴图为什么整体偏蓝、TBN 三件套怎么把切线空间法线搬到世界空间,以及「法线贴图发黑」到底怎么回事。模块 2 收官。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz13", [
+  {
+    q: "法线和普通方向向量最关键的区别是?",
+    options: ["法线要维持与表面垂直", "法线一定更长", "法线不能归一化", "法线没有方向"],
+    correct: 0,
+    why: "法线的意义在于「垂直于表面」。变换若破坏这个垂直关系,法线就失效,光照(N·L)随之出错。"
+  },
+  {
+    q: "非均匀缩放下,直接用模型矩阵 M 变换法线会?",
+    options: ["法线歪掉,不再垂直于表面", "完全正确没问题", "法线变长但方向对", "法线被平移"],
+    correct: 0,
+    why: "表面被某轴压扁,法线该朝相反方向偏;直接乘 M 会让它朝同方向偏,正好反了,失去垂直性。"
+  },
+  {
+    q: "变换法线的正确矩阵是?",
+    options: ["模型矩阵的逆转置 (M⁻¹)ᵀ", "模型矩阵 M 本身", "模型矩阵的转置 Mᵀ", "单位矩阵"],
+    correct: 0,
+    why: "为维持 N·T=0,法线必须用 (M⁻¹)ᵀ 变换。切线用 M,法线用逆转置,这一对要记牢。"
+  },
+  {
+    q: "为什么纯旋转时法线可以直接用 M 变换?",
+    options: ["旋转是正交矩阵,逆转置等于自身", "旋转不影响法线", "法线在旋转下不变", "旋转矩阵没有逆"],
+    correct: 0,
+    why: "正交矩阵逆=转置,所以 (M⁻¹)ᵀ=M。纯旋转/均匀缩放可偷懒;只有非均匀缩放/剪切才必须逆转置。"
+  },
+  {
+    q: "用逆转置变换完法线后,还必须做什么?",
+    options: ["重新归一化", "再乘一次 M", "加上平移量", "取反方向"],
+    correct: 0,
+    why: "逆转置维持垂直方向但不保证长度为 1,缩放会改长度。光照前法线必须单位长,所以要 normalize。"
+  },
+  {
+    q: "物体非均匀拉伸后「光影发暗/发花」,最该先查?",
+    options: ["法线是否用了逆转置矩阵", "贴图分辨率", "材质混合模式", "粒子数量"],
+    correct: 0,
+    why: "非均匀缩放下法线没用逆转置,垂直性被破坏,N·L 算错明暗,表现为暗部脏、边缘漏光。"
+  }
+]);
+</script>
+</body>
+</html>

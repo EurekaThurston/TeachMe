@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0025 · 直接光照：延迟光照通道</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0025</p>
+  <h1>直接光照：延迟光照通道</h1>
+  <p class="subtitle">延迟着色的承诺在这里兑现：RenderLights 逐光源读 GBuffer、做 BRDF，用模板/裁剪把着色开销严格锁在光照影响区域内，阴影遮罩整合进来，最终把直接光贡献累加到 SceneColor。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0021（GBuffer / ShadingModelID）、0024（光照剔除）、0026（阴影，前置可弱）</span>
+    <span><b>产出</b> 能描述 RenderLights 如何逐光源读 GBuffer 做 BRDF，并理解模板/裁剪优化与阴影遮罩整合</span>
+  </div>
+
+  <p class="lead">GBuffer 里已有每像素的 WorldNormal、BaseColor、Roughness、Metallic 和 ShadingModelID；SceneDepth 可以反推世界坐标。现在只需对每盏动态光执行一次"读 GBuffer → 按 ShadingModel 求 BRDF → 写 SceneColor"的 Pass，就能完成直接光照。光照成本 ∝ 光源数 × 受影响像素数，与几何三角形数无关——这正是延迟着色在 0021 里许下的承诺。</p>
+
+  <h2><span class="num">1</span>代码入口：RenderLights</h2>
+  <p><code>FDeferredShadingSceneRenderer::RenderLights</code>（<code>LightRendering.cpp</code>）按光源类型分发：方向光全屏、局部光按包围体。核心着色器是 <code>FDeferredLightVS</code> + <code>FDeferredLightPS</code>（<code>DeferredLightPixelShaders.usf</code>）。</p>
+
+  <pre><code><span class="cmt">// LightRendering.cpp（架构示意）</span>
+<span class="kw">void</span> <span class="typ">FDeferredShadingSceneRenderer</span>::<span class="fn">RenderLights</span>(
+    <span class="typ">FRDGBuilder</span>&amp; GraphBuilder, ...)
+{
+    <span class="kw">for</span> (<span class="kw">auto</span>&amp; LightSceneInfo : Scene-&gt;Lights)
+    {
+        <span class="kw">if</span> (LightSceneInfo.LightType == <span class="kw">LightType_Directional</span>)
+            <span class="fn">RenderDirectionalLight</span>(GraphBuilder, LightSceneInfo, ...);
+        <span class="kw">else</span>
+            <span class="fn">RenderLocalLight</span>(GraphBuilder, LightSceneInfo, ...); <span class="cmt">// 点/聚光</span>
+    }
+}</code></pre>
+
+  <h2><span class="num">2</span>FDeferredLightPS 的执行流程</h2>
+  <p><code>DeferredLightPixelShaders.usf</code> 里的 PS 对每个覆盖片元做：</p>
+
+  <pre><code><span class="cmt">// DeferredLightPixelShaders.usf（核心路径，简化）</span>
+<span class="kw">void</span> <span class="fn">DeferredLightPixelMain</span>(... <span class="kw">out</span> <span class="typ">float4</span> OutColor : SV_Target0)
+{
+    <span class="cmt">// 1. 从 SceneTextures 读 GBuffer</span>
+    <span class="typ">FGBufferData</span> GBuffer = <span class="fn">GetGBufferDataFromSceneTextures</span>(ScreenUV);
+
+    <span class="cmt">// 2. 从 SceneDepth 重建世界坐标</span>
+    <span class="typ">float3</span> WorldPosition = <span class="fn">ReconstructWorldPosition</span>(ScreenUV, SceneDepth);
+
+    <span class="cmt">// 3. 按 ShadingModelID 分发 BRDF</span>
+    <span class="typ">FDirectLighting</span> Lighting = <span class="fn">SurfaceShading</span>(
+        GBuffer,          <span class="cmt">// 材质属性</span>
+        LightData,        <span class="cmt">// 当前光源参数</span>
+        WorldPosition,
+        CameraDirection);
+    <span class="cmt">// SurfaceShading 内部 switch(GBuffer.ShadingModelID) → ShadingModels.ush</span>
+
+    <span class="cmt">// 4. 乘以阴影遮罩（来自 Shadow Pass，0026）</span>
+    Lighting.Diffuse  *= ShadowMask;
+    Lighting.Specular *= ShadowMask;
+
+    <span class="cmt">// 5. 累加进 SceneColor（Additive blend）</span>
+    OutColor = <span class="typ">float4</span>(Lighting.Diffuse + Lighting.Specular, 0);
+}</code></pre>
+
+  <p><code>SurfaceShading</code>（<code>ShadingModels.ush</code>）根据 <code>ShadingModelID</code> switch 到正确分支：DefaultLit 调用 <code>GGX_Specular + Lambert_Diffuse</code>（<code>BRDF.ush</code>），ClearCoat 在此基础上多一层 clear coat 项，SubsurfaceProfile 走屏幕空间次表面散射……每种模型读取的 GBufferD 字段也不同。</p>
+
+  <h2><span class="num">3</span>模板 + 裁剪：局部光的精确开销控制</h2>
+  <p>如果对一盏影响范围 2 米的点光全屏跑 PS，99% 的像素都会做无用功。UE 用两级机制把 PS 调用锁在有效区域：</p>
+
+  <div class="lanes">
+    <div class="lane render"><span class="lane-name">Scissor 裁剪</span><span class="lane-body">把光源包围球/锥体在屏幕上的 2D AABB 设为 scissor rect。光源包围体屏幕外的矩形区域直接跳过光栅化，无 PS 调用。</span></div>
+    <div class="lane rhi"><span class="lane-name">Stencil 模板</span><span class="lane-body">先用 stencil pass 在深度测试下把"位于光源包围体内部"的像素标记（stencil write），再用 stencil test 在光照 PS 里只处理被标记的像素。精确到每像素，排除同一 scissor 矩形内却在包围体外的像素。</span></div>
+  </div>
+
+  <p>对于极大或极近的光源（包围体覆盖大部分屏幕），stencil 的 pass 本身开销不划算——UE 会切换到全屏 Pass（<code>bDrawSimpleLights</code> 路径），直接在 PS 里做距离衰减提前 discard。</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">光源包围体</span><span class="s-sub">球/锥</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">Scissor AABB</span><span class="s-sub">屏幕 2D 裁剪</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Stencil Pass</span><span class="s-sub">标记包围体内<br>的像素</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">Deferred Light PS</span><span class="s-sub">读 GBuffer<br>BRDF + 阴影</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">SceneColor</span><span class="s-sub">Additive 累加</span></div>
+  </div>
+
+  <h2><span class="num">4</span>方向光：全屏 Pass</h2>
+  <p>方向光无衰减范围，所有可见像素都受影响，走全屏 quad 直接 PS，不需要 stencil。方向光同时是阴影遮罩（CSM，0026）最主要的消费者——阴影 Pass 把每像素阴影因子写进屏幕空间阴影遮罩纹理，RenderLights 读这张纹理乘进漫反射/镜面反射结果。</p>
+
+  <h2><span class="num">5</span>附加特性：光照函数与 IES</h2>
+  <p>UE 4.26 支持每盏光关联一个<strong>光照函数材质</strong>（Light Function）——在光照 PS 里额外采样一张纹理或执行材质逻辑，对光照结果做 mask/调制（如窗户投影）。IES Profile 是另一种修饰：从 .ies 文件烘焙成 1D/2D 纹理，描述光源的真实角度分布，光照 PS 按出射方向采样此纹理作为强度系数。两者都在 <code>FDeferredLightPS</code> 里作为 permutation 编译进去，非零成本但不影响主流程。</p>
+
+  <h2><span class="num">6</span>Tiled / Clustered Deferred 路径</h2>
+  <p>UE 4.26 也支持 Tiled Deferred 路径（<code>r.TiledDeferredShading=1</code>）：用计算着色器把屏幕分 tile，每 tile 内对所有光源做剔除+着色，省去逐光 Pass 的 draw call overhead。这是对局部光数量极多时（数百盏）的优化路径，核心数学与逐光 Pass 相同，差别是批量执行。</p>
+
+  <div class="callout warn">
+    <span class="label">为什么说"延迟在此兑现"</span>
+    <p>0021 讲过延迟着色的核心：光照成本与几何无关。这里是物理体现：<code>RenderLights</code> 对每盏光只遍历受影响的像素，不管场景里有多少三角形——哪怕场景有一百万个多边形，只要它们的 GBuffer 已经写好，光照 Pass 的代价完全由"光源数 × 受影响像素数"决定。</p>
+  </div>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">延迟光照 Pass 里，FDeferredLightPS 如何确定某像素应该用哪种 BRDF（如 DefaultLit 还是 Subsurface）？</p>
+    <button class="q-opt">读取 GBufferB.a 的低 4 bit 得到 ShadingModelID，在 SurfaceShading / ShadingModels.ush 里 switch 到对应 BRDF 实现</button>
+    <button class="q-opt">读取 GBufferC 的 alpha 通道，alpha 大于 0.5 则用 Subsurface，否则 DefaultLit</button>
+    <button class="q-opt">在 CPU 侧为每种 ShadingModel 分开提交不同 draw call，不在 PS 里 switch</button>
+    <div class="q-feedback" data-ok="对。GBufferB.a 低 4 bit = ShadingModelID，FDeferredLightPS 读出后在 ShadingModels.ush 里 switch 分发——这是 0021 GBuffer 布局里 ShadingModelID 存在的直接理由。" data-no="再想：ShadingModelID 存在 GBufferB.a 的低 4 bit 里，光照 PS 读出来做 switch，这是 GBuffer 布局设计的核心目的之一。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出延迟光照 Pass 完成一盏局部光着色的完整步骤（从 stencil 到 SceneColor），并解释阴影遮罩是如何整合进来的。</summary>
+    <div class="answer">① Scissor：用光源包围体屏幕 AABB 设裁剪矩形，排除屏幕外区域。② Stencil Pass：在深度测试下标记位于包围体内部的像素。③ Deferred Light PS：读 GBufferA/B/C/D + SceneDepth 重建世界坐标，调用 <code>SurfaceShading</code> 按 ShadingModelID switch 到正确 BRDF（漫反射+镜面），计算光源贡献。④ 阴影整合：Shadow Pass（0026）已把每像素阴影因子写入屏幕空间阴影遮罩纹理，光照 PS 采样此纹理直接乘进漫反射/镜面结果。⑤ Additive Blend：把光照贡献叠加到 SceneColor——每盏光叠加一次，最终 SceneColor 包含所有直接光之和（加上 BasePass 写入的 Emissive）。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>入口：<code>FDeferredShadingSceneRenderer::RenderLights</code>（<code>LightRendering.cpp</code>）；核心着色器：<code>FDeferredLightPS</code>（<code>DeferredLightPixelShaders.usf</code>）。</li>
+      <li>每盏光：读 GBuffer → 重建世界坐标 → <code>SurfaceShading</code>（按 ShadingModelID switch）→ 乘阴影遮罩 → Additive 累加 SceneColor。</li>
+      <li>局部光双级优化：<strong>Scissor</strong>（2D AABB）+ <strong>Stencil</strong>（逐像素包围体测试），把 PS 调用严格锁在影响区域。</li>
+      <li>BRDF 实现在 <code>ShadingModels.ush</code> 和 <code>BRDF.ush</code>；阴影遮罩来自 Shadow Pass（0026），以屏幕空间纹理传入。</li>
+      <li>延迟着色在此兑现：光照成本 ∝ 光源数 × 受影响像素，与场景几何复杂度彻底解耦。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-2/">《How Unreal Renders a Frame》part 2</a>——延迟光照 Pass 的抓帧全解析，stencil/scissor 优化可视化，是本课的对照参考。引擎源码：<code>Engine/Source/Runtime/Renderer/Private/LightRendering.cpp</code>（RenderLights）、<code>Engine/Shaders/Private/DeferredLightPixelShaders.usf</code>、<code>Engine/Shaders/Private/ShadingModels.ush</code>、<code>Engine/Shaders/Private/BRDF.ush</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："Stencil Pass 具体怎么用背面/正面写入来标记包围体内部？""Light Function 的材质是怎么编译进 FDeferredLightPS permutation 的？""TiledDeferredShading 的 compute shader 路径和逐光 Pass 的性能拐点在哪里？"随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0024-light-culling-grid.html"><span class="nav-dir">← 上一课</span>0024 · 光照剔除：Light Grid / 聚簇</a>
+    <a class="next" href="0026-shadows-csm-shadowdepth.html"><span class="nav-dir">下一课 →</span>0026 · 阴影：CSM 与 ShadowDepth</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 0025 延迟光照 Pass 是"延迟"承诺的兑现点。</footer>
+  </article>
+</div>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0028 · 反射与环境光：Reflection Environment、天空、IBL</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 5 · 延迟着色</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 5 · 延迟着色 · Lesson 0028</p>
+  <h1>反射与环境光：Reflection Environment、天空、IBL</h1>
+  <p class="subtitle">SSR 只能给出屏幕内的反射；屏幕外和低频的环境光照依靠预烘焙立方体图与天光，三者按优先级回退合成最终反射与间接镜面光。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~20 分钟</span>
+    <span><b>前置</b> 0027（SSR）、0021（GBuffer 粗糙度/金属度）</span>
+    <span><b>产出</b> 能描述反射捕获立方体图、天光 IBL、SSR 如何按层级回退合成最终反射</span>
+  </div>
+
+  <p class="lead">0027 的 SSR 精度最高，但只能给出屏幕内已渲染的内容。SSR 没有覆盖的区域（屏幕外的物体、被遮挡的几何、低频漫反射环境光）要靠 <strong>Reflection Environment</strong>（预卷积立方体图）+ <strong>Sky Light</strong>（天空光/天光）来填充。这节课讲这两个来源的数据从哪里来，如何预处理，以及三个来源（SSR、反射捕获、天光）如何在合成 Pass 里按优先级混合出最终结果。</p>
+
+  <h2><span class="num">1</span>反射的三层能量来源</h2>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">SSR</span><span class="s-sub">屏幕内镜面反射<br>最准·有置信度</span></div>
+    <span class="flow-arrow">回退↓</span>
+    <div class="stage fixed"><span class="s-name">Reflection Capture</span><span class="s-sub">预卷积立方体图<br>中频·覆盖全局</span></div>
+    <span class="flow-arrow">回退↓</span>
+    <div class="stage fixed"><span class="s-name">Sky Light (IBL)</span><span class="s-sub">最低频漫反射<br>+ 远场镜面</span></div>
+  </div>
+
+  <p>合成规则：SSR 置信度高的区域优先用 SSR；SSR 没覆盖（置信度低/为零）的区域回退到最近的 Reflection Capture；天光作为最低频兜底，提供全方向均匀的漫反射环境光（Indirect Diffuse）和粗糙表面的镜面回退。</p>
+
+  <h2><span class="num">2</span>Reflection Capture：预卷积立方体图</h2>
+  <p>Reflection Capture（反射捕获）由场景中放置的 <code>AReflectionCaptureActor</code>（球形/盒形）表示。它在编辑器或运行时捕获周围场景的立方体图，并做 <strong>IBL 预卷积</strong>（Image Based Lighting）：</p>
+  <ul>
+    <li>对立方体图按 <strong>GGX 分布</strong>预积分镜面反射，结果存入 <code>FReflectionEnvironmentCubemapArray</code> 的不同 mip 级别；</li>
+    <li><strong>mip 0</strong> = 完全镜面（粗糙度 ≈ 0）；<strong>mip N</strong> = 完全漫反射（粗糙度 ≈ 1）；</li>
+    <li>着色时按 GBuffer 粗糙度选取对应 mip，单次纹理采样即得到对应粗糙度的环境镜面值（Split Sum 近似）。</li>
+  </ul>
+
+  <pre><code><span class="cmt">// ReflectionEnvironment.usf（IBL 采样，简化）</span>
+<span class="typ">float</span> Roughness = GBufferB.a;
+<span class="typ">float</span> MipLevel  = <span class="fn">ComputeReflectionCaptureMipFromRoughness</span>(Roughness);
+<span class="typ">float3</span> ReflDir  = <span class="fn">reflect</span>(-ViewDir, WorldNormal);
+<span class="typ">float4</span> EnvSample = ReflCaptureCubemapArray.<span class="fn">SampleLevel</span>(
+    CubemapSampler, <span class="typ">float4</span>(ReflDir, CaptureIndex), MipLevel);
+<span class="cmt">// Split Sum 第二项：BRDF LUT 按 (NoV, Roughness) 查表</span>
+<span class="typ">float2</span> EnvBRDF  = PreIntegratedGF.<span class="fn">SampleLevel</span>(..., 0).rg;
+<span class="typ">float3</span> SpecIBL  = EnvSample.rgb * (SpecularColor * EnvBRDF.x + EnvBRDF.y);</code></pre>
+  <p class="code-cap">Split Sum 近似：把 GGX 积分拆成"预卷积环境"和"BRDF LUT"两项分别预计算，运行时两次采样相乘——这是 UE 自 4.x 起的标准 IBL 实现。</p>
+
+  <div class="callout knowledge">
+    <span class="label">FReflectionEnvironmentCubemapArray</span>
+    <p>场景里所有反射捕获的立方体图打包进一个 2D 数组纹理（<code>FReflectionEnvironmentCubemapArray</code>）。着色时以 Capture Index 为数组层索引，避免频繁纹理切换。每个像素根据世界坐标找最近的 Capture（并在多个 Capture 间做空间混合），取出对应 index 后做上面的 Split Sum 采样。</p>
+  </div>
+
+  <h2><span class="num">3</span>Sky Light：天光与 IBL 兜底</h2>
+  <p><code>ASkyLight</code> 捕获周围天空（可以是 HDR 天空球、SkyAtmosphere 的大气，或固定颜色），生成：</p>
+  <ul>
+    <li><strong>Irradiance（辐照度）球谐函数</strong>（SH）：低频漫反射间接光的来源，在每像素根据法线方向查 SH 系数得到漫反射间接光；</li>
+    <li><strong>预卷积镜面立方体图</strong>：同 Reflection Capture，但代表无限远处的天空信息，用于粗糙表面的镜面回退。</li>
+  </ul>
+  <p>天光的意义：Reflection Capture 只覆盖有限区域，角色移动到没有 Capture 的区域时仍需要天光兜底。天光提供全局均匀的漫反射 ambient，是保证场景不"纯黑"的最后防线。</p>
+
+  <h2><span class="num">4</span>合成顺序：SSR → 反射捕获 → 天光</h2>
+  <p>代码：<code class="file">ReflectionEnvironment.cpp</code>（<code>RenderDeferredReflectionsAndSkyLighting</code>）。合成逻辑按置信度叠加：</p>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">IBL 基础层</span><span class="s-sub">反射捕获 + 天光<br>Split Sum</span></div>
+    <span class="flow-arrow">+</span>
+    <div class="stage prog"><span class="s-name">SSR 叠加</span><span class="s-sub">用 SSR.alpha<br>lerp 覆盖</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">最终反射</span><span class="s-sub">写入 SceneColor<br>镜面间接分量</span></div>
+  </div>
+
+  <p>具体：先用 IBL（反射捕获 + 天光 Split Sum）算出基础镜面间接光；再把 SSR 结果按其置信度（alpha 通道）做 lerp 叠加：<code>lerp(IBL, SSR, SSR.alpha)</code>。SSR.alpha 为 0 的区域完全用 IBL，为 1 的区域完全用 SSR，中间过渡。</p>
+
+  <div class="callout insight">
+    <span class="label">为什么不直接用 SSR 代替一切</span>
+    <p>SSR 的置信度在以下情况下为零：反射方向射向屏幕之外（视角外）、被几何遮挡的表面、光滑度低于阈值的表面。若强制用 SSR 这些区域反射为黑——视觉上更差。分层回退策略确保了最坏情况（SSR 完全失效）时仍有合理的 IBL 兜底。</p>
+  </div>
+
+  <h2><span class="num">5</span>平面反射（Planar Reflection）</h2>
+  <p>对于需要高精度反射的平面（水面、镜子），UE 4.26 提供 <code>APlanarReflectionActor</code>：在反射平面的镜像位置再渲染一帧场景，直接作为反射纹理——精度最高，但代价是多一次完整的场景渲染（Draw Call 翻倍）。只在视觉关键的地标平面上使用，并通过 <code>r.Reflections.AllowScreenSpaceReflections</code> 控制其与 SSR 的混合策略。</p>
+
+  <h2><span class="num">6</span>漫反射间接光的完整路径</h2>
+  <p>容易混淆：IBL 同时提供镜面反射（上面）和漫反射间接光（ambient diffuse）。漫反射路径：天光 SH → 像素法线 → 漫反射 IBL 辐照度，结合 GBuffer 的 BaseColor（漫反射颜色），得到间接漫反射分量，再乘以 SSAO 系数（0027）后叠加到 SceneColor。</p>
+
+  <table>
+    <thead><tr><th>间接光分量</th><th>来源</th><th>调节</th></tr></thead>
+    <tbody>
+      <tr><td>漫反射 IBL（Indirect Diffuse）</td><td>天光 SH + SSGI（0027）</td><td>SkyLight.Intensity，r.SSGI.Enable</td></tr>
+      <tr><td>镜面 IBL（Indirect Specular）</td><td>反射捕获 + 天光 Split Sum + SSR</td><td>r.ReflectionMethod，r.SSR.Quality</td></tr>
+      <tr><td>环境光遮蔽</td><td>SSAO（0027）</td><td>r.AmbientOcclusion，PP Volume AO Intensity</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">动态 Reflection Capture 的性能代价</span>
+    <p>Reflection Capture 默认在编辑器"Build Reflection Captures"时离线烘焙，运行时只读不写——极廉价。若设置为 <code>Realtime Capture</code>（实时捕获），每帧重新渲染立方体图的 6 个面，相当于 6 次额外场景渲染，仅用于绝对必要的动态反射场景（如随时间变化的天空）。</p>
+  </div>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">Reflection Capture 立方体图为什么要存多个 mip 级别，且 mip 越高对应粗糙度越大？</p>
+    <button class="q-opt">因为对不同粗糙度的 GGX 镜面积分是预烘焙在 mip 里的：粗糙度越高，积分范围越广，结果越模糊，对应更高 mip</button>
+    <button class="q-opt">为了节省显存，远处的反射捕获用低分辨率 mip，近处用 mip 0</button>
+    <button class="q-opt">mip 用于 trilinear 过滤，与粗糙度无关</button>
+    <div class="q-feedback"
+      data-ok="对。这是 Split Sum 近似的核心：把 GGX 对环境的积分预计算进 mip，粗糙度越大 NDF 越宽，积分把越大范围的环境模糊进来，所以用更高（更模糊）的 mip 近似。"
+      data-no="再想想：这里的 mip 不是 LOD 距离，而是对 GGX 镜面积分的预卷积——粗糙度决定 NDF 宽窄，粗糙度越高采样越广，结果越糊，用更高 mip 近似这个积分。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>当 SSR 置信度为零（反射方向射出屏幕外）时，这个像素的镜面间接光从哪里来？经过哪些数据和计算步骤？</summary>
+    <div class="answer">
+      <ol>
+        <li>根据该像素的<strong>世界坐标</strong>找到最近的 Reflection Capture（或多个 Capture 空间混合）；</li>
+        <li>从 GBuffer B 读取<strong>粗糙度</strong>，调用 <code>ComputeReflectionCaptureMipFromRoughness</code> 换算为 mip 级别；</li>
+        <li>用世界法线和视方向算出<strong>反射方向</strong>，以 (反射方向, CaptureIndex, MipLevel) 采样 <code>FReflectionEnvironmentCubemapArray</code>；</li>
+        <li>乘以 Split Sum 第二项（BRDF LUT，按 NoV 和粗糙度查 <code>PreIntegratedGF</code>），得到 <code>SpecIBL</code>；</li>
+        <li>SSR.alpha = 0 → lerp 100% 用此 IBL 结果写入 SceneColor 的镜面分量。</li>
+        <li>天光的预卷积立方体图作为无穷远处兜底（当 Capture 覆盖不足时）。</li>
+      </ol>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>反射能量来源有三层：<strong>SSR</strong>（屏幕内最准）→ <strong>Reflection Capture</strong>（预卷积立方体图）→ <strong>Sky Light</strong>（全局兜底），按 SSR 置信度 lerp 回退。</li>
+      <li>Reflection Capture 的 IBL 用 <strong>Split Sum 近似</strong>：粗糙度 → mip 级别选择预卷积环境图，乘以 BRDF LUT，单次采样近似完整 GGX 积分。</li>
+      <li><code>FReflectionEnvironmentCubemapArray</code> 是所有捕获立方体图的数组，按 Capture Index 索引。</li>
+      <li>天光 SH 提供低频漫反射 IBL；天光预卷积立方体图提供粗糙镜面兜底。</li>
+      <li>合成入口：<code>RenderDeferredReflectionsAndSkyLighting()</code>（<code>ReflectionEnvironment.cpp</code>）。</li>
+      <li>平面反射（Planar Reflection）代价高（重新渲染场景），仅用于视觉关键平面。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》part 3</a>——含反射合成 Pass 的抓帧分析与 IBL 路径说明。补充：<a href="https://docs.unrealengine.com/4.27/en-US/BuildingWorlds/LightingAndShadows/ReflectionEnvironment/">UE 4.27 Reflection Environment 文档</a>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："Split Sum 近似的推导？""多个 Reflection Capture 空间混合的权重怎么计算？""天光 SH 几阶，覆盖哪些频率？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0027-screen-space-ssao-ssr-ssgi.html"><span class="nav-dir">← 上一课</span>0027 · 屏幕空间：SSAO / SSR / SSGI</a>
+    <a class="next" href="0029-translucency-forward.html"><span class="nav-dir">下一课 →</span>0029 · 半透明渲染：Translucency 与前向着色</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 5 延迟着色 · 反射三层回退策略：从屏幕精确到全局兜底，缺哪层就用下一层。</footer>
+  </article>
+</div>
+</body>
+</html>

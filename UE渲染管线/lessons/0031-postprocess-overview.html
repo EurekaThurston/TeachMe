@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0031 · 后处理管线概述</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 6 · 后处理</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 6 · 后处理 · Lesson 0031</p>
+  <h1>后处理管线概述</h1>
+  <p class="subtitle">场景颜色从 HDR 线性出发，经 TAA、景深、动态模糊、泛光、曝光、色调映射一路走到 LDR——这节课把整条后处理链的结构和 RDG 接线方式搞清楚。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~18 分钟</span>
+    <span><b>前置</b> 0009（RDG 基础）、0030（延迟着色完成前的场景颜色）</span>
+    <span><b>产出</b> 能说出后处理链的整体顺序、每个 Pass 的输入/输出类型、FPostProcessSettings 如何决定哪些 Pass 运行</span>
+  </div>
+
+  <p class="lead">延迟着色结束后，SceneColor 是一张 HDR 线性颜色缓冲——它存储的值可以超过 1.0，颜色空间是线性 sRGB，没有 gamma，没有曝光压缩，不能直接送到显示器。后处理链的职责就是把这张缓冲变成一张能被显示器正确呈现的 LDR（或 HDR 输出）图像，同时叠加所有美术驱动的视觉效果。整条链在 UE 4.26 里被组织成一个 <strong>RDG Pass 序列</strong>，入口是 <code class="file">PostProcessing.cpp</code> 里的 <code class="fn">AddPostProcessingPasses</code>。</p>
+
+  <h2><span class="num">1</span>场景颜色的生命周期：从 HDR 到 LDR</h2>
+  <p>理解后处理链的前提是搞清楚 SceneColor 的"格式旅程"。它在不同阶段使用不同的像素格式和值域：</p>
+
+  <table>
+    <thead><tr><th>阶段</th><th>格式（典型）</th><th>值域</th><th>颜色空间</th></tr></thead>
+    <tbody>
+      <tr><td>Base Pass 输出 / 光照后</td><td><code>PF_FloatRGBA</code>（R16G16B16A16F）</td><td>[0, ∞)</td><td>线性 sRGB</td></tr>
+      <tr><td>TAA / 大部分后处理中间步</td><td><code>PF_FloatRGBA</code> 或 <code>PF_FloatR11G11B10</code></td><td>[0, ∞)</td><td>线性 sRGB</td></tr>
+      <tr><td>色调映射输出</td><td><code>PF_B8G8R8A8</code> 或 <code>PF_A2B10G10R10</code></td><td>[0, 1]</td><td>sRGB（含 gamma）</td></tr>
+      <tr><td>UI 合成后 / 送 Present</td><td>同上（取决于交换链格式）</td><td>[0, 1]</td><td>sRGB / Rec.709</td></tr>
+    </tbody>
+  </table>
+  <p class="marginnote"><code>PF_FloatR11G11B10</code> 是 RGB 各 11/11/10 bit 的无符号浮点格式，UE 4.26 在内存受限时可选用它替代 R16G16B16A16F 存场景颜色，省约一半显存，但无法存负值和透明度。</p>
+
+  <p>关键约束：<strong>在色调映射之前，所有 Pass 都工作在线性 HDR 域</strong>。这意味着泛光的亮度加法、曝光乘法、SSAO 乘法，全部在线性空间进行，结果物理正确。色调映射是这条链里唯一一个把值域从 HDR 压缩到 [0,1] 的 Pass，它也是线性→gamma 的转换点。</p>
+
+  <h2><span class="num">2</span>整条 Pass 链的顺序</h2>
+  <p>以下是 UE 4.26 默认路径（PC，延迟，不开移动端简化）的后处理 Pass 典型执行顺序。顺序并不是随意的——每个 Pass 的前置依赖决定了它的位置。</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">TAA</span><span class="s-sub">时间抗锯齿<br>消耗速度缓冲</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">SSR</span><span class="s-sub">屏幕空间反射<br>（可选）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">SSAO</span><span class="s-sub">屏幕空间 AO<br>（可选）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">景深</span><span class="s-sub">Diaphragm DOF<br>（可选）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">动态模糊</span><span class="s-sub">Motion Blur<br>（可选）</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">泛光</span><span class="s-sub">Bloom<br>下采样金字塔</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">自动曝光</span><span class="s-sub">Eye Adapt<br>直方图</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">色调映射</span><span class="s-sub">ACES + LUT<br>HDR→LDR</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">UI 合成</span><span class="s-sub">Present</span></div>
+  </div>
+
+  <div class="callout knowledge">
+    <span class="label">为什么 TAA 在最前面</span>
+    <p>TAA 需要读取 GBuffer 的速度通道（Velocity），该通道在 Base Pass 写入、在后处理开始时还"新鲜"。而且 TAA 的核心工作是对齐当前帧和历史帧，如果先跑泛光，泛光产生的低频光晕会污染历史帧重投影，产生鬼影和闪烁。所以 TAA 是后处理链里第一个写 SceneColor 的 Pass。</p>
+    <p>例外：运动模糊在某些配置下可以在 TAA 之前或之后——UE 4.26 默认把它放在 TAA 之后、泛光之前，以避免运动模糊消耗未经 TAA 处理的含锯齿图像。</p>
+  </div>
+
+  <h2><span class="num">3</span>AddPostProcessingPasses：RDG 接线的总入口</h2>
+  <p><code class="file">Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessing.cpp</code> 里的 <code class="fn">AddPostProcessingPasses</code> 函数是整条后处理链的组织者。它的职责不是执行任何着色工作，而是<strong>按条件注册 RDG Pass</strong>：</p>
+
+  <pre><code><span class="cmt">// PostProcessing.cpp — 结构示意（非原文逐字）</span>
+<span class="typ">void</span> <span class="fn">AddPostProcessingPasses</span>(
+    <span class="typ">FRDGBuilder</span>&amp; GraphBuilder,
+    <span class="typ">const FViewInfo</span>&amp; View,
+    <span class="typ">const FPostprocessContext</span>&amp; Context)
+{
+    <span class="cmt">// 1. TAA（若 AA 模式 == TAA）</span>
+    <span class="kw">if</span> (View.AntiAliasingMethod == <span class="str">AAM_TemporalAA</span>)
+        SceneColor = <span class="fn">AddTemporalAAPass</span>(GraphBuilder, View, ...);
+
+    <span class="cmt">// 2. 景深（若 FPostProcessSettings::bDOF）</span>
+    <span class="kw">if</span> (<span class="fn">IsDOFEnabled</span>(View))
+        SceneColor = <span class="fn">AddDiaphragmDOFPass</span>(GraphBuilder, View, SceneColor, ...);
+
+    <span class="cmt">// 3. 动态模糊</span>
+    <span class="kw">if</span> (<span class="fn">IsMotionBlurEnabled</span>(View))
+        SceneColor = <span class="fn">AddMotionBlurPass</span>(GraphBuilder, View, SceneColor, ...);
+
+    <span class="cmt">// 4. 泛光下采样 + 上采样</span>
+    <span class="typ">FRDGTextureRef</span> BloomOutput = <span class="fn">AddBloomPass</span>(GraphBuilder, View, SceneColor);
+
+    <span class="cmt">// 5. 眼部适应（直方图 → 曝光值）</span>
+    <span class="typ">FRDGBufferRef</span> EyeAdaptation = <span class="fn">AddEyeAdaptationPass</span>(GraphBuilder, View, SceneColor);
+
+    <span class="cmt">// 6. 色调映射 + LUT：HDR → LDR</span>
+    SceneColor = <span class="fn">AddTonemapPass</span>(GraphBuilder, View, SceneColor,
+                                   BloomOutput, EyeAdaptation, ...);
+    <span class="cmt">// SceneColor 现在是 LDR sRGB</span>
+}</code></pre>
+  <p class="code-cap">每一步返回的 <code>SceneColor</code> 是 <code class="typ">FRDGTextureRef</code>——一个 RDG 虚拟纹理句柄，没有实际分配显存，直到 RDG 编译执行时才确定别名与分配。</p>
+
+  <p>注意：这里并不是真正按顺序执行，而是在 <strong>RDG Builder</strong> 里录制 Pass 依赖图。所有 <code class="fn">AddXxxPass</code> 调用结束后，调用 <code class="fn">GraphBuilder.Execute()</code> 才会按拓扑序真正执行。RDG 会自动：</p>
+  <ul>
+    <li>在 Pass 之间插入 <strong>资源屏障（Resource Barrier）</strong>，把 SceneColor 从写目标切换为着色器可读；</li>
+    <li>对生命周期不重叠的中间缓冲做<strong>内存别名（Aliasing）</strong>，节省峰值显存；</li>
+    <li>把不依赖图形管线的 Pass（如曝光直方图）调度到<strong>异步计算（Async Compute）</strong>队列。</li>
+  </ul>
+
+  <h2><span class="num">4</span>FPostProcessSettings：数据驱动哪些 Pass 运行</h2>
+  <p><code class="typ">FPostProcessSettings</code> 是 <code class="file">Scene.h</code> 中定义的一个大结构体，聚合了所有后处理效果的参数。它由 <code class="typ">APostProcessVolume</code> 或相机组件的 <code>PostProcessSettings</code> 字段填写，在渲染线程通过 <code class="typ">FSceneView</code> 传入。</p>
+
+  <table>
+    <thead><tr><th>字段（选取）</th><th>控制的效果</th><th>典型范围</th></tr></thead>
+    <tbody>
+      <tr><td><code>BloomIntensity</code></td><td>泛光强度（0 = 关）</td><td>0–8</td></tr>
+      <tr><td><code>AutoExposureMinBrightness</code> / <code>MaxBrightness</code></td><td>自动曝光范围（EV100）</td><td>-10 – +20</td></tr>
+      <tr><td><code>DepthOfFieldFocalDistance</code></td><td>DOF 焦距（0 = 关 DOF）</td><td>0–∞ cm</td></tr>
+      <tr><td><code>MotionBlurAmount</code></td><td>运动模糊强度（0 = 关）</td><td>0–1</td></tr>
+      <tr><td><code>FilmSlope</code> / <code>Toe</code> / <code>Shoulder</code></td><td>ACES 曲线参数</td><td>0–1</td></tr>
+      <tr><td><code>ColorGradingIntensity</code></td><td>LUT 颜色分级强度</td><td>0–1</td></tr>
+      <tr><td><code>ScreenPercentage</code></td><td>内部渲染分辨率比例（DRS）</td><td>50–200%</td></tr>
+    </tbody>
+  </table>
+
+  <p><code class="fn">AddPostProcessingPasses</code> 在注册每个 Pass 之前，都会读取 <code>View.FinalPostProcessSettings</code>（已经过所有 PostProcessVolume 的混合和优先级叠加后的最终值）做条件判断。例如 <code>BloomIntensity == 0</code> 时泛光 Pass 整体跳过，避免一点开销都不浪费。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · Pass 跳过是编译期决策</span>
+    <p>RDG 里的"不注册 Pass"和"注册 Pass 但 PS 里做 discard"代价不同。前者在 RDG 编译期就消失，相关的资源分配、屏障、命令录制全部不存在；后者仍然有 draw call 和着色器开销。UE 4.26 后处理设计的正确方式：在 <code class="fn">AddPostProcessingPasses</code> 里用 C++ 条件跳过注册，而不是在 HLSL 里用 <code class="kw">if</code> 分支。</p>
+  </div>
+
+  <h2><span class="num">5</span>SceneColor 的"Ping-Pong"模式与 RDG 别名</h2>
+  <p>后处理链里每个 Pass 读当前 SceneColor、写新的 SceneColor，形成一种"乒乓"（Ping-Pong）缓冲模式——每步产出一个新的 <code class="typ">FRDGTextureRef</code>，旧的在之后的 Pass 不再写入。RDG 能检测到哪些中间纹理的生命周期不重叠，并把它们映射到同一块显存——这就是<strong>内存别名</strong>。</p>
+
+  <p>典型情况：TAA 输出、景深中间缓冲、泛光各层级下采样，在同一帧里可以共享显存，因为它们不同时存活。对于一帧后处理链来说，显存峰值可能只需要 2–3 张全分辨率 HDR 纹理，而不是每个 Pass 独占一张。</p>
+
+  <div class="callout knowledge">
+    <span class="label">RDG Transient Resources vs. External Resources</span>
+    <p>用 <code class="fn">GraphBuilder.CreateTexture()</code> 创建的是<strong>瞬态（Transient）</strong>纹理，生命周期由 RDG 管理，可参与别名。而历史帧缓冲（如 TAA 历史）是<strong>外部（External）</strong>资源，用 <code class="fn">GraphBuilder.RegisterExternalTexture()</code> 注入图中，不参与别名——因为它需要跨帧持续存在。</p>
+  </div>
+
+  <h2><span class="num">6</span>后处理与主渲染器的接缝</h2>
+  <p><code class="fn">AddPostProcessingPasses</code> 的调用点在 <code class="file">DeferredShadingRenderer.cpp</code> 的 <code class="fn">FDeferredShadingSceneRenderer::Render</code> 函数里，位于所有几何 Pass、光照 Pass、半透明 Pass、体积雾之后。调用时传入的 <code>SceneColor</code> 已经是包含了直接光照 + 间接光照 + 半透明的合并结果。</p>
+
+  <p>后处理链结束后，SceneColor 变为 LDR sRGB，交给 UI/HUD 合成 Pass（Slate 渲染的 UI 叠加在最顶层），然后通过 RHI <code class="fn">Present</code> 提交到交换链。这也是后续 0036 课（RHI Thread 与 RHICommandList）的起点。</p>
+
+  <div class="callout warn">
+    <span class="label">ScreenPercentage 与后处理分辨率</span>
+    <p><code>ScreenPercentage</code>（r.ScreenPercentage）控制场景颜色的内部渲染分辨率。设为 50% 意味着 SceneColor 宽高各是最终输出的一半，大部分后处理 Pass（TAA、景深、动态模糊、泛光）都在这个低分辨率下工作，节省带宽。<strong>空间上采样（Primary Screen Percentage Upscale）</strong>在色调映射附近把图像放大到原始分辨率。这个上采样 Pass 的位置很关键——它之前的 Pass 省带宽，之后的 Pass（UI 合成、HUD）在全分辨率工作，保证 UI 清晰度。</p>
+  </div>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">UE 4.26 后处理链中，哪个 Pass 是 HDR → LDR 的转换点？在此之前，场景颜色处于什么状态？</p>
+    <button class="q-opt">TAA Pass；TAA 之前场景颜色还是 GBuffer 格式（整数 8bit）</button>
+    <button class="q-opt">泛光 Pass；泛光高频提取后颜色被归一化到 [0,1]</button>
+    <button class="q-opt">色调映射 Pass（Tonemap）；在此之前 SceneColor 一直是 HDR 线性浮点格式</button>
+    <div class="q-feedback"
+      data-ok="对。色调映射是唯一的 HDR→LDR 转换步骤，在它之前（TAA、景深、动态模糊、泛光、自动曝光）全部工作在线性 HDR 浮点域。"
+      data-no="再想想：TAA 和泛光都在 HDR 线性域工作，输入输出都是 FloatRGBA。只有色调映射才把值域压缩到 [0,1] 并做 gamma 编码。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看图，说出 UE 4.26 后处理链从 TAA 到 Present 的 Pass 顺序及每步的输入/输出格式变化。</summary>
+    <div class="answer">
+      <ol>
+        <li><strong>TAA</strong>：输入 HDR SceneColor + 速度缓冲（GBuffer Velocity）+ 历史帧纹理 → 输出去锯齿的 HDR SceneColor（FloatRGBA）。</li>
+        <li><strong>SSR（可选）</strong>：输入 SceneColor + GBuffer 法线/深度 → 输出叠加了屏幕空间反射的 HDR SceneColor。</li>
+        <li><strong>景深（可选）</strong>：输入 HDR SceneColor + 深度 → 输出散焦模糊的 HDR SceneColor。</li>
+        <li><strong>动态模糊（可选）</strong>：输入 HDR SceneColor + 速度缓冲 → 输出运动拖尾的 HDR SceneColor。</li>
+        <li><strong>泛光</strong>：下采样金字塔提取高亮 → Gaussian 上采样 → 输出泛光纹理（HDR），不直接写 SceneColor，而是在色调映射时作为 add 混入。</li>
+        <li><strong>自动曝光</strong>：从 SceneColor 构建亮度直方图 → 输出曝光值缓冲（1×1 R32F）。</li>
+        <li><strong>色调映射</strong>：输入 HDR SceneColor + 泛光 + 曝光值 + 颜色分级 LUT → 输出 LDR sRGB（B8G8R8A8）。</li>
+        <li><strong>UI 合成</strong>：UI/HUD 叠加在 LDR SceneColor 上 → 提交 RHI Present。</li>
+      </ol>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>后处理链入口是 <code>PostProcessing.cpp</code> 的 <code>AddPostProcessingPasses</code>，它负责按条件向 RDG 注册 Pass，不直接执行。</li>
+      <li>SceneColor 全程保持 HDR 线性浮点格式，直到<strong>色调映射 Pass</strong> 才压缩到 LDR [0,1]。</li>
+      <li>Pass 顺序：TAA → 景深 → 动态模糊 → 泛光 → 自动曝光 → 色调映射 → UI → Present。</li>
+      <li><code>FPostProcessSettings</code> 控制哪些 Pass 运行，条件判断在 C++ 注册阶段完成，False 则整个 Pass 不进 RDG 图。</li>
+      <li>RDG 的内存别名让中间缓冲共享显存；TAA 历史缓冲是 External Resource，不参与别名，跨帧存活。</li>
+      <li><code>ScreenPercentage</code> 决定大部分后处理在低分辨率工作，空间上采样在色调映射附近把分辨率恢复。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》Part 3</a>——含后处理 Pass 序列的逐步分析，是本课的对照地图。源码主体：<code>Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessing.cpp</code>，函数 <code>AddPostProcessingPasses</code>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："RDG Builder.Execute() 具体在哪里调用？""SceneColor 的像素格式怎么用 RenderDoc 确认？""ScreenPercentage 和 Temporal Upscale（TAAU）的区别是什么？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0030-volumetric-fog-atmosphere.html"><span class="nav-dir">← 上一课</span>0030 · 体积雾与大气</a>
+    <a class="next" href="0032-taa.html"><span class="nav-dir">下一课 →</span>0032 · 时间抗锯齿（TAA）</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 6 后处理 · 后处理链是一条 RDG Pass 序列，HDR 线性场景颜色在这里走完最后一公里变成可显示图像。</footer>
+  </article>
+</div>
+</body>
+</html>

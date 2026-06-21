@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 数学 · 术语表 Glossary</title>
+<link rel="stylesheet" href="../assets/styles.css">
+<style>
+  dl.gl { margin: 1.2rem 0; }
+  dl.gl dt { font-weight: 600; color: var(--accent); margin-top: 1.1rem; font-size: 1.04rem; }
+  dl.gl dt .en { font-family: "SF Mono","Cascadia Code",Consolas,monospace; font-size: 0.92rem; color: var(--ink); }
+  dl.gl dd { margin: 0.25rem 0 0; }
+  dl.gl dd .hlsl { font-family: monospace; font-size: 0.88rem; color: var(--hlsl); }
+  .grp { margin-top: 2.4rem; }
+</style>
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 参考</div>
+<h1>术语表 Glossary</h1>
+<p class="subtitle">本门的统一术语。每节课都遵守这里的叫法与符号约定;有歧义时以本表为准。随课程增长。</p>
+
+<div class="callout callout-key">
+  <span class="label">符号约定</span>
+  向量用粗体小写 <span class="vec">a</span>、<span class="vec">b</span> 或带分量 (x, y, z);标量用普通字母 k、t。HLSL 里 <code>float2/3/4</code>;
+  Niagara 里向量是 <code>Vector</code> / <code>Position</code>。UE 坐标系:<strong>左手系,X=前、Y=右、Z=上,单位 cm</strong>;角度对外用度(°),三角函数内部用弧度(rad)。
+</div>
+
+<div class="grp">
+<h2>模块 0 · 地基</h2>
+<dl class="gl">
+  <dt>坐标系 <span class="en">coordinate system</span></dt>
+  <dd>用一组数(坐标)给空间里每个点编号的规则。需要:一个原点 origin + 几条带方向和刻度的轴 axis。</dd>
+  <dt>左手 / 右手系 <span class="en">left/right-handed</span></dt>
+  <dd>三条轴的朝向手性。决定叉积方向和「正旋转」方向。<strong>UE 是左手系</strong>;OpenGL/多数数学书是右手系。</dd>
+  <dt>弧度 <span class="en">radian</span></dt>
+  <dd>角的「自然」单位:半径为 1 的圆上,转过的弧长就是弧度。整圈 = 2π rad = 360°。三角函数吃的是弧度。</dd>
+  <dt>sin / cos</dt>
+  <dd>单位圆上转过角 θ 后,落点的 <strong>y 坐标 = sin θ</strong>,<strong>x 坐标 = cos θ</strong>。范围 [−1, 1],周期 2π。</dd>
+  <dt>atan2(y, x)</dt>
+  <dd>由一个方向 (x, y) 反求它的角度,自动处理四个象限。求朝向角的标准工具。</dd>
+  <dt>lerp(a, b, t) <span class="en">linear interpolation</span></dt>
+  <dd>线性插值:<code>a + (b − a)·t</code>。t=0 给 a,t=1 给 b,中间按比例混合。HLSL <span class="hlsl">lerp</span>。</dd>
+  <dt>clamp / saturate</dt>
+  <dd>把数限制进区间。<code>clamp(x, lo, hi)</code>;<span class="hlsl">saturate(x)</span> = clamp 到 [0, 1],shader 里极常用。</dd>
+  <dt>smoothstep(a, b, x)</dt>
+  <dd>把 x 从 [a, b] 平滑映射到 [0, 1],两端是平滑的 S 形(导数为 0),不像 lerp 那样硬。做软边/渐变。</dd>
+  <dt>frac(x)</dt>
+  <dd>取小数部分:<code>x − floor(x)</code>。把任意数折回 [0, 1)。UV 平铺、随机、重复图案的基石。</dd>
+</dl>
+</div>
+
+<div class="grp">
+<h2>模块 1 · 向量</h2>
+<dl class="gl">
+  <dt>向量 <span class="en">vector</span></dt>
+  <dd>一组有序的数 (x, y, z)。可表示<strong>位置</strong>(从原点出发的点)或<strong>方向+大小</strong>(一支箭)。同一组数,看你怎么用。</dd>
+  <dt>标量 <span class="en">scalar</span></dt>
+  <dd>单个数,没有方向。用来缩放向量。</dd>
+  <dt>分量 <span class="en">component</span></dt>
+  <dd>向量的某一维:a.x、a.y、a.z。HLSL 里可 swizzle:<code>a.xy</code>、<code>a.xxz</code>。</dd>
+  <dt>长度 / 模 <span class="en">length / magnitude</span></dt>
+  <dd>箭有多长:<code>|a| = √(x² + y² + z²)</code>(勾股定理推广)。HLSL <span class="hlsl">length(a)</span>。</dd>
+  <dt>归一化 <span class="en">normalize</span></dt>
+  <dd>把向量除以自己的长度,得到长度=1、方向不变的<strong>单位向量</strong>。用来表示「纯方向」。HLSL <span class="hlsl">normalize(a)</span>。</dd>
+  <dt>单位向量 <span class="en">unit vector</span></dt>
+  <dd>长度恰为 1 的向量。法线、光照方向、朝向都该是单位向量。</dd>
+  <dt>点积 <span class="en">dot product</span></dt>
+  <dd><code>a·b = ax·bx + ay·by + az·bz = |a||b|cosθ</code>。结果是<strong>标量</strong>。测「多同向」:>0 同侧、0 垂直、<0 反向。HLSL <span class="hlsl">dot(a,b)</span>。</dd>
+  <dt>叉积 <span class="en">cross product</span></dt>
+  <dd>两个 3D 向量给出<strong>同时垂直于二者</strong>的新向量,长度=两者张成平行四边形面积=<code>|a||b|sinθ</code>。算法线、建正交基。HLSL <span class="hlsl">cross(a,b)</span>。</dd>
+</dl>
+</div>
+
+<div class="grp">
+<h2>模块 2 · 空间与变换</h2>
+<dl class="gl">
+  <dt>坐标空间 <span class="en">coordinate space</span></dt>
+  <dd>一套「原点 + 基」。常见:Local(物体自身)、World(全局)、View(相机)、Tangent(表面切线)、Screen/Clip。同一个点在不同空间坐标不同。</dd>
+  <dt>基向量 <span class="en">basis vector</span></dt>
+  <dd>定义一个空间的几条轴向量。任何向量都是基向量的加权和(线性组合)。</dd>
+  <dt>矩阵 <span class="en">matrix</span></dt>
+  <dd>一个数表;几何上=「装着变换后基向量的盒子」。<code>矩阵 × 向量</code> = 把向量从一个空间搬到另一个空间。</dd>
+  <dt>齐次坐标 <span class="en">homogeneous coordinate</span></dt>
+  <dd>给 3D 点补第 4 维 w:点用 w=1、方向用 w=0。这样 4×4 矩阵才能同时表达旋转/缩放<strong>和平移</strong>。</dd>
+  <dt>TRS</dt>
+  <dd>Translate(平移)·Rotate(旋转)·Scale(缩放)三种基本变换,组合成物体的世界变换。乘法顺序有讲究。</dd>
+  <dt>逆转置矩阵 <span class="en">inverse-transpose</span></dt>
+  <dd>变换<strong>法线</strong>要用的矩阵(模型矩阵的逆的转置)。非均匀缩放下,直接用模型矩阵会让法线歪掉。</dd>
+  <dt>切线空间 / TBN</dt>
+  <dd>贴在表面上的局部坐标系:Tangent、Bitangent、Normal 三轴。法线贴图存的是切线空间法线(所以整体偏蓝)。</dd>
+</dl>
+</div>
+
+<div class="grp">
+<h2>模块 3 · 旋转</h2>
+<dl class="gl">
+  <dt>欧拉角 <span class="en">Euler angles</span></dt>
+  <dd>用 pitch/yaw/roll 三个绕轴角描述朝向。直观但有<strong>万向锁 gimbal lock</strong>、且依赖轴序。</dd>
+  <dt>万向锁 <span class="en">gimbal lock</span></dt>
+  <dd>欧拉角在某些姿态下两个轴重合、丢失一个旋转自由度的现象。</dd>
+  <dt>四元数 <span class="en">quaternion</span></dt>
+  <dd>用 4 个数 (x, y, z, w) 紧凑编码「绕某轴转某角」。无万向锁、好插值。UE 里是 <code>FQuat</code>。</dd>
+  <dt>slerp</dt>
+  <dd>球面线性插值:在两个朝向之间匀速、最短地转过去。朝向过渡用它,别用欧拉角 lerp。</dd>
+</dl>
+</div>
+
+<div class="grp">
+<h2>模块 4 · 程序化 / shader 数学</h2>
+<dl class="gl">
+  <dt>UV</dt>
+  <dd>贴图/材质上的 2D 坐标,通常 [0,1]²。乘缩放=平铺,加偏移=移动,配合 frac 重复。</dd>
+  <dt>SDF 有向距离场 <span class="en">signed distance field</span></dt>
+  <dd>一个函数:给点返回「到形状边界的距离」,内部为负、外部为正。配 smoothstep 出软边、配 min/max 做布尔。</dd>
+  <dt>噪声 <span class="en">noise</span></dt>
+  <dd>看似随机、实则可复现的连续函数(value/Perlin/simplex)。做扰动、烟、火、消融。</dd>
+  <dt>极坐标 <span class="en">polar coordinates</span></dt>
+  <dd>用 (半径 r, 角度 θ) 而非 (x, y) 描述平面点。做径向/旋涡 UV。<code>r=length(uv)</code>,<code>θ=atan2(uv.y, uv.x)</code>。</dd>
+</dl>
+</div>
+
+<div class="lesson-footer">
+  <p>回到 <a href="../SYLLABUS.html">课程总纲</a> · <a href="../RESOURCES.md">资源清单</a> · <a href="../MISSION.md">我的使命</a></p>
+</div>
+</body>
+</html>

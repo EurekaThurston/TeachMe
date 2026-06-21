@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0042 · 性能方法论：CPU-bound vs GPU-bound（课程终章）</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 8 · 调试与性能</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 8 · 调试与性能 · Lesson 0042 · 终章</p>
+  <h1>性能方法论：CPU-bound vs GPU-bound</h1>
+  <p class="subtitle">你已经走完了整条渲染管线。这节课是终章：从 <code>stat unit</code> 开始，建立一套严格的诊断流程——先定位瓶颈线程，再根据线程方向找根因，最后对应到本课程每一节课学过的系统上开处方。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~25 分钟</span>
+    <span><b>前置</b> 整门课程（尤其 0004、0005、0014–0020、0041）</span>
+    <span><b>产出</b> 能独立走完诊断流程：stat unit → 定位瓶颈 → stat scenerendering/stat initviews/stat gpu → 找根因 → 开处方</span>
+  </div>
+
+  <p class="lead">性能优化最大的陷阱不是"不知道怎么优化"，而是"在错误的地方优化"。把 GPU 着色器简化了三天，结果瓶颈根本在 CPU 的 draw call 提交上——帧率纹丝不动。这节课的核心是一张<strong>诊断决策树</strong>：用几条 stat 命令把瓶颈精确定位到线程和系统，再调出对应章节的知识开处方。</p>
+
+  <h2><span class="num">1</span>起点：<code>stat unit</code> 读三线程计时</h2>
+
+  <p>0004 讲过 UE 的三级流水线：游戏线程（Game）、渲染线程（Draw）、GPU。<code>stat unit</code> 把这三条传送带各自的耗时打到屏幕上：</p>
+
+  <pre><code>stat unit</code></pre>
+
+  <div class="callout knowledge">
+    <span class="label">四个数的确切含义</span>
+    <p><code>stat unit</code> 显示四行：</p>
+    <ul>
+      <li><strong>Frame</strong>：从游戏线程帧开始到帧结束的实际墙钟时间（约等于 1000/FPS ms）。</li>
+      <li><strong>Game</strong>：游戏线程（<code>UWorld::Tick</code>、Actor Tick、物理、动画、Gameplay）的耗时。</li>
+      <li><strong>Draw</strong>：渲染线程的耗时——从接到"渲染这帧"的命令，到把 RHI 命令全部提交完毕（包括 <code>InitViews</code>、RDG 构建与执行录制）。</li>
+      <li><strong>GPU</strong>：GPU 实际执行这帧所有命令的耗时（来自 GPU 时间戳，见 0041；结果延迟一帧）。</li>
+    </ul>
+    <p>还有第五行 <strong>RHIT</strong>（RHI Thread）——RHI 线程将平台无关命令翻译成 D3D12 调用的耗时。大多数场景下 RHIT 不是瓶颈，但在 D3D12 下 PSO 编译、描述符堆操作偶尔会使其突出。</p>
+  </div>
+
+  <p><strong>判定规则：</strong></p>
+
+  <div class="pipeline">
+    <div class="stage game"><span class="s-name">Game 最大</span><span class="s-sub">游戏线程瓶颈<br>Gameplay / Tick / 物理</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage render"><span class="s-name">Draw 最大</span><span class="s-sub">渲染线程瓶颈<br>Draw Call / 剔除 / 材质编译</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">GPU 最大</span><span class="s-sub">GPU 瓶颈<br>着色器/带宽/overdraw</span></div>
+  </div>
+
+  <p class="marginnote">Frame ≈ max(Game, Draw, GPU)（见 0004）。如果 Frame 明显大于三者，说明存在线程等待——游戏线程在等渲染线程、或渲染线程在等 GPU 完成（围栏，见 0004）。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 降分辨率实验</span>
+    <p>不确定是 Draw-bound 还是 GPU-bound？在控制台输入 <code>r.ScreenPercentage 50</code>（降到 50% 分辨率）观察帧率变化：<strong>帧率明显上升</strong> → GPU-bound（像素工作减少了）；<strong>帧率几乎不动</strong> → Draw-bound 或 Game-bound（瓶颈不在像素）。反向实验：<code>r.ScreenPercentage 200</code> 强制超采样，若帧率显著下降则更确认 GPU-bound。</p>
+  </div>
+
+  <h2><span class="num">2</span>渲染线程瓶颈（Draw-bound）：<code>stat SceneRendering</code> 与 <code>stat InitViews</code></h2>
+
+  <p>若 <code>stat unit</code> 里 Draw 最大，进一步用：</p>
+
+  <pre><code>stat SceneRendering    <span class="cmt">// draw call 数量、三角形数、动态 mesh 数</span>
+stat InitViews         <span class="cmt">// 可见性计算（视锥剔除、HZB 遮挡剔除）的 CPU 耗时</span></code></pre>
+
+  <h3>2.1 draw call 过多</h3>
+
+  <p><code>stat SceneRendering</code> 里的 <code>DrawPrimitiveCalls</code> 或 <code>MeshDrawCalls</code> 异常高（典型问题阈值因平台而异，PC 上几千是正常的，几万就要开始担心）。</p>
+
+  <p>根因与对应章节：</p>
+
+  <table>
+    <thead><tr><th>根因</th><th>对应章节</th><th>处方</th></tr></thead>
+    <tbody>
+      <tr><td>材质变体太多，<code>FMeshDrawCommand</code> 无法合批</td><td>0019（MeshPassProcessor 与命令缓存）</td><td>减少材质变体、复用材质实例</td></tr>
+      <tr><td>GPU Scene / 实例化未启用，同类网格反复单独提交</td><td>0020（GPU Scene 与实例化）</td><td>确认 <code>r.GPUScene.UploadEveryFrame</code> 等开关、用实例化静态网格</td></tr>
+      <tr><td><code>DynamicPathMeshDrawCalls</code> 占比高（每帧重新构建命令）</td><td>0019（缓存 vs 动态路径）</td><td>让更多 draw 走缓存路径，避免强制动态路径的材质特性</td></tr>
+      <tr><td>场景里小网格碎片化过多</td><td>0017（可见性剔除）</td><td>合并网格（Merge Actors）、HLOD 聚合远处物体</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.2 可见性 / 剔除开销高</h3>
+
+  <p><code>stat InitViews</code> 里的 <code>FrustumCull</code>、<code>OcclusionCull</code> 耗时高，说明场景图元数量多或 HZB 遮挡查询开销大：</p>
+
+  <table>
+    <thead><tr><th>根因</th><th>对应章节</th><th>处方</th></tr></thead>
+    <tbody>
+      <tr><td>视锥剔除通过率低（大量物体在视锥内但实际遮挡）</td><td>0017（HZB 遮挡剔除）</td><td>确认 HZB 剔除已启用（<code>r.HZBOcclusion 1</code>）、设置合理的 MinDrawDistance</td></tr>
+      <tr><td>PrecomputedVisibility 未烘焙（室内场景）</td><td>0017</td><td>为室内/封闭空间烘焙 Precomputed Visibility Volume</td></tr>
+      <tr><td>场景 Primitive 数量本身过大</td><td>0009（FScene 与 SceneProxy）</td><td>按可见距离分层、用 LOD、用 HLOD</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">3</span>GPU 瓶颈（GPU-bound）：<code>stat GPU</code> + 二次细分</h2>
+
+  <p>若 <code>stat unit</code> 里 GPU 最大，进入 0041 讲的 GPU 时间统计体系：</p>
+
+  <pre><code>stat GPU</code></pre>
+
+  <p>找到时间最重的 Pass，然后按下面的决策树往下钻：</p>
+
+  <h3>3.1 BasePass 过重</h3>
+
+  <p>Base Pass（0023）是主要的材质着色 Pass，贵可能来自三个不同地方，要逐一排除：</p>
+
+  <ol>
+    <li><strong>ALU 瓶颈（着色器数学）</strong>：<code>r.BasePassForceFullyRoughSurface 1</code> 强制最简材质，若 BasePass 时间显著下降 → 材质着色器复杂是根因 → 简化节点数、减少 Texture Sample 个数。</li>
+    <li><strong>带宽瓶颈（纹理采样）</strong>：时间在 <code>r.BasePassForceFullyRoughSurface 1</code> 后下降有限，但纹理分辨率高/采样次数多 → 检查贴图 MIP 设置、纹理压缩格式（BC7 vs BC1）、LOD Bias。</li>
+    <li><strong>Overdraw（Depth Prepass 效果差）</strong>：用 <code>viewmode overdraw</code> 查看过度绘制热图。过度绘制高说明 Depth Prepass 没能有效剔除被遮挡片元 → 检查是否有大量使用 Masked 材质（Mask discard 阻止 Early-Z 优化，见 0022）。</li>
+  </ol>
+
+  <div class="callout warn">
+    <span class="label">警告 · Masked 材质的 Depth Prepass 代价</span>
+    <p>Masked 材质（带 Opacity Mask、调用 <code>clip()</code> / <code>discard</code>）会阻止 GPU 的 Early-Z 优化（见 0001 / 0022）——因为 PS 执行前不知道这个片元是否会被 clip 掉，不能提前做深度测试。UE 4.26 为 Masked 材质单独在 Depth Prepass 里跑一遍（用 <code>EarlyZ/TwoSidedSign</code> 变体），但如果 Masked 物体很多，Prepass 本身也会变贵，且 BasePass 的 Early-Z 效益减弱。如果场景大量使用 Masked 材质且性能差，考虑改用 Dithered LOD Transitions 或减少 Masked 数量。</p>
+  </div>
+
+  <h3>3.2 ShadowDepths 过重</h3>
+
+  <p>对应 0026（CSM 与阴影深度图）。动态阴影的开销主要来自：</p>
+  <ul>
+    <li>每个动态投影光源都需要额外的 ShadowDepth Pass——减少动态投影光源数量或缩小其影响半径。</li>
+    <li>CSM 级联数量（<code>r.Shadow.CSM.MaxCascades</code>）和分辨率（<code>r.Shadow.MaxResolution</code>）——降低可显著减少开销，代价是阴影质量。</li>
+    <li>远距离物体仍在投影——设置 Dynamic Shadow Distance 限制阴影投影范围。</li>
+  </ul>
+
+  <h3>3.3 Translucency 过重</h3>
+
+  <p>对应 0029（半透明前向渲染）。半透明物体无 Early-Z，天然 overdraw 严重：</p>
+  <ul>
+    <li>减少屏幕上半透明物体覆盖的像素面积。</li>
+    <li>粒子特效：降低粒子数量、用 <code>r.ParticleLODBias</code> 强制 LOD、把粒子贴图改为更简单的 Unlit 材质。</li>
+    <li>启用 <code>r.SeparateTranslucency 0</code> 禁用独立半透明缓冲（会有质量代价，但省一次全分辨率 Pass 开销）。</li>
+  </ul>
+
+  <h3>3.4 PostProcessing 过重</h3>
+
+  <p>对应 0031–0035。常见重点：</p>
+  <ul>
+    <li><strong>TAA</strong>（0031）：<code>r.TemporalAA.Upsampling 0</code> 禁用 TAA 上采样，或切换为 FXAA（质量下降但极快）。</li>
+    <li><strong>Bloom</strong>（0032）：<code>r.Bloom.Quality 1</code> 或 0 降低 Bloom 质量，大幅降低 PostProcess 开销。</li>
+    <li><strong>AmbientOcclusion</strong>（0027）：<code>r.AmbientOcclusion.MaxQuality 0</code> 禁用或 <code>r.AmbientOcclusionSampleCount</code> 降低采样数。</li>
+    <li><strong>SSR</strong>（0027）：<code>r.SSR.Quality 0</code> 禁用或降级。</li>
+  </ul>
+
+  <h2><span class="num">4</span><code>stat RHI</code>：命令翻译层的成本</h2>
+
+  <p>若 RHIT 线程时间突出，用：</p>
+
+  <pre><code>stat RHI</code></pre>
+
+  <p>关注 <code>DrawPrimitiveCalls</code>（RHI 层实际 draw call 数）和 <code>TrianglesDrawn</code>（三角形数量）。RHI 线程瓶颈的典型根因是：</p>
+  <ul>
+    <li>PSO 缓存未命中（首次使用的材质/着色器组合触发实时 PSO 编译）——预热 PSO 缓存（<code>r.ShaderPipelineCache.Mode 2</code>）。</li>
+    <li>描述符堆操作过多（D3D12）——通常由 draw call 数量驱动，处方同 2.1。</li>
+  </ul>
+
+  <h2><span class="num">5</span>完整诊断决策树</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">stat unit</span><span class="s-sub">Game / Draw / GPU / RHIT<br>找最大值</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage game"><span class="s-name">Game 最大</span><span class="s-sub">stat game<br>Actor Tick / 物理 / 动画</span></div>
+    <span class="flow-arrow">·</span>
+    <div class="stage render"><span class="s-name">Draw 最大</span><span class="s-sub">stat scenerendering<br>stat initviews<br>draw call / 剔除</span></div>
+    <span class="flow-arrow">·</span>
+    <div class="stage gpu"><span class="s-name">GPU 最大</span><span class="s-sub">stat gpu<br>ProfileGPU<br>热点 Pass → RenderDoc</span></div>
+  </div>
+
+  <figure>
+    <figcaption>诊断流程的三叉路口。<code>stat unit</code> 是入口；左叉（Game-bound）不在本课程范围；中叉（Draw-bound）与 Part 4 几何/可见性对应；右叉（GPU-bound）与 Part 5–6 Pass 对应。</figcaption>
+  </figure>
+
+  <p>把决策树再细化一层：</p>
+
+  <table>
+    <thead><tr><th>stat unit 诊断</th><th>下一步工具</th><th>根因 + 处方来源</th></tr></thead>
+    <tbody>
+      <tr><td>Draw &gt; GPU，Draw &gt; Game</td><td><code>stat SceneRendering</code></td><td>DrawPrimitiveCalls 高 → 0019/0020 合批/GPU Scene</td></tr>
+      <tr><td>Draw &gt; GPU，Draw &gt; Game</td><td><code>stat InitViews</code></td><td>可见性耗时高 → 0017 剔除/HZB</td></tr>
+      <tr><td>GPU &gt; Draw，降分辨率提速</td><td><code>stat GPU</code></td><td>BasePass贵→0023；Shadow贵→0026；Post贵→0031-0035</td></tr>
+      <tr><td>GPU &gt; Draw，<code>r.BasePassForceFullyRoughSurface 1</code> 后 BasePass 明显变快</td><td>RenderDoc 查材质着色器</td><td>材质 ALU 复杂 → 简化材质节点</td></tr>
+      <tr><td>GPU &gt; Draw，overdraw 热图红色区域大</td><td><code>viewmode overdraw</code></td><td>Masked 材质过多 / 半透明 overdraw → 0022/0029</td></tr>
+      <tr><td>RHIT 突出</td><td><code>stat RHI</code></td><td>PSO 编译 / 描述符堆 → 预热 PSO 缓存，减少 draw call</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">6</span>课程回顾：每个系统在这张图里的位置</h2>
+
+  <p>这门课从 GPU 硬件底层出发，沿着一帧的生命线，逐系统、逐 Pass 展开。现在站在终章往回看，所有章节都可以挂到上面的诊断决策树上：</p>
+
+  <table>
+    <thead><tr><th>诊断方向</th><th>涉及系统</th><th>课程章节</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="2"><b>Draw-bound</b><br>渲染线程 CPU 侧</td><td>几何表达 / 场景代理</td><td>Part 2（0008–0011）· <code>FScene</code>、<code>FPrimitiveSceneProxy</code></td></tr>
+      <tr><td>可见性剔除 / 绘制命令 / GPU Scene / 合批</td><td>Part 4（0017–0020）</td></tr>
+      <tr><td rowspan="6"><b>GPU-bound</b><br>Pass 级别</td><td>Depth Prepass / overdraw</td><td>0022</td></tr>
+      <tr><td>Base Pass / GBuffer / 材质着色</td><td>0021、0023</td></tr>
+      <tr><td>Light Grid / 延迟光照</td><td>0024、0025</td></tr>
+      <tr><td>阴影（CSM、点光阴影）</td><td>0026</td></tr>
+      <tr><td>SSAO / SSR / 反射 / 半透明 / 体积雾</td><td>0027–0030</td></tr>
+      <tr><td>后处理（TAA / Bloom / Tonemap）</td><td>Part 6（0031–0035）</td></tr>
+      <tr><td><b>工具层</b></td><td>RDG / RHI 翻译 / Present / 扫描输出</td><td>Part 3（0012–0016）、Part 7（0036–0039）</td></tr>
+      <tr><td><b>调试工具</b></td><td>RenderDoc 抓帧 / GPU 时间统计</td><td>0040、0041</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 性能预算而非事后救火</span>
+    <p>这套诊断流程的真正价值不在于"项目快上线了帧率不够再来救"，而在于建立<strong>性能预算意识</strong>：早期就用 <code>stat unit</code> + <code>stat GPU</code> 量化每个系统的成本，并与目标平台的帧时间对比。一旦某个 Pass 的 GPU 时间超过预算（例如：目标 30fps 的手机项目，BasePass 超过 4ms），立刻追查，而不是等到所有系统堆完再整体优化。每个系统的成本模型，你在对应章节里都学过——这节课只是把量尺拿出来。</p>
+  </div>
+
+  <h2><span class="num">7</span>终章：一帧的闭环</h2>
+
+  <p>从第 0001 课的"GPU 拿到三角形之后做了什么"，到现在用 <code>stat unit</code> 看着三个数字判断今天的帧率问题出在哪里——你走过的是同一条路，只是方向从"原理→工具"变成了"工具→原理"的反向溯源。</p>
+
+  <p>再走一遍这条路，这次每个环节都有名字：</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body"><code>FEngineLoop::Tick</code> → <code>UWorld::Tick</code> → <code>ENQUEUE_RENDER_COMMAND</code> → <code>BeginRenderingViewFamily</code> ｜ 对应：<b>stat Game</b>，Part 2</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body"><code>FDeferredShadingSceneRenderer::Render</code> → <code>InitViews</code>（剔除/FMeshDrawCommand/GPU Scene）→ RDG 构建 → 逐 Pass 录 RHI 命令 ｜ 对应：<b>stat Draw</b>，Part 3–4</span></div>
+    <div class="lane rhi"><span class="lane-name">RHI 线程</span><span class="lane-body">把 RHI 命令翻成 D3D12 CommandList → Submit Queue ｜ 对应：<b>stat RHIT</b>，Part 7</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body">PrePass → BasePass（GBuffer）→ ShadowDepths → Light Grid → Lighting → SSAO/SSR → Translucency → PostProcess → Present ｜ 对应：<b>stat GPU</b>，Part 5–6</span></div>
+  </div>
+
+  <figure>
+    <figcaption>一帧的完整生命线——与 0005 那张图完全相同，但现在每一格都有具体的代码函数、Pass 名称、以及你知道如何用工具测量的时间数字。这就是这门课程的产出。</figcaption>
+  </figure>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text"><code>stat unit</code> 显示 Game=8ms、Draw=22ms、GPU=11ms、Frame=23ms。最可能的瓶颈是什么？下一步应该用哪个 stat 命令深入？</p>
+    <button class="q-opt">GPU-bound；下一步用 <code>stat GPU</code> 找最贵的 GPU Pass</button>
+    <button class="q-opt">Draw-bound（渲染线程）；下一步用 <code>stat SceneRendering</code> 和 <code>stat InitViews</code> 看 draw call 数量和可见性耗时</button>
+    <button class="q-opt">Game-bound（游戏线程）；下一步用 <code>stat Game</code> 找最重的 Tick</button>
+    <div class="q-feedback"
+      data-ok="对。Draw=22ms 是三者最大，Frame≈Draw 说明渲染线程是限速者。下一步用 stat SceneRendering 看 draw call 数量，用 stat InitViews 看可见性 CPU 开销——这两个数字会告诉你是 draw call 太多还是剔除效率低。"
+      data-no="再看数字：Game=8ms、Draw=22ms、GPU=11ms。Draw 最大且 Frame≈Draw，说明渲染线程是瓶颈。GPU 只有 11ms，降分辨率不会提速。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看表，从 stat unit 的四个数出发，描述完整的诊断决策路径：Draw-bound 时下一步是什么，GPU-bound 时下一步是什么，以及把 BasePass 耗时高进一步细分的三步排查顺序。</summary>
+    <div class="answer">
+      <p><strong>Draw-bound（Draw 最大）</strong>：用 <code>stat SceneRendering</code> 查 <code>DrawPrimitiveCalls</code>（draw call 数量）和 <code>DynamicPathMeshDrawCalls</code>（动态路径占比）；用 <code>stat InitViews</code> 查视锥/遮挡剔除的 CPU 耗时。若 draw call 高 → 看 0019/0020 合批与 GPU Scene；若剔除 CPU 高 → 看 0017 HZB 配置与 Precomputed Visibility。</p>
+      <p><strong>GPU-bound（GPU 最大）</strong>：用 <code>stat GPU</code> 找最贵的 Pass；用 <code>ProfileGPU</code> 获取单帧精确时间树；用 <code>r.ScreenPercentage 50</code> 确认确实是 GPU-bound（帧率应提升）。找到热点 Pass 后用 RenderDoc（0040）深入该 Pass 的 draw call 和着色器。</p>
+      <p><strong>BasePass 耗时高的三步排查</strong>：① 用 <code>r.BasePassForceFullyRoughSurface 1</code>——若时间大幅下降则是 ALU/材质复杂度问题，简化材质节点；② 若时间无明显变化，用 <code>viewmode overdraw</code> 检查过度绘制——若有明显红色区域，查 Masked 材质数量（0022）或 Depth Prepass 是否有效；③ 若 overdraw 不严重，考虑带宽瓶颈——检查纹理分辨率、MIP 设置、压缩格式。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>stat unit</code> 的 Game/Draw/GPU 三个数是诊断的入口；Frame ≈ max(三者)，瓶颈就是最大的那条线程。</li>
+      <li>Draw-bound → <code>stat SceneRendering</code>（draw call 数）+ <code>stat InitViews</code>（剔除 CPU 开销），根因在 Part 4（0017–0020）。</li>
+      <li>GPU-bound → <code>stat GPU</code> + <code>ProfileGPU</code> 找热点 Pass，每个 Pass 的根因都在 Part 5–6 对应章节。</li>
+      <li>BasePass 高要区分 ALU/带宽/overdraw 三个不同原因——<code>r.BasePassForceFullyRoughSurface 1</code> 是快速区分 ALU vs 其他的方法。</li>
+      <li>性能优化的最大陷阱是在错误的地方优化。先 <code>stat unit</code> 定位，再向下钻，最后开处方——顺序不能反。</li>
+      <li>这节课是整门课程的闭环：每一个性能问题最终都可以追溯到这门课某一节讲过的系统和机制。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1–3</a>——整门课程的金标准参考，终章再读一遍，理解会不同于第一次。配套：<a href="https://unrealartoptimization.github.io/book/profiling/passes/">Unreal Art Optimization —— "Rendering Passes"</a>（性能向的 Pass 逐条解读）；<a href="https://techartaid.com/posts/ue4-render-passes/">Tech Art Aid —— "Understanding UE4 Rendering Passes"</a>（TA 视角的画面分析）。UE 官方 <a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">Graphics Programming Overview</a> 作为模块地图常备参考。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>课程到这里告一段落，但问题不必停。</b> 比如："我的场景 Draw=18ms，stat SceneRendering 里 MeshDrawCalls=12000，怎么下手？""GPU Visualizer 里 ShadowDepths 有三十多个子节点，是正常的吗？""我想给自己的 Custom Pass 加 GPU Stat，应该怎么写？" 我是你的老师，继续。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0041-profilegpu-stat-gpu.html"><span class="nav-dir">← 上一课</span>0041 · ProfileGPU 与 GPU 时间统计</a>
+    <a class="next" href="../index.html"><span class="nav-dir">课程地图 →</span>返回课程地图</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 8 调试与性能 · 课程终章。从三角形到像素，从源码到工具，闭环完成。</footer>
+  </article>
+</div>
+</body>
+</html>

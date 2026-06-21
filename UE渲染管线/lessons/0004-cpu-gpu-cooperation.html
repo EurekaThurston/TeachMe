@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0004 · CPU 与 GPU 的协作：异步、围栏、多缓冲</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 0 · 基础</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 0 · 基础 · Lesson 0004</p>
+  <h1>CPU 与 GPU 的协作：异步、围栏、多缓冲</h1>
+  <p class="subtitle">CPU 录命令、GPU 放命令，两者在<strong>各自的时钟上异步奔跑</strong>。这节课讲它们如何不打架地协作——以及由此引出的那个贯穿全课程的性能问题：到底是 CPU 拖后腿还是 GPU 拖后腿？</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~15 分钟</span>
+    <span><b>前置</b> 0003 命令列表/队列</span>
+    <span><b>产出</b> 能解释帧流水线、围栏同步、CPU-bound vs GPU-bound 的判定逻辑</span>
+  </div>
+
+  <p class="lead">把 CPU 和 GPU 想成两条独立的传送带。CPU 这条不停生产"命令列表"，GPU 那条不停消费它们。它们速度不同、不同步。两个工程问题立刻冒出来：① GPU 还在用上一帧的数据时，CPU 能不能就去改它？② CPU 怎么知道 GPU 到底做完没？答案分别是<strong>多缓冲</strong>和<strong>围栏</strong>。把这两件事理顺，你就理解了帧的节奏。</p>
+
+  <h2><span class="num">1</span>两条时间线，落后一帧的流水线</h2>
+  <p>如果 CPU 提交一帧后<strong>傻等</strong> GPU 画完再做下一帧，两条传送带就总有一条在空转，吞吐减半。正确做法是<strong>流水线化</strong>：CPU 准备第 N+1 帧时，GPU 同时在画第 N 帧。</p>
+
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">CPU</span><span class="lane-body">帧 N&nbsp;&nbsp;|&nbsp;&nbsp;帧 N+1&nbsp;&nbsp;|&nbsp;&nbsp;帧 N+2&nbsp;&nbsp;|&nbsp;&nbsp;帧 N+3</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;帧 N&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;帧 N+1&nbsp;&nbsp;|&nbsp;&nbsp;帧 N+2</span></div>
+  </div>
+  <figure>
+    <figcaption>CPU 领先、GPU 落后一帧。这"落后一帧"不是 bug，是吞吐最大化的设计。UE 里游戏线程→渲染线程→GPU 是同样的多级流水（见 0006），所以从你按下按键到画面响应天然有几帧延迟。</figcaption>
+  </figure>
+
+  <h2><span class="num">2</span>多缓冲：让两帧的数据不打架</h2>
+  <p>流水线化立刻引爆问题①：GPU 还在读第 N 帧的常量缓冲（相机矩阵、逐物体数据），CPU 已经想往里写第 N+1 帧的值了。直接写 = 改坏正在用的数据（数据竞争）。</p>
+  <p>解法是<span class="term">多缓冲</span>（double / triple buffering）：每帧会被 CPU 改写的资源，<strong>准备 N 份副本</strong>，第 N 帧用第 <code>N % 副本数</code> 份。这样 CPU 写"下一份"时，GPU 还在读"这一份"，互不干扰。</p>
+
+  <pre><code><span class="cmt">// 概念：每帧轮换写哪一份</span>
+ringIndex = frameNumber % <span class="str">3</span>;        <span class="cmt">// 三缓冲</span>
+perFrameCB[ringIndex].<span class="fn">Update</span>(viewMatrix, time…);
+cmd.<span class="fn">SetConstantBuffer</span>(perFrameCB[ringIndex]);</code></pre>
+  <p class="code-cap">UE 的动态/瞬态常量缓冲、上传堆都基于这种环形多缓冲</p>
+  <p class="marginnote">交换链的<strong>后缓冲</strong>同样是多缓冲的：GPU 画进一张后缓冲时，显示器可能正在扫描另一张。后缓冲数量直接关系撕裂与延迟，0038 详谈。</p>
+
+  <h2><span class="num">3</span>围栏：CPU 唯一能"看见" GPU 进度的窗口</h2>
+  <p>问题②：提交 ≠ 完成。CPU 怎么确认第 N-2 帧的 GPU 工作真的结束、那份缓冲可以安全复用？靠<span class="term">围栏</span>（fence）——一个 GPU 能写、CPU 能读的整数。</p>
+
+  <div class="pipeline">
+    <div class="stage game"><span class="s-name">CPU</span><span class="s-sub">提交帧 N<br>记 fence=N</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage gpu"><span class="s-name">GPU</span><span class="s-sub">执行完帧 N<br>Signal(fence)=N</span></div>
+    <span class="flow-arrow">→</span>
+    <div class="stage game"><span class="s-name">CPU</span><span class="s-sub">要复用帧 N 的缓冲<br>先 Wait(fence≥N)</span></div>
+  </div>
+
+  <p>围栏是<strong>单向的进度信号</strong>：GPU 走到某点就把 fence 设成某值，CPU 通过比较 fence 值判断"GPU 是否已越过那一点"。三缓冲下，CPU 通常只在"领先 GPU 超过 3 帧"时才会真的等 fence——正常情况下根本不阻塞。围栏也用于<strong>队列间</strong>同步（如异步计算队列与图形队列，见 0002/0016）。</p>
+
+  <div class="callout warn">
+    <span class="label">回读为什么贵 · 强制同步</span>
+    <p>想把 GPU 算的结果<strong>读回 CPU</strong>（遮挡查询结果、GPU 统计、截屏）必然要等 GPU 真的算完——这是一次<strong>强制 CPU↔GPU 同步</strong>，会打断流水线、让 CPU 干等。所以 UE 的<strong>硬件遮挡查询结果总是延迟一帧使用</strong>（这一帧发查询、下一帧才读结果），就是为了不打断流水线。凡是"GPU→CPU 回读"的设计，都要假定它慢且滞后。</p>
+  </div>
+
+  <h2><span class="num">4</span>谁拖后腿：CPU-bound vs GPU-bound</h2>
+  <p>这是你的"性能优化"目标最核心的一张思维图。在理想流水线下，一帧的实际耗时约等于两条传送带里<strong>慢的那条</strong>：</p>
+  <pre><code>帧时间 ≈ <span class="fn">max</span>(CPU 一帧耗时, GPU 一帧耗时)</code></pre>
+  <table>
+    <thead><tr><th>瓶颈</th><th>症状</th><th>典型原因</th><th>优化方向</th></tr></thead>
+    <tbody>
+      <tr><td><b>CPU-bound</b></td><td>GPU 常在等 CPU 喂命令；降分辨率<strong>不</strong>提帧率</td><td>Draw Call 太多、可见性/剔除、游戏逻辑、Tick</td><td>合批、剔除、降低 draw 数、并行录制</td></tr>
+      <tr><td><b>GPU-bound</b></td><td>CPU 常在等 GPU；降分辨率<strong>能</strong>提帧率</td><td>过度绘制、像素着色重、带宽、后处理</td><td>降 overdraw、简化材质、降分辨率/特效</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 一个免费的诊断实验</span>
+    <p>怀疑瓶颈在哪？<strong>把渲染分辨率砍一半</strong>看帧率变化：帧率明显上升 → GPU-bound（像素工作量减少了）；帧率几乎不动 → CPU-bound（瓶颈不在像素）。反过来，<strong>把场景物体数量砍一半</strong>主要影响 CPU（Draw Call）。UE 里用 <code>stat unit</code> 看 Game / Draw / GPU 三个数，谁最大谁是瓶颈——这是 Part 8 性能实战的起点，但原理就在本节。</p>
+  </div>
+
+  <h2><span class="num">5</span>映射到 UE：三级流水线预览</h2>
+  <p>本课讲的是 CPU↔GPU 两级。UE 把 CPU 侧又拆成两级线程，于是是<strong>三级流水</strong>：</p>
+  <div class="lanes">
+    <div class="lane game"><span class="lane-name">游戏线程</span><span class="lane-body">帧 N：Tick、产出渲染数据</span></div>
+    <div class="lane render"><span class="lane-name">渲染线程</span><span class="lane-body">帧 N-1：组织场景、录 RHI 命令</span></div>
+    <div class="lane gpu"><span class="lane-name">GPU</span><span class="lane-body">帧 N-2：执行、上屏</span></div>
+  </div>
+  <p>所以 <code>stat unit</code> 里的 <strong>Game</strong>（游戏线程）、<strong>Draw</strong>（渲染线程）、<strong>GPU</strong> 三个数，正是这三条传送带各自的耗时，帧率由最慢的决定。下一课（0005）正式展开这三条线程的全景。</p>
+
+  <div class="quiz" data-answer="1">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">你把游戏的渲染分辨率从 1080p 降到 540p，帧率几乎没变。最可能的结论是？</p>
+    <button class="q-opt">GPU-bound：像素工作量是瓶颈，所以降分辨率本应提速</button>
+    <button class="q-opt">CPU-bound：瓶颈不在像素着色，降分辨率帮不上忙</button>
+    <button class="q-opt">显存带宽不足，需要更大的后缓冲</button>
+    <div class="q-feedback" data-ok="对。降分辨率主要减少像素级 GPU 工作；若帧率不动，说明瓶颈不在 GPU 像素侧，而在 CPU（Draw Call、剔除、逻辑）。这正是 stat unit 里 Game/Draw 偏大的情形。" data-no="再想：降分辨率减少的是像素级 GPU 工作量。帧率不动 ⇒ 瓶颈不在像素 ⇒ 是 CPU-bound。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>为什么需要"多缓冲"？如果只用一份逐帧常量缓冲、又想让 CPU 与 GPU 流水线并行，会发生什么？</summary>
+    <div class="answer">流水线并行意味着 GPU 还在画第 N 帧时，CPU 已在准备第 N+1 帧。若逐帧常量缓冲只有<strong>一份</strong>，CPU 写入新值时会<strong>覆盖掉 GPU 正在读取的旧值</strong>，造成数据竞争——画面错乱或闪烁。要么 CPU 必须等 GPU 读完才敢写（退化成串行、吞吐减半），要么准备<strong>多份副本</strong>轮换：CPU 写"下一份"，GPU 读"这一份"，互不干扰。后者就是双/三缓冲，UE 的动态常量缓冲与上传堆都基于它。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>CPU 与 GPU 异步并行、<strong>流水线化</strong>：GPU 通常落后 CPU 一帧——这是吞吐设计，不是 bug。</li>
+      <li><strong>多缓冲</strong>让被逐帧改写的资源有多份副本，避免 CPU 写 / GPU 读同一份的数据竞争。</li>
+      <li><strong>围栏</strong>是 CPU 观察 GPU 进度的唯一窗口，用于安全复用资源与队列间同步。</li>
+      <li><strong>GPU→CPU 回读</strong>强制同步、打断流水线——所以遮挡查询结果延迟一帧用。</li>
+      <li>帧时间 ≈ <code>max(CPU, GPU)</code>；用降分辨率/降物体数实验 + <code>stat unit</code> 判定 <strong>CPU-bound vs GPU-bound</strong>。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Microsoft，<a href="https://learn.microsoft.com/en-us/windows/win32/direct3d12/user-mode-heap-synchronization">《Multi-engine and multi-adapter synchronization》</a>（围栏与队列同步）与 <a href="https://learn.microsoft.com/en-us/windows/win32/direct3d12/swap-chains">Swap Chains</a>（后缓冲多缓冲）。CPU/GPU-bound 的实战判定见 Part 8 与 UE《Profiling》文档。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："三缓冲比双缓冲多了多少输入延迟？""UE 的 RHI 线程在这条流水线里到底卡在哪一级？""为什么有时降分辨率帧率反而被 CPU 顶住？" 随时找我。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0003-graphics-api-contract.html"><span class="nav-dir">← 上一课</span>0003 · 图形 API 的契约</a>
+    <a class="next" href="0005-frame-lifecycle-overview.html"><span class="nav-dir">下一课 →</span>0005 · 一帧的生命周期</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 0 基础 · Part 0 完。下一课进入 UE，把这套底层模型套到引擎的三线程架构上。</footer>
+  </article>
+</div>
+</body>
+</html>

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0035 · 动态模糊、景深与最终合成</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 6 · 后处理</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 6 · 后处理 · Lesson 0035</p>
+  <h1>动态模糊、景深与最终合成</h1>
+  <p class="subtitle">动态模糊消费速度缓冲沿运动方向做定向模糊；Diaphragm DOF 用散景（Bokeh）gather 核模拟光圈失焦；最终上采样把内部分辨率恢复到输出分辨率；UI 合成叠在最顶层。这是后处理链在 Present 之前的最后一段。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~22 分钟</span>
+    <span><b>前置</b> 0031（后处理概述）、0032（TAA / 速度缓冲）</span>
+    <span><b>产出</b> 能解释动态模糊的速度缓冲消费方式、Diaphragm DOF 的 gather 核原理、上采样时机，以及 UI 合成如何收尾后处理链</span>
+  </div>
+
+  <p class="lead">在 TAA、泛光、曝光、色调映射这四大核心 Pass 之外，动态模糊和景深是两个"可选但高影响力"的后处理效果——它们模拟的是相机镜头的两种物理特性：快门打开期间传感器记录的运动轨迹（动态模糊），以及镜头焦平面以外物体因弥散圆（Circle of Confusion）产生的散焦（景深）。理解它们的实现有助于排查常见的画面问题（模糊拖尾、散景形状异常等）。</p>
+
+  <h2><span class="num">1</span>动态模糊：消费速度缓冲的定向模糊</h2>
+  <p>动态模糊 Pass（<code class="file">PostProcessMotionBlur.cpp</code>，着色器 <code class="file">PostProcessMotionBlur.usf</code>）工作在 <strong>HDR 线性域</strong>，在 TAA 之后、泛光/曝光之前运行。</p>
+
+  <h3>速度缓冲回顾</h3>
+  <p>动态模糊的数据来源是 Base Pass 写入的 <strong>Velocity GBuffer</strong>（与 TAA 相同，见 0032），它存储每个像素的屏幕空间速度矢量（像素/帧）。相机运动引起的速度可以从 View 矩阵差分计算；物体运动（骨骼动画、物体旋转）产生的速度由 VS 计算并写入。</p>
+
+  <h3>动态模糊的实现步骤</h3>
+  <p>UE 4.26 的动态模糊分两步：</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">速度展平</span><span class="s-sub">Velocity Flatten<br>CS：取 tiles 最大速度</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">速度平铺</span><span class="s-sub">Velocity Tile<br>邻域速度 max 扩展</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">模糊重建</span><span class="s-sub">PS：沿速度方向<br>散射采样积分</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">输出 HDR</span><span class="s-sub">带运动拖尾的<br>SceneColor</span></div>
+  </div>
+
+  <p><strong>速度展平（Velocity Flatten）</strong>：对每个 N×N 的屏幕分块（tile），找出该块内速度最大的像素，生成一张低分辨率的"最大速度贴图"。这样在后续模糊步骤中，每个 tile 内的像素都能知道该区域最大速度，避免运动物体边界处的欠模糊（刀削边）。</p>
+
+  <p><strong>模糊重建（Blur Reconstruction）</strong>：在全分辨率的像素着色器里，对每个像素沿其速度方向做<strong>多 tap 加权采样</strong>：</p>
+
+  <pre><code><span class="cmt">// PostProcessMotionBlur.usf — 运动方向模糊（示意）</span>
+<span class="typ">float2</span> PixelVelocity = <span class="fn">VelocityTexture.Sample</span>(Sampler, UV).xy;
+<span class="cmt">// 速度向量决定采样方向和范围（单位：像素）</span>
+<span class="typ">float</span>  BlurRadius = <span class="fn">length</span>(PixelVelocity) * MotionBlurAmount;
+<span class="typ">float3</span> AccumColor = 0;
+<span class="typ">float</span>  AccumWeight = 0;
+
+<span class="kw">for</span> (<span class="typ">int</span> i = 0; i &lt; NumSamples; i++)
+{
+    <span class="cmt">// 在速度方向上均匀分布采样偏移</span>
+    <span class="typ">float</span>  t = ((<span class="typ">float</span>)i / (NumSamples - 1)) - 0.5;
+    <span class="typ">float2</span> SampleUV = UV + PixelVelocity * t;
+    <span class="typ">float3</span> SampleColor = <span class="fn">SceneColorTexture.SampleLevel</span>(Sampler, SampleUV, 0).rgb;
+    <span class="cmt">// 可选：按与中心距离做高斯权重</span>
+    AccumColor  += SampleColor;
+    AccumWeight += 1.0;
+}
+<span class="typ">float3</span> Result = AccumColor / AccumWeight;</code></pre>
+  <p class="code-cap">采样数（<code>r.MotionBlurSampleCount</code>，默认 4–12）和强度（<code>MotionBlurAmount</code>，0–1）控制质量与性能。采样数越多，快速运动物体的模糊越平滑（无条纹），但 PS 开销线性增长。</p>
+
+  <div class="callout knowledge">
+    <span class="label">动态模糊的遮挡问题与深度感知采样</span>
+    <p>沿速度方向采样时，运动物体的边界附近会出现"穿越遮挡"：采样到被运动物体临时遮挡的背景区域，产生不正确的模糊。UE 4.26 的实现用<strong>深度比较</strong>（采样点的深度 vs. 中心像素深度）来权重调节——背景采样点权重低，前景采样点权重正常——减少这类 artifact。</p>
+  </div>
+
+  <h2><span class="num">2</span>Diaphragm DOF：光圈聚散焦散景模拟</h2>
+  <p>UE 4.26 的主要景深实现是 <strong>Diaphragm DOF</strong>（光圈景深，代码在 <code class="file">DiaphragmDOF.cpp</code>，着色器在 <code class="file">DiaphragmDOF/</code> 目录下）。它模拟真实摄影光圈的散焦散景（Bokeh），比早期的圆形高斯 DOF 视觉上更接近真实镜头。</p>
+
+  <h3>弥散圆（Circle of Confusion）</h3>
+  <p>散焦的核心概念是<strong>弥散圆（CoC，Circle of Confusion）</strong>：焦平面上的一个点在传感器上是一个点，离焦面越远，这个点就扩散成越大的圆盘（直径 = CoC 半径）。UE 4.26 先计算每个像素的 CoC 大小：</p>
+
+  <pre><code><span class="cmt">// CoC 计算（示意）</span>
+<span class="cmt">// FocalDistance: 焦距（cm），FocalRegion: 清晰区域宽度</span>
+<span class="cmt">// SceneDepth: 像素的线性视图空间深度</span>
+<span class="typ">float</span> DepthDiff = SceneDepth - FocalDistance;
+<span class="cmt">// 线性 CoC（正=前景失焦，负=背景失焦）</span>
+<span class="typ">float</span> CoCRadius = (DepthDiff / FocalRegion) * MaxBokehRadius;
+CoCRadius = <span class="fn">clamp</span>(CoCRadius, -MaxBokehRadius, MaxBokehRadius);</code></pre>
+  <p class="code-cap">CoC 半径以像素为单位，值越大散焦越模糊。正值通常代表前景（近于焦平面），负值代表背景（远于焦平面），但取决于约定。</p>
+
+  <h3>Gather-Based DOF：以输出像素为中心"聚集"采样</h3>
+  <p>Diaphragm DOF 采用 <strong>gather（聚集）</strong>方式——对输出的每个像素，从其周围 CoC 范围内收集多个输入样本，模拟真实光圈将周围光汇聚的过程：</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · Gather vs. Scatter</span>
+    <p>Scatter 方式是：对每个输入像素，把它的颜色"散播"到 CoC 范围内的所有输出像素（类似粒子渲染）。这在 GPU 的光栅化管线里效率低（写入多个输出位置），且容易产生覆盖 artifact。Gather 方式反过来：对每个输出像素，从输入图像的 CoC 范围内"聚集"多个采样点，用加权平均产生散焦效果。Gather 的并行性完美适合 GPU 的像素着色器模型，每个输出像素独立计算，没有写入冲突。Diaphragm DOF 的核心就是在 gather 核中模拟真实光圈形状（圆形、六边形等散景形状）。</p>
+  </div>
+
+  <h3>Diaphragm DOF 的四阶段实现</h3>
+  <p>这个系统把景深分为前景和背景分别处理（因为两者的遮挡关系不同），完整链如下：</p>
+
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">下采样 + CoC</span><span class="s-sub">半分辨率提取<br>计算每像素 CoC</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">前景 Gather</span><span class="s-sub">CoC&gt;0：前景散景<br>光圈形状核采样</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">背景 Gather</span><span class="s-sub">CoC&lt;0：背景散景<br>分层处理遮挡</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">重建合成</span><span class="s-sub">前景+背景+清晰区<br>按 CoC 混合回全分辨率</span></div>
+  </div>
+
+  <p>前景和背景分开处理的原因：前景物体（近于焦平面）的散焦效果会<strong>覆盖</strong>在其背后物体之上，而背景物体的散焦会在前景清晰物体边缘产生"渗出（Bleed）"效果。简单地用同一个 gather 核会导致两者混乱，必须按遮挡层次分开处理，再在重建阶段合成。</p>
+
+  <h3>景深关键 CVars 与 FPostProcessSettings 参数</h3>
+  <table>
+    <thead><tr><th>参数</th><th>控制内容</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>DepthOfFieldFocalDistance</code></td><td>焦距（cm）</td><td>0 = 禁用 DOF</td></tr>
+      <tr><td><code>DepthOfFieldDepthBlurAmount</code></td><td>深度模糊强度</td><td>低开销的廉价近似 DOF</td></tr>
+      <tr><td><code>DepthOfFieldFstop</code></td><td>光圈 f 值</td><td>决定 CoC 最大半径</td></tr>
+      <tr><td><code>DepthOfFieldBladeCount</code></td><td>光圈叶片数</td><td>控制散景多边形形状</td></tr>
+      <tr><td><code>r.DOF.Kernel.MaxBackgroundRadius</code></td><td>背景最大 CoC 半径（像素）</td><td>越大越贵</td></tr>
+      <tr><td><code>r.DepthOfFieldQuality</code></td><td>0–4 质量档位</td><td>0=关，2=Diaphragm DOF，4=全质量</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">Diaphragm DOF 在 ScreenPercentage &lt; 100 时的精度损失</span>
+    <p>DOF 在内部渲染分辨率（ScreenPercentage 指定的尺寸）下工作。如果 ScreenPercentage = 50%，DOF 的 gather 核是在半分辨率 SceneColor 上操作，散景形状会损失精度（边缘锯齿，特别是多边形光圈形状）。这与 TAA 后置的上采样（TAAU）配合时尤其明显。权衡：低 ScreenPercentage 节省带宽，但 DOF 和 TAA 的质量下降；高质量影视场景需要 100% 以上。</p>
+  </div>
+
+  <h2><span class="num">3</span>空间上采样：恢复输出分辨率</h2>
+  <p>如果 <code>r.ScreenPercentage &lt; 100</code>，整个后处理链（TAA、DOF、动态模糊）都在低分辨率下工作。在色调映射附近（具体位置取决于 AA 模式），需要做<strong>空间上采样（Spatial Upscale）</strong>把图像恢复到最终输出分辨率。</p>
+
+  <p>UE 4.26 的主要上采样方案：</p>
+  <ul>
+    <li><strong>Lanczos 上采样</strong>：标准的高质量空间滤波，适用于大部分 SDR 场景；</li>
+    <li><strong>Catmull-Rom 上采样</strong>：略锐化，高对比度边缘清晰；</li>
+    <li><strong>TAAU（Temporal Upsampling）</strong>：把 TAA 的历史累积与上采样结合，用时间维度补偿空间分辨率损失，对低 ScreenPercentage 效果最好（需开启 <code>r.TemporalAA.Upsampling = 1</code>）。</li>
+  </ul>
+
+  <p>上采样的位置关键：它在色调映射之后或之前都有可能，取决于引擎配置。UE 4.26 默认 Secondary Screen Percentage（二级屏幕百分比）在色调映射之后、UI 合成之前执行上采样——这保证了 UI 始终在全分辨率渲染，不受 ScreenPercentage 影响。</p>
+
+  <div class="callout knowledge">
+    <span class="label">Primary vs. Secondary Screen Percentage</span>
+    <p><strong>Primary Screen Percentage</strong>（<code>r.ScreenPercentage</code>）控制 GBuffer 和大部分后处理 Pass 的内部分辨率，是主要的分辨率缩放旋钮。<strong>Secondary Screen Percentage</strong>（<code>r.SecondaryScreenPercentage.GameViewport</code>）是一个额外的上采样比例，在主上采样之后、UI 合成之前应用——它主要用于某些需要在不同分辨率下渲染不同阶段的特殊场景（如 VR）。大多数游戏只需关注 Primary。</p>
+  </div>
+
+  <h2><span class="num">4</span>UI/HUD 合成：Slate 渲染与叠加</h2>
+  <p>色调映射和上采样完成后，SceneColor 是 LDR 全分辨率图像，准备接受 UI 叠加。UE 的 UI 系统 <strong>Slate</strong> 在独立的渲染路径里绘制 HUD、菜单、按钮等 2D 元素，最后以一次 Blit 或混合 Pass 叠加到场景图像上。</p>
+
+  <p>UI 渲染的几个关键特点：</p>
+  <ul>
+    <li>UI 在<strong>全分辨率</strong>渲染，不受 ScreenPercentage 影响——这正是上采样在 UI 合成之前完成的原因；</li>
+    <li>UI 渲染的像素格式通常是 <code>PF_B8G8R8A8</code>，它使用<strong>标准 alpha 混合</strong>叠加到 SceneColor；</li>
+    <li>Slate 的绘制命令由游戏线程生成，在渲染线程通过 <code>FSlateDrawBuffer</code> 传入，最终通过 RHI 绘制到后缓冲；</li>
+    <li>这一步是整条渲染管线里<strong>最后一个写后缓冲的步骤</strong>，之后是 <code>Present</code>。</li>
+  </ul>
+
+  <h2><span class="num">5</span>后处理链的完整闭环：Present 之前的最后一步</h2>
+  <p>下面是从 TAA 到 Present 的完整后处理链总视图（含本课涉及的 DOF 和动态模糊的位置）：</p>
+
+  <div class="lanes">
+    <div class="lane render">
+      <div class="lane-name">渲染线程</div>
+      <div class="lane-body">
+        TAA（速度缓冲 → 历史累积）
+        → 动态模糊（速度缓冲 → 定向模糊，可选）
+        → Diaphragm DOF（CoC → gather 散景，可选）
+        → 泛光（下/上采样金字塔，产生泛光纹理）
+        → 自动曝光（直方图 → 曝光缓冲）
+        → CombineLUTs（颜色参数 → 3D LUT）
+        → 色调映射（SceneColor×Exposure + Bloom → LUT → LDR）
+        → 空间上采样（内部分辨率 → 输出分辨率）
+        → UI/HUD 合成（Slate 叠加）
+        → <strong>Present（RHI 提交交换链）</strong>
+      </div>
+    </div>
+  </div>
+
+  <p>Present 之后的故事见 <a href="0036-rhi-thread-rhicommandlist.html">0036 · RHI Thread 与 RHICommandList</a>——那节课讲 RHI 线程如何把渲染命令翻译成 D3D12 API 调用并提交 GPU，以及交换链的 Flip 机制。</p>
+
+  <h2><span class="num">6</span>动态模糊与景深的常见性能问题</h2>
+  <table>
+    <thead><tr><th>问题</th><th>原因</th><th>调优手段</th></tr></thead>
+    <tbody>
+      <tr><td>动态模糊高速场景条纹明显</td><td>采样数不足</td><td>增大 <code>r.MotionBlurSampleCount</code>（代价更高）</td></tr>
+      <tr><td>DOF 散景边缘锯齿</td><td>gather 核在低分辨率下工作</td><td>提高 <code>r.ScreenPercentage</code> 或降低 <code>r.DepthOfFieldQuality</code></td></tr>
+      <tr><td>DOF 前景"渗出"到背景</td><td>前/背景分层混合参数不当</td><td>调整 <code>DepthOfFieldNearBlurSize</code>，或降低 FStop 减小 CoC 范围</td></tr>
+      <tr><td>动态模糊在 UI 上产生鬼影</td><td>UI 在动态模糊之后合成，速度缓冲不含 UI</td><td>确认 UI 合成在整条链最后，UI 与游戏世界 Motion Blur 分离</td></tr>
+    </tbody>
+  </table>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">Diaphragm DOF 采用 gather 方式而非 scatter 方式的主要原因是什么？</p>
+    <button class="q-opt">Gather 对每个输出像素独立从输入采样，完美匹配 GPU 的像素着色器并行模型，无写入冲突；Scatter 需要把一个输入像素的贡献写到多个输出位置，效率低且有竞争</button>
+    <button class="q-opt">Gather 比 scatter 使用更少的内存带宽，因为每次只读一个采样点</button>
+    <button class="q-opt">Scatter 无法模拟多边形散景形状，只能做圆形 blur，而 gather 支持任意形状的采样核</button>
+    <div class="q-feedback"
+      data-ok="对。GPU 的像素着色器是以输出像素为粒度并行执行的，每个输出像素独立计算自己的颜色（gather）。Scatter 需要一个输入像素向多个输出位置写入，在传统光栅化管线里没有高效的直接支持（需要原子写或粒子渲染），还有 tile 冲突问题。"
+      data-no="再想想：关键不是带宽或形状限制——scatter 同样可以做任意形状，但 GPU 架构本身就是 gather 友好的（每个线程写一个输出）。Scatter（每个输入向多输出写）才是架构上的困难。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>说出 Diaphragm DOF 的四个处理阶段（下采样+CoC计算、前景 gather、背景 gather、重建合成），以及为什么前景和背景要分开处理。</summary>
+    <div class="answer">
+      <ol>
+        <li><strong>下采样 + CoC 计算</strong>：把 SceneColor 下采样到半分辨率，对每个像素根据其深度与焦距的差计算 CoC 半径（正=前景，负=背景）。这一步奠定后续 gather 的"模糊半径"数据。</li>
+        <li><strong>前景 Gather（CoC &gt; 0）</strong>：对近于焦平面的像素，在其 CoC 范围内以光圈形状核（圆形或多边形）聚集采样，产生前景散焦效果。</li>
+        <li><strong>背景 Gather（CoC &lt; 0）</strong>：对远于焦平面的像素，同样做 gather，但需要处理被前景清晰物体"遮住"的区域——背景的散焦光晕不应该穿透前景清晰边缘。</li>
+        <li><strong>重建合成</strong>：把前景散焦层、背景散焦层和清晰中间层按 CoC 权重混合，上采样回全分辨率，输出最终带景深的 SceneColor。</li>
+      </ol>
+      <p><strong>为什么分开</strong>：前景物体（近）会<em>覆盖</em>在背景散焦光晕之上；背景散焦光晕在前景清晰物体的边缘会产生"渗出"现象（前景不透明但背景光晕扩散到其轮廓外）。如果用同一个 gather 核处理，前景遮挡和背景渗出两种情况会互相干扰，产生错误的颜色混合。分层处理后在重建阶段按遮挡关系合成才能正确。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><strong>动态模糊</strong>（<code>PostProcessMotionBlur.cpp</code>）消费 Velocity GBuffer，先提取 tile 最大速度，再在全分辨率沿速度方向做定向多 tap 采样；工作在 HDR 线性域，在 TAA 之后、泛光之前。</li>
+      <li><strong>Diaphragm DOF</strong>：计算每像素 CoC 半径（深度差/焦距范围），用 <strong>gather 方式</strong>分前景/背景分别在散景形状核内聚集采样，最后重建合成。Gather 天然适合 GPU 的输出像素并行模型。</li>
+      <li><strong>空间上采样</strong>在色调映射后、UI 合成前执行，把内部渲染分辨率（ScreenPercentage）恢复到输出分辨率，保证 UI 始终在全分辨率。</li>
+      <li><strong>UI/HUD 合成</strong>（Slate）是后处理链最后一步，在全分辨率 LDR SceneColor 上以 alpha 混合叠加，之后即 Present 到交换链。</li>
+      <li>整条后处理链到此结束，后续 0036 讲 RHI Thread 和 Present 机制。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame-part-3/">《How Unreal Renders a Frame》Part 3</a>——含动态模糊和后处理链尾段的帧分析。源码：<code>Engine/Source/Runtime/Renderer/Private/PostProcess/PostProcessMotionBlur.cpp</code>（动态模糊），<code>DiaphragmDOF/DiaphragmDOF.cpp</code>（景深），<code>PostProcessing.cpp</code>（链入口，整合上采样与合成）。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："速度缓冲里的值是绝对像素坐标差还是 NDC 坐标差？""Diaphragm DOF 的多边形散景形状是在 gather 核的采样点分布里体现的吗？""TAAU 和普通 Spatial Upscale 做的是同一件事吗？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0034-tonemapping-color.html"><span class="nav-dir">← 上一课</span>0034 · 色调映射与颜色分级</a>
+    <a class="next" href="0036-rhi-thread-rhicommandlist.html"><span class="nav-dir">下一课 →</span>0036 · RHI Thread 与 RHICommandList</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 6 后处理 · 动态模糊和景深是速度/深度信息驱动的物理效果，上采样和 UI 合成把这帧送上显示器的最后一程。</footer>
+  </article>
+</div>
+</body>
+</html>

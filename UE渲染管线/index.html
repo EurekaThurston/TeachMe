@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UE 4.26 渲染管线 · 课程地图</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<style>
+  .hero { max-width: 52rem; }
+  .hero h1 { font-size: 2.7rem; }
+  .goals { display: grid; grid-template-columns: repeat(2,1fr); gap: .8rem; max-width: 52rem; margin: 1.5rem 0 2.5rem; }
+  .goal { background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--accent); border-radius: 6px; padding: .8rem 1rem; font-family: var(--sans); font-size: .85rem; }
+  .goal b { display: block; color: var(--accent); margin-bottom: .2rem; }
+  .module { max-width: 56rem; margin: 2.2rem 0; }
+  .module-head { display: flex; align-items: baseline; gap: .8rem; border-bottom: 2px solid var(--ink); padding-bottom: .4rem; }
+  .module-head .pid { font-family: var(--mono); font-weight: 700; color: var(--accent-2); font-size: .9rem; }
+  .module-head h2 { font-family: var(--sans); margin: 0; font-size: 1.25rem; border: 0; padding: 0; }
+  .module-head .msub { color: var(--ink-faint); font-family: var(--sans); font-size: .78rem; margin-left: auto; }
+  ol.lessons { list-style: none; margin: .6rem 0 0; padding: 0; max-width: 56rem; }
+  ol.lessons li { display: flex; align-items: baseline; gap: .7rem; padding: .42rem .2rem; border-bottom: 1px solid var(--rule); font-family: var(--sans); font-size: .92rem; }
+  ol.lessons .lnum { font-family: var(--mono); color: var(--ink-faint); font-size: .8rem; flex: 0 0 3rem; }
+  ol.lessons .ltitle { flex: 1; }
+  ol.lessons a.ltitle { color: var(--ink); border: 0; font-weight: 600; }
+  ol.lessons a.ltitle:hover { color: var(--accent); }
+  .badge { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: .12rem .45rem; border-radius: 99px; flex: 0 0 auto; }
+  .badge.ready { background: #e6f3ea; color: var(--accent-3); border: 1px solid #b9ddc5; }
+  .badge.soon { background: var(--paper-2); color: var(--ink-faint); border: 1px solid var(--rule); }
+  .how { max-width: 52rem; background: var(--paper-2); border-radius: 8px; padding: 1.1rem 1.3rem; font-family: var(--sans); font-size: .9rem; margin: 1rem 0 2rem; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">课程地图</span>
+    <span class="spacer"></span>
+    <a href="reference/glossary.html">术语表 ↗</a>
+    <a href="MISSION.md">使命 ↗</a>
+    <a href="RESOURCES.md">资源 ↗</a>
+  </nav>
+
+  <div class="hero">
+    <p class="lesson-kicker">COURSE MAP · 全 8 模块 / 42 课</p>
+    <h1>一帧是怎么被画出来的</h1>
+    <p class="subtitle">从游戏线程 Tick 的第一行，到像素被扫描输出到显示器、被玩家看到——把 Unreal Engine 4.26 的整条渲染管线，从头到尾、从架构到源码彻底走通。</p>
+  </div>
+
+  <div class="goals">
+    <div class="goal"><b>读懂/改源码</b>能进入 Renderer/RHI/RDG 看懂调用链，自己写 Pass。</div>
+    <div class="goal"><b>TA 调试</b>抓帧逐 Pass 分析画面，把抽象映射回 GPU 真实行为。</div>
+    <div class="goal"><b>性能优化</b>判断 CPU/GPU-bound，定位 Draw Call 与各 Pass 耗时。</div>
+    <div class="goal"><b>第一性原理</b>对整条管线的来龙去脉建立硬核底层理解。</div>
+  </div>
+
+  <div class="how">
+    <b>怎么用这张地图：</b>按编号顺序学最稳妥——基础（Part 0）→ 架构骨架（Part 1）→ 数据流（Part 2–3）→ 主线渲染（Part 4–6）→ 上屏（Part 7）→ 工具实战（Part 8，可随时穿插）。
+    每课都是一份独立、可打印、信息密集的 HTML，全部 <span class="badge ready">可学</span> 均已产出。随时向老师提问。
+  </div>
+
+  <!-- PART 0 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 0</span><h2>GPU 与图形 API 基础（从头讲）</h2><span class="msub">巩固底层 · 4 课</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0001</span><a class="ltitle" href="lessons/0001-gpu-hardware-pipeline.html">GPU 硬件管线：从三角形到像素</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0002</span><a class="ltitle" href="lessons/0002-gpu-parallel-machine.html">GPU 是一台什么样的并行机器</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0003</span><a class="ltitle" href="lessons/0003-graphics-api-contract.html">图形 API 的契约：命令列表、PSO、描述符、屏障</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0004</span><a class="ltitle" href="lessons/0004-cpu-gpu-cooperation.html">CPU 与 GPU 的协作：异步、围栏、多缓冲</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 1 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 1</span><h2>一帧的骨架：UE 渲染宏观架构</h2><span class="msub">3 课</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0005</span><a class="ltitle" href="lessons/0005-frame-lifecycle-overview.html">一帧的生命周期：三线程渲染架构总览</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0006</span><a class="ltitle" href="lessons/0006-multithreaded-rendering-pipelining.html">多线程渲染：帧流水线与"渲染线程落后一帧"</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0007</span><a class="ltitle" href="lessons/0007-renderer-module-map.html">渲染模块地图：Engine / Renderer / RHI / RenderCore / D3D12RHI</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 2 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 2</span><h2>游戏线程侧：从 Tick 到渲染数据</h2><span class="msub">4 课</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0008</span><a class="ltitle" href="lessons/0008-engineloop-tick-world-tick.html">FEngineLoop::Tick 深入：World Tick 与组件 Tick</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0009</span><a class="ltitle" href="lessons/0009-uworld-fscene-component-proxy.html">场景的两份表达：UWorld→FScene、Component→Proxy</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0010</span><a class="ltitle" href="lessons/0010-proxy-creation-addtoscene-enqueue.html">代理的创建与更新：AddToScene 与渲染命令入队</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0011</span><a class="ltitle" href="lessons/0011-view-creation-fviewinfo.html">View 的诞生：从 PlayerController 到 FViewInfo</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 3 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 3</span><h2>渲染线程侧：场景渲染的组织</h2><span class="msub">5 课</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0012</span><a class="ltitle" href="lessons/0012-render-command-queue-sync.html">渲染命令队列与线程同步</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0013</span><a class="ltitle" href="lessons/0013-scenerenderer-entry-beginrendering.html">场景渲染入口：BeginRenderingViewFamily → SceneRenderer</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0014</span><a class="ltitle" href="lessons/0014-deferredshadingscenerenderer-render.html">总调度：FDeferredShadingSceneRenderer::Render() 全景</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0015</span><a class="ltitle" href="lessons/0015-rdg-intro.html">RDG 入门：为什么要图、如何构图</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0016</span><a class="ltitle" href="lessons/0016-rdg-advanced.html">RDG 进阶：资源生命周期、屏障自动化、异步计算、Pass 剔除</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 4 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 4</span><h2>几何与可见性：把场景准备好</h2><span class="msub">4 课</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0017</span><a class="ltitle" href="lessons/0017-visibility-culling-hzb.html">可见性与剔除：视锥、距离、遮挡(HZB)</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0018</span><a class="ltitle" href="lessons/0018-mesh-drawing-pipeline.html">Mesh Drawing Pipeline：FMeshBatch → FMeshDrawCommand</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0019</span><a class="ltitle" href="lessons/0019-meshpassprocessor-binding-cache.html">Pass 处理器与着色器绑定、绘制命令缓存</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0020</span><a class="ltitle" href="lessons/0020-gpu-scene-instancing-merging.html">GPU Scene、实例化与合批</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 5 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 5</span><h2>延迟着色主线：从 Prepass 到光照</h2><span class="msub">10 课 · 核心</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0021</span><a class="ltitle" href="lessons/0021-deferred-shading-gbuffer-layout.html">延迟着色总览与 GBuffer 布局</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0022</span><a class="ltitle" href="lessons/0022-depth-prepass.html">Depth Prepass（Early-Z）</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0023</span><a class="ltitle" href="lessons/0023-base-pass.html">Base Pass：写 GBuffer 与速度</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0024</span><a class="ltitle" href="lessons/0024-light-culling-grid.html">光照剔除：Light Grid / 聚簇</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0025</span><a class="ltitle" href="lessons/0025-deferred-direct-lighting.html">直接光照：延迟光照通道</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0026</span><a class="ltitle" href="lessons/0026-shadows-csm-shadowdepth.html">阴影：ShadowDepth、CSM、阴影贴图</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0027</span><a class="ltitle" href="lessons/0027-screen-space-ssao-ssr-ssgi.html">屏幕空间：SSAO / SSR / SSGI</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0028</span><a class="ltitle" href="lessons/0028-reflections-environment-ibl.html">反射与环境光：Reflection Environment、天空、IBL</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0029</span><a class="ltitle" href="lessons/0029-translucency-forward.html">半透明渲染：Translucency 与前向着色</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0030</span><a class="ltitle" href="lessons/0030-volumetric-fog-atmosphere.html">体积雾与大气</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 6 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 6</span><h2>后处理：从 HDR 场景颜色到显示</h2><span class="msub">5 课</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0031</span><a class="ltitle" href="lessons/0031-postprocess-overview.html">后处理管线总览</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0032</span><a class="ltitle" href="lessons/0032-taa.html">时间抗锯齿 TAA：抖动、重投影、历史</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0033</span><a class="ltitle" href="lessons/0033-bloom-exposure.html">Bloom、曝光与自动适应</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0034</span><a class="ltitle" href="lessons/0034-tonemapping-color.html">色调映射与色彩管理</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0035</span><a class="ltitle" href="lessons/0035-motionblur-dof-composite.html">运动模糊、景深与最终合成</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 7 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 7</span><h2>提交与上屏：RHI 到显示器</h2><span class="msub">4 课 · 终点</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0036</span><a class="ltitle" href="lessons/0036-rhi-thread-rhicommandlist.html">RHI 线程与 RHICommandList 的执行</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0037</span><a class="ltitle" href="lessons/0037-d3d12rhi-pso-descriptors.html">D3D12RHI：命令录制、PSO 缓存、描述符堆、资源转换</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0038</span><a class="ltitle" href="lessons/0038-swapchain-present.html">交换链与 Present：后缓冲、VSync、翻转模型</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0039</span><a class="ltitle" href="lessons/0039-gpu-timeline-scanout.html">GPU 执行时间线到扫描输出：像素如何到达玩家</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <!-- PART 8 -->
+  <section class="module">
+    <div class="module-head"><span class="pid">PART 8</span><h2>工具与实战（贯穿 TA / 性能目标）</h2><span class="msub">3 课 · 可穿插</span></div>
+    <ol class="lessons">
+      <li><span class="lnum">0040</span><a class="ltitle" href="lessons/0040-renderdoc-frame-capture.html">用 RenderDoc 抓帧逐 Pass 分析</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0041</span><a class="ltitle" href="lessons/0041-profilegpu-stat-gpu.html">ProfileGPU / stat GPU / GPU Visualizer</a><span class="badge ready">可学</span></li>
+      <li><span class="lnum">0042</span><a class="ltitle" href="lessons/0042-perf-cpu-gpu-bound.html">性能排查：CPU-bound vs GPU-bound、Draw Call、各 Pass 耗时</a><span class="badge ready">可学</span></li>
+    </ol>
+  </section>
+
+  <footer class="lesson-foot">
+    UE 4.26 渲染管线课程 · 章节地图会随学习进度与新认识调整。全 42 课已产出（0001–0042），按编号顺序学最稳妥。
+  </footer>
+</div>
+</body>
+</html>

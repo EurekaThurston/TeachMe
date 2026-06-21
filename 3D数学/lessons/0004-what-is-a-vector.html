@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 课 · 向量是什么:位置 vs 方向</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 4 课 · 模块 1 向量</div>
+<h1>向量是什么:位置 vs 方向</h1>
+<p class="subtitle">向量是 3D 数学的心脏。点、方向、速度、法线、甚至颜色,全是向量。这一课先建立最关键的双重身份:同一组数,<strong>什么时候是「一个点」,什么时候是「一支箭」</strong>。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清:向量就是<strong>一组有序的数</strong> (x, y, z),它有两种读法——<strong>位置</strong>(从原点出发到达的一个点)或<strong>方向+大小</strong>(一支可以平移的箭)。并能在 HLSL 的 <code>float2/3/4</code> 与 Niagara 的 <code>Vector</code> 里认出它,会用 swizzle。
+</div>
+
+<h2>向量 = 一组有序的数</h2>
+<p>
+最朴素的定义:<strong>向量就是几个数排成一排</strong>。2 个数是 2D 向量 (x, y),3 个是 3D (x, y, z),4 个是 4D (x, y, z, w)。「有序」很重要:(3, 0) 和 (0, 3) 完全不同,位置/方向都不一样。每个数叫一个<strong>分量 component</strong>。
+</p>
+<p>
+就这么简单。难的不是「是什么」,而是<strong>同一组数能代表两种截然不同的东西</strong>——这是新人最容易糊的地方,也是这节课的全部重点。</p>
+
+<h2>读法一:位置(一个点)</h2>
+<p>
+把 (4, 3) 读成<strong>位置</strong>:从原点出发,走到 x=4、y=3 的那个点。它<strong>钉</strong>在空间里,起点必须是原点。粒子的 <code>Position</code>、顶点坐标、相机位置,都是这种读法——它们回答「在哪」。
+</p>
+
+<h2>读法二:方向+大小(一支箭)</h2>
+<p>
+把同样的 (4, 3) 读成<strong>位移</strong>:朝某个方向、走某段长度的一支箭。这支箭<strong>不钉在原点</strong>——它只在乎「往哪、多长」,放在空间任何地方都是同一支箭。速度、法线、力、光照方向,都是这种读法——它们回答「往哪、多猛」。
+</p>
+<p>
+下面这个画布,每支箭都从原点画(方便看分量),但请记住:<strong>当它表示方向时,你可以把它平移到任何地方,它还是它</strong>。拖红点改 a,拖绿点改 b,看分量怎么变。
+</p>
+<div class="lab">
+  <canvas id="play4"></canvas>
+  <div class="readout" id="read4"></div>
+  <p style="font-size:0.85rem;color:var(--muted);margin:0.6rem 0 0">拖红/绿圆点移动向量。整数网格,每格 1 个单位。</p>
+</div>
+<div class="callout callout-key">
+  <span class="label">一句话记牢</span>
+  <strong>位置 = 钉在原点的点(在哪);方向 = 能自由平移的箭(往哪+多长)。</strong> 同一组数 (4,3),读法不同,用法天差地别。下一课的「加减」之所以有两种几何含义,根就在这。
+</div>
+
+<h2>在引擎里它长什么样</h2>
+<p>HLSL 里向量是 <strong><code>float2 / float3 / float4</code></strong>,Niagara 里是 <strong><code>Vector</code>(3 float)</strong> 或 <code>Position</code>。同一个概念,两套包装:</p>
+<pre><code><span class="kw">float3</span> pos    = <span class="kw">float3</span>(<span class="num">4</span>, <span class="num">3</span>, <span class="num">0</span>);  <span class="cmt">// 当位置:某个点在哪</span>
+<span class="kw">float3</span> normal = <span class="kw">float3</span>(<span class="num">0</span>, <span class="num">0</span>, <span class="num">1</span>);  <span class="cmt">// 当方向:面朝哪(下节课会归一化)</span>
+<span class="kw">float4</span> color  = <span class="kw">float4</span>(<span class="num">1</span>, <span class="num">0</span>, <span class="num">0</span>, <span class="num">1</span>);  <span class="cmt">// 颜色也是 4D 向量 RGBA</span>
+</code></pre>
+<div class="callout callout-vfx">
+  <span class="label">接回引擎</span>
+  在 Niagara 里你早就在用向量了:<code>Particles.Position</code>(位置读法)、<code>Particles.Velocity</code>(方向+大小读法)。它们类型都是 <code>Vector</code>,但一个是「在哪」、一个是「往哪多快」。把这两种读法分清,后面调力场、朝向才不会乱。
+</div>
+
+<h2>Swizzle:重排和复制分量</h2>
+<p>
+shader 有个好用的语法糖:<strong>swizzle</strong>——用 <code>.x .y .z .w</code> 任意取、重排、复制分量。这在 TA 日常里极高频:
+</p>
+<pre><code><span class="kw">float3</span> v = <span class="kw">float3</span>(<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>);
+v.xy        <span class="cmt">// → float2(1, 2) 只取前两维</span>
+v.zyx       <span class="cmt">// → float3(3, 2, 1) 反序</span>
+v.xxx       <span class="cmt">// → float3(1, 1, 1) 把 x 复制三份(灰度转 RGB 常用)</span>
+v.rgb       <span class="cmt">// → 和 .xyz 等价,颜色语境的别名</span>
+</code></pre>
+<p>颜色还可以用 <code>.rgba</code> 这套别名,和 <code>.xyzw</code> 完全等价,纯粹是读着顺。<code>v.xxx</code> 把一个灰度值铺成 RGB 三通道,是你以后会写无数次的小动作。</p>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>把方向向量当点用(或反过来)。</strong> 「法线 (0,0,1)」是方向,别把它当成「在 z=1 的位置」。混了会导致平移作用到方向上(模块 2 齐次坐标 w 就是来防这个的)。</li>
+  <li><strong>以为方向向量钉在原点。</strong> 方向箭可以平移到任何地方,只看「往哪、多长」。画图时从原点画只是为了看分量。</li>
+  <li><strong>分量顺序记错。</strong> (x, y, z) 有序;UE 里还要记得 X=前、Y=右、Z=上。把 Y 当成「上」会让东西躺下。</li>
+  <li><strong>忘了颜色也是向量。</strong> RGBA 就是 float4,能加减乘、能 lerp、能 dot。把颜色当向量算,很多材质技巧就通了。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz4"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=fNk_zzaMoSs" target="_blank">3Blue1Brown — Vectors, what even are they?(Essence of Linear Algebra 第 1 章)</a>
+  —— 9 分钟,用动画把「向量的点 vs 箭两种身份」讲到骨子里。本模块最值得先看的一集。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我拿你某个 Niagara 模块里的 Vector,判断它该当「位置」还是「方向」来理解?或者 swizzle 哪里没绕明白?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>向量加减与缩放</strong>——加法=首尾相接,减法=指向差,标量乘=伸缩。你将看懂 Niagara 那句灵魂代码 <code>Position += Velocity * dt</code>。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/math-tools.js"></script>
+<script>
+VecPlayground("play4", {
+  readoutId: "read4",
+  show: ["len"],
+  vectors: [
+    { name: "a", x: 4, y: 3, color: "#c0392b", draggable: true },
+    { name: "b", x: -2, y: 2, color: "#2e7d32", draggable: true }
+  ]
+});
+renderQuiz("quiz4", [
+  {
+    q: "向量 (3, 0) 和 (0, 3) 的关系是?",
+    options: ["完全不同的两个向量", "其实是同一个向量", "只是写法不同、相等", "互为相反数"],
+    correct: 0,
+    why: "向量是有序的数。分量顺序不同,代表的位置/方向就不同。(3,0) 朝 x,(0,3) 朝 y。"
+  },
+  {
+    q: "把向量读成「位置」时,它的起点必须是?",
+    options: ["原点", "任意点都行", "另一个向量的终点", "屏幕中心"],
+    correct: 0,
+    why: "位置读法=从原点出发到达的那个点,钉在空间里。方向读法才可以自由平移。"
+  },
+  {
+    q: "下列哪个最适合用「方向+大小」读法?",
+    options: ["粒子的 Velocity 速度", "粒子的 Position 位置", "相机所在的坐标", "顶点的坐标"],
+    correct: 0,
+    why: "速度回答「往哪、多快」,是方向+大小;位置/坐标回答「在哪」,是位置读法。"
+  },
+  {
+    q: "HLSL 里 float3(1,2,3).xxx 的结果是?",
+    options: ["float3(1, 1, 1)", "float3(1, 2, 3)", "float3(3, 2, 1)", "float3(1, 2, 0)"],
+    correct: 0,
+    why: "swizzle .xxx 把 x 分量复制三份。常用于把一个灰度值铺成 RGB 三通道。"
+  },
+  {
+    q: "关于「颜色 RGBA」,正确的是?",
+    options: ["它就是一个 4D 向量,可参与向量运算", "颜色不是向量,不能加减", "只有位置才算向量", "颜色只能用 lerp 不能 dot"],
+    correct: 0,
+    why: "RGBA = float4,是 4D 向量,能加减、缩放、lerp、dot。把颜色当向量算,很多材质技巧就通了。"
+  },
+  {
+    q: "把「法线 (0,0,1)」误当成「位置」会有什么隐患?",
+    options: ["平移会错误地作用到方向上", "颜色会变暗", "粒子数变多", "完全没影响"],
+    correct: 0,
+    why: "方向不该被平移影响,位置该。混用会让平移污染方向——模块 2 的齐次坐标 w 正是为区分二者而生。"
+  }
+]);
+</script>
+</body>
+</html>

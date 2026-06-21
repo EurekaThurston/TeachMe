@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 16 课 · 3D 旋转、欧拉角与万向锁</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 16 课 · 模块 3 旋转</div>
+<h1>3D 旋转、欧拉角与万向锁</h1>
+<p class="subtitle">2D 只有一个角,3D 要绕三根轴转。这带来两个新麻烦:<strong>顺序又开始要紧</strong>,以及那个让无数 TA 抓狂的 <strong>万向锁(Gimbal Lock)</strong>。理解它们,就知道下一课的四元数到底在解决什么。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能说清:<strong>欧拉角</strong>用三个角(绕 X/Y/Z,即 Pitch/Yaw/Roll)描述 3D 朝向,直观但有两个坑:<strong>顺序不可交换</strong>(绕轴次序不同结果不同),以及<strong>万向锁</strong>——当中间那根轴转到 ±90°,两根旋转轴会重合,丢掉一个自由度,转起来「卡住/突跳」。这就是四元数存在的理由。
+</div>
+
+<h2>三个角:Pitch / Yaw / Roll</h2>
+<p>
+2D 平面里只有一种转法(绕「出屏幕」那根轴)。到了 3D,你可以绕三根轴各转一个角:
+</p>
+<table class="tbl">
+  <tr><th>绕哪根轴</th><th>名字</th><th>直觉(以飞机/角色为例)</th></tr>
+  <tr><td>绕 X 轴</td><td><strong>Pitch 俯仰</strong></td><td>抬头 / 低头</td></tr>
+  <tr><td>绕 Y/Z 轴</td><td><strong>Yaw 偏航</strong></td><td>左转头 / 右转头</td></tr>
+  <tr><td>绕 forward 轴</td><td><strong>Roll 翻滚</strong></td><td>侧身翻 / 歪头</td></tr>
+</table>
+<p>
+把三个 2D 旋转矩阵(上一课那种,扩到 3×3)<strong>连乘</strong>,就得到一个 3D 旋转。UE Transform 面板里的 <strong>Rotation (X, Y, Z)</strong> 三个数,就是欧拉角。它直观、好调、好读——这是它的优点。
+</p>
+<div class="callout callout-warn">
+  <span class="label">注意:UE 的轴约定</span>
+  不同软件 Pitch/Yaw/Roll 对应的轴不一样。UE 是左手系、X=前 Y=右 Z=上:<strong>Roll 绕 X、Pitch 绕 Y、Yaw 绕 Z</strong>。别背死「Pitch 一定绕 X」,记住几何意思(抬头/转头/侧翻),用时对一下当前软件的轴。
+</div>
+
+<h2>坑一:顺序不可交换</h2>
+<p>
+和第 12 课一样,旋转也是矩阵相乘,<strong>不可交换</strong>。「先 Pitch 再 Yaw」和「先 Yaw 再 Pitch」会把物体转到<strong>不同朝向</strong>。所以「欧拉角 (30, 45, 60)」这串数字,只有在<strong>说清楚旋转顺序</strong>(XYZ?ZYX?)时才有确定含义。不同 DCC 用不同默认顺序,这是跨软件导朝向时朝向乱掉的常见根因。
+</p>
+<div class="formula">R_x · R_y · R_z　≠　R_z · R_y · R_x　　（绕轴顺序一换,最终朝向就变）</div>
+
+<h2>坑二:万向锁(Gimbal Lock)</h2>
+<p>
+这是欧拉角的致命伤。想象三个嵌套的旋转环(像陀螺仪那种):外环、中环、内环,各管一个角。正常时三环互相垂直,能转出任意朝向。但当<strong>中间那根轴转到 ±90°</strong>,内环和外环的旋转轴会<strong>对齐重合</strong>——这时转内环和转外环效果一样,你<strong>丢了一个独立的转动方向</strong>。
+</p>
+<p>
+后果对 TA 很实在:
+</p>
+<ul>
+  <li><strong>转着转着「卡住」</strong>:某个方向怎么调都转不动,因为那个自由度没了。</li>
+  <li><strong>插值时突然翻转/抽搐</strong>:动画里相机或骨骼经过万向锁姿态,朝向会突跳(snap)。「相机俯仰到正上方时画面猛地一甩」就是典型。</li>
+  <li><strong>同一个朝向有多组欧拉角</strong>:数值表示不唯一,插值和叠加都容易出鬼。</li>
+</ul>
+<div class="formula">中轴 → ±90° ⇒ 内外两轴重合 ⇒ 丢一个自由度 ⇒ 卡死 / 插值突跳</div>
+
+<h2>接回引擎:你为什么会撞上它</h2>
+<div class="callout callout-vfx">
+  <span class="label">TA 现场</span>
+  「Niagara 里粒子绕轴转着转着方向就乱了」「相机/骨骼 Pitch 接近 90° 时画面猛甩」「把两个旋转加起来朝向发疯」——这些常常就是欧拉角的顺序问题或万向锁。引擎内部其实<strong>用四元数(或矩阵)存旋转、做插值</strong>,只是在面板上显示成欧拉角方便你读。所以一旦涉及<strong>旋转的叠加、插值、连续转动</strong>,尽量在四元数层面做,只把欧拉角当「人类可读的输入/输出」。下一课就讲四元数怎么绕开这两个坑。
+</div>
+<pre><code><span class="cmt">// 欧拉角直观好读,但叠加/插值容易出万向锁与顺序问题</span>
+<span class="cmt">// 概念:三个轴旋转连乘(顺序写死才有确定含义)</span>
+<span class="kw">float3x3</span> R = <span class="fn">mul</span>(Rz, <span class="fn">mul</span>(Ry, Rx)); <span class="cmt">// ZYX 顺序;换顺序结果就不同</span>
+<span class="cmt">// 实战:连续转动/插值请用四元数(下一课),欧拉角只作输入输出</span>
+</code></pre>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>以为欧拉角三个数就唯一确定朝向。</strong> 没说顺序就没定义;同一朝向还可能有多组欧拉角。</li>
+  <li><strong>跨软件直接搬欧拉角。</strong> 轴约定和默认顺序不同,导进来朝向就歪。要么转矩阵/四元数,要么对齐约定。</li>
+  <li><strong>在欧拉角上做插值。</strong> 经过万向锁会突跳。旋转插值要在四元数上做 slerp(下一课)。</li>
+  <li><strong>把万向锁当 bug 去 debug 数值。</strong> 它是欧拉角表示法的固有缺陷,不是哪行代码写错。换表示法(四元数)才是解法。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz16"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=zc8b2Jo7mno" target="_blank">GuerrillaCG — Euler (gimbal lock) explained</a>
+  —— 用三个旋转环的动画把万向锁「为什么会丢自由度」演示得一目了然。看完你会对那个「卡住/突跳」彻底有画面。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我帮你判断「相机/骨骼在某姿态突跳」是不是万向锁?或者解释你的两个旋转为什么加起来朝向发疯、该怎么改用四元数?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>四元数与 slerp</strong>——不靠三个角、不会万向锁、能平滑插值的旋转表示法。听起来玄,但我们只学「怎么用、它解决了什么」,不啃复数推导。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+renderQuiz("quiz16", [
+  {
+    q: "欧拉角用什么来描述 3D 朝向?",
+    options: ["绕三根轴的三个角", "一个角和一个轴", "四个数", "一个 3×3 矩阵的行列式"],
+    correct: 0,
+    why: "欧拉角=绕X/Y/Z三根轴各转一个角(Pitch/Yaw/Roll)。直观好调,就是UE面板的Rotation三个数。"
+  },
+  {
+    q: "「欧拉角 (30,45,60)」要确定含义,必须额外说明?",
+    options: ["旋转的轴顺序", "向量的长度", "缩放比例", "原点位置"],
+    correct: 0,
+    why: "旋转不可交换,XYZ和ZYX顺序结果不同。不说顺序这三个数就没确定朝向,跨软件常因此乱掉。"
+  },
+  {
+    q: "万向锁发生在什么时候?",
+    options: ["中间那根轴转到 ±90°", "三个角都为 0", "缩放为负", "向量未归一化"],
+    correct: 0,
+    why: "中轴±90°时内外两轴重合,丢一个自由度,转起来卡住,插值经过时突跳。是欧拉角固有缺陷。"
+  },
+  {
+    q: "万向锁导致的直接后果是?",
+    options: ["丢一个自由度,转动卡住/突跳", "物体变大", "颜色变暗", "贴图错位"],
+    correct: 0,
+    why: "两轴重合后某方向转不动,动画插值经过该姿态会snap。相机俯仰到90°画面猛甩就是它。"
+  },
+  {
+    q: "引擎内部通常用什么存旋转和做插值?",
+    options: ["四元数(或矩阵)", "三个欧拉角", "一个标量", "RGB 颜色"],
+    correct: 0,
+    why: "内部用四元数/矩阵避开万向锁,面板只把欧拉角当人类可读的显示。叠加插值都该在四元数层做。"
+  },
+  {
+    q: "对「相机 Pitch 接近 90° 画面突跳」,正确的解决思路是?",
+    options: ["改用四元数表示旋转", "调小贴图", "增加粒子数", "把缩放设为 1"],
+    correct: 0,
+    why: "突跳是万向锁,属表示法缺陷,不是数值bug。换四元数(下一课)从根上绕开,而非去调欧拉角。"
+  }
+]);
+</script>
+</body>
+</html>

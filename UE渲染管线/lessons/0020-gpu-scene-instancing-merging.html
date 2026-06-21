@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0020 · GPU Scene、实例化与合批</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 4 · 几何与可见性</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 4 · 几何与可见性 · Lesson 0020</p>
+  <h1>GPU Scene、实例化与合批</h1>
+  <p class="subtitle"><code>FGPUScene</code> 把图元的变换与包围盒常驻 GPU 结构化缓冲，着色器按 <code>PrimitiveId</code> 索引——绕过每帧 CPU 上传。在此基础上，绑定相同的多条 <code>FMeshDrawCommand</code> 可合并为一次实例化绘制，大幅降低 CPU 提交开销。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~18 分钟</span>
+    <span><b>前置</b> 0018（FMeshDrawCommand）、0019（合批基础）、0002（GPU 并行性）</span>
+    <span><b>产出</b> 能解释 GPU Scene 把图元数据常驻 GPU 的意义，以及绘制命令合批/自动实例化如何降低 CPU 开销</span>
+  </div>
+
+  <p class="lead">传统做法是每帧把每个图元的变换矩阵从 CPU 上传到 GPU（<code>SetShaderParameter</code> 或更新常量缓冲）——物体越多，CPU 带宽和调用开销越高。<code>FGPUScene</code>（UE 4.23 引入，4.26 逐步成熟）改变了这一点：图元数据一次写进 GPU 端的结构化缓冲（<code>PrimitiveSceneData</code>），只在数据<em>实际变化</em>时增量更新，着色器用 <code>PrimitiveId</code> 索引——消除了大量重复上传。合批（Draw Call Merging）则从另一方向压缩开销：多个绑定一致的绘制命令合成一次 instanced draw。</p>
+
+  <h2><span class="num">1</span>传统 CPU 上传 vs GPU Scene 常驻</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">传统方式（每帧）</span><span class="s-sub">CPU 遍历所有图元<br>SetShaderParameter<br>上传变换矩阵</span></div>
+    <span class="flow-arrow">vs</span>
+    <div class="stage gpu"><span class="s-name">GPU Scene（常驻）</span><span class="s-sub">PrimitiveSceneData 常驻显存<br>只增量 Dirty 更新<br>着色器用 PrimitiveId 索引</span></div>
+  </div>
+
+  <table>
+    <thead><tr><th></th><th>传统 CPU 上传</th><th>GPU Scene 常驻</th></tr></thead>
+    <tbody>
+      <tr><td>每帧 CPU 开销</td><td>O(可见图元数) · 上传 + API 调用</td><td>O(脏图元数) · 仅更新变化的</td></tr>
+      <tr><td>着色器访问</td><td>每 Draw Call 绑定独立常量缓冲</td><td>全场景统一缓冲，按 <code>PrimitiveId</code> 一次索引</td></tr>
+      <tr><td>实例化支持</td><td>每实例独立常量缓冲，难以合批</td><td>所有实例共享同一缓冲，实例 ID 即 <code>PrimitiveId</code></td></tr>
+      <tr><td>GPU 端剔除</td><td>无（CPU 剔除后结果再上传）</td><td>数据已在 GPU，可直接 Compute 剔除（UE5 扩展方向）</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">2</span>FGPUScene 的数据布局</h2>
+  <p><code>FGPUScene</code>（<span class="file">GPUScene.cpp</span> / <span class="file">GPUScene.h</span>）维护一个 GPU 端的结构化缓冲 <code>PrimitiveSceneData</code>，每个图元占固定大小的槽（当前为一组 <code>float4x4</code> 矩阵 + 包围盒 + 标志位等，共约 36 个 <code>float4</code>）。代码里通过 <code>GPUScene.PrimitiveBuffer</code>（<code>FRDGBuffer</code>）在 RDG 里传递，着色器端定义为：</p>
+
+  <pre><code><span class="cmt">// SceneData.ush（Engine/Shaders/Private/）</span>
+<span class="typ">StructuredBuffer</span>&lt;<span class="typ">float4</span>&gt; GPUSceneInstanceSceneData;
+<span class="typ">StructuredBuffer</span>&lt;<span class="typ">float4</span>&gt; GPUScenePrimitiveSceneData;
+
+<span class="cmt">// 顶点着色器里读取当前图元变换（PrimitiveId 来自 DrawInstanced 的实例 ID）</span>
+<span class="typ">FPrimitiveSceneData</span> PrimitiveData = <span class="fn">GetPrimitiveData</span>(PrimitiveId);
+<span class="typ">float4x4</span> LocalToWorld = PrimitiveData.LocalToWorld;</code></pre>
+  <p class="code-cap">着色器端通过 <code>PrimitiveId</code> 从结构化缓冲取变换，无需单独常量缓冲</p>
+
+  <h2><span class="num">3</span>增量更新机制</h2>
+  <p>每帧游戏线程把发生变化的图元标记为 Dirty（移动、材质变更、新增/删除）。<code>FGPUScene::Update</code> 在渲染线程收集所有 Dirty 图元，通过 Compute Shader 或直接写操作把更新数据批量上传，覆盖对应槽位。未变化的图元数据一帧都不碰。</p>
+
+  <p>相关 cvar：</p>
+  <ul>
+    <li><code>r.GPUScene.UploadEveryFrame</code> — 调试用，强制每帧全量上传（验证增量是否正确）</li>
+    <li><code>r.GPUScene.MaxPooledUploadBufferSize</code> — 控制上传缓冲池大小</li>
+    <li><code>r.GPUScene.UseGPUSceneForDynamicPrimitives</code> — 是否对动态图元也走 GPU Scene 路径（4.26 部分支持）</li>
+  </ul>
+
+  <h2><span class="num">4</span>合批与自动实例化：从命令到一次 Draw</h2>
+  <p>当多个 <code>FMeshDrawCommand</code> 满足以下条件时，<code>SubmitMeshDrawCommands</code> 会把它们合并为一次 <code>DrawIndexedPrimitiveInstanced</code>：</p>
+  <ul>
+    <li>相同的 PSO（着色器 + 混合 + 光栅状态）</li>
+    <li>相同的顶点流与索引缓冲（同一静态网格资源）</li>
+    <li>相同的着色器绑定（除 <code>PrimitiveId</code> 外）——依赖 GPU Scene 使得所有图元共享同一 <code>PrimitiveSceneData</code> 缓冲</li>
+  </ul>
+
+  <p>合并条件中，"相同着色器绑定"在传统常量缓冲模式下几乎不可能满足（每个物体的变换都是独立绑定）；GPU Scene 把变换移进结构化缓冲后，绑定变得一致，合批变成可能。</p>
+
+  <div class="callout insight">
+    <span class="label">GPU Scene 使合批成为系统性能力而非特例</span>
+    <p>旧版本里，合批需要美术手动把多个 Mesh 打包成一个（Mesh Merge），有局限。GPU Scene + <code>PrimitiveId</code> 方案让任意相同静态网格的多个实例在 Mesh Draw Pipeline 里自然满足合批条件，无需特殊处理。这是 <span class="term">Draw Call Merging / Instancing</span> 从"技巧"变成"默认机制"的关键原因。</p>
+  </div>
+
+  <h2><span class="num">5</span>合批的实际流程</h2>
+
+  <div class="pipeline">
+    <div class="stage fixed"><span class="s-name">N 条 FMeshDrawCommand</span><span class="s-sub">按 SortKey 排序后</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage prog"><span class="s-name">合批检查</span><span class="s-sub">PSO / 顶点流 / 绑定<br>是否连续相同？</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage gpu"><span class="s-name">合并为实例化 Draw</span><span class="s-sub">DrawIndexedInstanced<br>InstanceCount = N</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">VS 里 PrimitiveId</span><span class="s-sub">= InstanceId<br>索引 GPUScene 取各自变换</span></div>
+  </div>
+
+  <p>在 VS 里，<code>InstanceId</code>（系统语义 <code>SV_InstanceID</code>）直接当 <code>PrimitiveId</code> 用，从 <code>GPUScenePrimitiveSceneData</code> 读出对应图元的变换——N 个物体只有一次 draw call，GPU 并行处理 N 个实例。</p>
+
+  <h2><span class="num">6</span>UE5 的演进方向（超纲标注）</h2>
+  <p>UE 4.26 的 GPU Scene 以动态实例化合批为主，CPU 可见性剔除结果才决定哪些图元参与绘制。UE5 在此基础上引入了 <strong>Instance Culling</strong>（实例化 GPU 端剔除）和 <strong>Nanite</strong>（GPU 端完全接管几何提交与可见性）——这些在 UE 4.26 中<em>均不存在，属超纲内容</em>，此处仅作演进方向说明。本课程严格锁 4.26，以动态实例化合批为终点。</p>
+
+  <div class="quiz" data-answer="0">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">GPU Scene 让合批（自动实例化）变得容易的根本原因是什么？</p>
+    <button class="q-opt">把图元变换存进 GPU 端结构化缓冲后，多个物体的着色器绑定（除 PrimitiveId 外）变得完全一致，满足了合批的绑定一致条件</button>
+    <button class="q-opt">GPU Scene 直接在 GPU 端做了视锥剔除，减少了需要合批的图元数量</button>
+    <button class="q-opt">GPU Scene 把所有静态网格的顶点缓冲合并成了一个大缓冲，减少了顶点流绑定切换</button>
+    <div class="q-feedback"
+      data-ok="对。核心在于：传统方案里每个物体的变换是独立的常量缓冲绑定，无法合批；GPU Scene 把所有变换统一进结构化缓冲，绑定差异消失，多个相同网格的命令就能合并为一次实例化绘制。"
+      data-no="再想：合批的瓶颈不在图元数量，而在着色器绑定是否一致。只要每个物体有独立的变换常量缓冲，绑定就不一致，无法合批。GPU Scene 解决的正是这个问题。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>解释"GPU Scene 常驻" vs "传统 CPU 上传"在每帧 CPU 开销上的区别，以及合批能发生的三个必要条件。</summary>
+    <div class="answer">
+      <strong>CPU 开销对比</strong>：传统方式每帧对所有可见图元调用 SetShaderParameter 上传变换，O(可见图元数)；GPU Scene 只在图元数据实际变化时增量更新脏数据，O(脏图元数)——场景越静态，节省越多。<br><br>
+      <strong>合批三条件</strong>：① 相同 PSO（着色器+混合+光栅状态）；② 相同顶点流和索引缓冲（同一 Mesh 资源）；③ 相同着色器绑定（依赖 GPU Scene——变换已在共享结构化缓冲中，绑定无差异，只有 <code>PrimitiveId</code> 不同，而 <code>PrimitiveId</code> 用实例 ID 传递，不需要单独绑定）。
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li><code>FGPUScene</code>（<span class="file">GPUScene.cpp</span>）把所有图元的变换/包围盒等数据常驻 GPU 结构化缓冲 <code>PrimitiveSceneData</code>，着色器通过 <code>PrimitiveId</code> 索引——绕过每帧全量 CPU 上传。</li>
+      <li>增量更新：只有 Dirty 图元才走上传路径，静态场景的 GPU Scene 更新开销接近零。</li>
+      <li>合批需要：PSO 相同 + 顶点流相同 + 着色器绑定相同。GPU Scene 把变换移进共享缓冲，使"绑定一致"成为常态，让合批从特例变成默认机制。</li>
+      <li>合批后 VS 用 <code>SV_InstanceID</code> 作 <code>PrimitiveId</code> 读取对应变换——N 个物体一次 draw call，GPU 并行 N 个实例。</li>
+      <li>UE5 的 Instance Culling 和 Nanite 是 GPU Scene 的演进方向，在 UE 4.26 中不存在，属<em>超纲</em>。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>UE 官方，<a href="https://docs.unrealengine.com/4.27/en-US/ProgrammingAndScripting/Rendering/Overview">《Graphics Programming Overview》— UE 4.27 Docs</a>——有 GPU Scene 一节的概述。配套：ikrima，<a href="https://ikrima.dev/ue4guide/graphics-development/render-architecture/new-render-pipeline/">Gamedev Guide · New Render Pipeline</a>——社区速查，包含 GPU Scene 与实例化的调用关系笔记。GPUScene.cpp 源码本身是最终真相。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："PrimitiveSceneData 每个图元占多少字节，字段分布是什么？""动态图元在 4.26 里是否也走 GPU Scene 路径？""r.GPUScene.* 有哪些 cvar 最值得分析性能时打开？" 随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0019-meshpassprocessor-binding-cache.html"><span class="nav-dir">← 上一课</span>0019 · Pass 处理器与着色器绑定</a>
+    <a class="next" href="0021-deferred-shading-gbuffer-layout.html"><span class="nav-dir">下一课 →</span>0021 · 延迟着色与 GBuffer 布局</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 4 几何与可见性 · GPU Scene 是 CPU 开销下降的系统性基础，合批是它的直接收益。</footer>
+  </article>
+</div>
+</body>
+</html>

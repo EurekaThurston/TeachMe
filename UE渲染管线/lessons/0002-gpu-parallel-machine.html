@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0002 · GPU 是一台什么样的并行机器</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 0 · 基础</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 0 · 基础 · Lesson 0002</p>
+  <h1>GPU 是一台什么样的并行机器</h1>
+  <p class="subtitle">上一课讲了"管线做什么"，这课讲它"为什么能那么快"。理解 GPU 的并行模型，你才能解释：为什么材质里加个分支会变慢、为什么 Draw Call 要合批、为什么 UE 要把光照剔除放进计算着色器、为什么异步计算能"白嫖"性能。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~15 分钟</span>
+    <span><b>前置</b> 0001 硬件管线</span>
+    <span><b>产出</b> 能用"延迟隐藏 + SIMT"解释 GPU 性能的来源与三类常见浪费</span>
+  </div>
+
+  <p class="lead">CPU 和 GPU 是为两个相反目标设计的。CPU 想让<strong>单个任务尽快完成</strong>（低延迟）；GPU 不在乎单个任务多慢，它要让<strong>海量任务的总吞吐最大</strong>。这一句对立，决定了 GPU 几乎所有的设计取舍——也决定了你该怎么喂它。</p>
+
+  <h2><span class="num">1</span>两种哲学：延迟优化 vs 吞吐优化</h2>
+  <table>
+    <thead><tr><th></th><th>CPU（延迟优化）</th><th>GPU（吞吐优化）</th></tr></thead>
+    <tbody>
+      <tr><td><b>核心数</b></td><td>少而强（几~几十个）</td><td>极多而简（数千 ALU）</td></tr>
+      <tr><td><b>面对内存延迟</b></td><td>砸大量晶体管做<strong>缓存、乱序执行、分支预测</strong>去<em>避免/隐藏</em>等待</td><td>几乎不做这些，靠<strong>切换到别的并行任务</strong>来掩盖等待</td></tr>
+      <tr><td><b>擅长</b></td><td>串行、分支密集、低延迟的控制逻辑</td><td>同一段代码在海量数据上并行跑（着色、计算）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout knowledge">
+    <span class="label">核心机制 · 用并行隐藏延迟</span>
+    <p>访问显存要几百个时钟周期。CPU 怕这个延迟，所以建多级缓存去躲。GPU 不躲——当一组线程因为等内存而卡住时，硬件<strong>立刻切换到另一组就绪的线程</strong>继续算，等内存回来再切回去。只要在飞的线程足够多，所有等待都被别人的计算填满，执行单元永不空闲。这就是 GPU 高吞吐的根本秘密：<strong>不是更快，而是永不闲着</strong>。</p>
+  </div>
+
+  <h2><span class="num">2</span>SIMT：32 个线程绑在一起走</h2>
+  <p>GPU 不是一个线程一个线程地调度。它把着色器实例（一个顶点、一个片元、一个计算线程）<strong>32 个打成一组</strong>锁步执行——NVIDIA 叫 <span class="term">warp</span>，AMD 叫 <span class="term">wavefront</span>（64 个）。<span class="sn-ref">1</span> 一组里所有线程在同一时刻执行<strong>同一条指令</strong>，只是各自的数据不同（Single Instruction, Multiple Threads）。</p>
+  <span class="sidenote">所以"GPU 有几千个核"要打个折看：真正独立的调度单位是 warp，不是单个线程。32 个线程共享一个程序计数器。</span>
+
+  <p>这带来一个你必须刻进脑子的后果——<strong>分支分歧（divergence）</strong>：</p>
+  <pre><code><span class="kw">if</span> (worldNormal.y &gt; <span class="str">0.5</span>) {
+    color = ExpensiveSnow();   <span class="cmt">// warp 里一半线程走这</span>
+} <span class="kw">else</span> {
+    color = ExpensiveRock();   <span class="cmt">// 另一半走这</span>
+}</code></pre>
+  <p class="code-cap">材质里一个看似无害的分支</p>
+  <p>因为 32 个线程必须步调一致，硬件没法让一半跑雪、一半跑岩石。它的做法是：<strong>两条分支都执行</strong>，用掩码让"雪线程"在跑岩石代码时丢弃结果，反之亦然。结果——这个像素的成本约等于 <code>雪 + 岩石</code>，分支根本没省。这就是为什么<strong>材质里的动态分支常常不省反亏</strong>，以及为什么 UE 用 static switch / shader permutation 在<em>编译期</em>把分支消掉，而不是留到运行时。</p>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · "免费"的并行有边界</span>
+    <p>同一 warp 内分歧才有惩罚。如果整个 warp 的线程都走同一条分支（比如一大片连续像素都是天空），就没有惩罚——这叫<strong>相干（coherent）</strong>执行。屏幕上相邻像素往往落在同一 warp，所以"大块同质区域便宜、细碎杂乱区域贵"。这条直觉能解释很多性能现象。</p>
+  </div>
+
+  <h2><span class="num">3</span>占用率：决定延迟能不能被藏住</h2>
+  <p>第 1 节说"靠切换到别的线程隐藏延迟"——能切换的前提是<strong>真的有足够多线程同时驻留</strong>。一个 SM/CU（流多处理器）上同时活着的 warp 数与硬件上限之比，就叫<span class="term">占用率</span>（occupancy）。</p>
+  <p>占用率不是越满越好，但太低就藏不住延迟。限制它的是<strong>资源压力</strong>：</p>
+  <ul>
+    <li><strong>寄存器</strong>：每个线程用的寄存器越多，能同时驻留的线程就越少。一个写得臃肿、变量爆多的复杂材质着色器，会因为寄存器压力把占用率压低，反而变慢。</li>
+    <li><strong>共享内存 / LDS</strong>：计算着色器里 thread group 共享的片上内存，用得越多，能并发的 group 越少。</li>
+  </ul>
+  <p class="marginnote">这就是为什么 UE 的 <code>r.Shaders.Optimize</code>、shader 复杂度视图（材质的 Shader Complexity 着色）很重要——它们间接反映寄存器/指令开销，进而影响占用率与最终耗时。</p>
+
+  <h2><span class="num">4</span>内存层级：带宽巨大，延迟也巨大</h2>
+  <div class="pipeline">
+    <div class="stage prog"><span class="s-name">寄存器</span><span class="s-sub">最快/每线程私有</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">L1/共享</span><span class="s-sub">片上/组内共享</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">L2</span><span class="s-sub">全芯片共享</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage fixed"><span class="s-name">显存 VRAM</span><span class="s-sub">大带宽·高延迟</span></div>
+  </div>
+  <p>GPU 的显存带宽是 CPU 内存的好几倍，但<strong>单次访问延迟更高</strong>。要吃满带宽，访问必须<strong>合并（coalesced）</strong>：一个 warp 的 32 个线程如果读的是连续地址，硬件能合成一两次大事务；如果读得四处乱跳，就退化成几十次小事务，带宽利用率崩塌。这条直接解释了：纹理为什么要用 mipmap 和块压缩（提升缓存命中与合并）、为什么随机访问大缓冲很贵。</p>
+
+  <h2><span class="num">5</span>计算着色器：跳出图形管线的并行</h2>
+  <p>顶点/像素着色器被绑在图形管线的固定流程里。<strong>计算着色器</strong>（compute shader）则直接把 GPU 当成通用并行处理器：你自己定义线程组织（thread → group → grid），自由读写缓冲，不经过光栅化。UE 用它做大量"非画三角形"的活：</p>
+  <ul>
+    <li><strong>光照剔除</strong>：把光源分配进屏幕 3D 网格（Light Grid，见 0024）——天然是网格状并行任务。</li>
+    <li><strong>后处理</strong>：Bloom 下采样、TAA、直方图统计曝光。</li>
+    <li><strong>GPU 剔除 / GPU Scene</strong>：在 GPU 上算可见性、做实例化（0020）。</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="label">异步计算 · 为什么能"白嫖"性能</span>
+    <p>图形队列在跑某个 Pass 时，GPU 的计算单元常常没吃满（比如光栅化阶段卡在固定功能硬件上）。<strong>异步计算</strong>把计算着色器丢到一条<em>独立队列</em>，让它和图形队列<strong>同时</strong>跑，正好填进那些空闲的执行单元——总时间几乎不增加，等于免费做完。UE 4.26 的 <span class="term">RDG</span> 会<strong>自动</strong>调度异步计算并插好围栏（见 0016）。你现在就理解了 RDG 那个卖点的物理基础。</p>
+  </div>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">材质里一个 <code>if</code> 让同一 warp 的线程走向不同分支，最可能的结果是什么？</p>
+    <button class="q-opt">硬件只执行被选中的分支，因此显著省下另一分支的开销</button>
+    <button class="q-opt">该绘制立即报错，因为 warp 必须执行相同指令</button>
+    <button class="q-opt">两条分支都被执行、用掩码丢弃无关结果，成本约等于两者之和</button>
+    <div class="q-feedback" data-ok="对。warp 内分歧时两条路径都跑，靠掩码取舍，所以运行时分支常常不省反亏——这正是 UE 偏爱编译期 shader permutation 的原因。" data-no="再想：32 个线程锁步共享一个程序计数器，无法各走各路，于是两条都执行再用掩码取舍。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>GPU 几乎不靠大缓存，那它如何掩盖访问显存的几百周期延迟？这对"占用率"提出了什么要求？</summary>
+    <div class="answer">GPU 靠<strong>超额并行</strong>掩盖延迟：当一个 warp 因等显存而停顿，调度器立刻切换到另一个就绪 warp 继续算，等数据回来再切回。只要同时驻留的 warp 足够多，所有停顿都被别人的计算填满，执行单元不空转。前提是<strong>占用率</strong>要够——而占用率受每线程寄存器数和共享内存用量限制。所以一个寄存器爆多的臃肿着色器会压低占用率、削弱延迟隐藏能力，即使指令数不变也可能更慢。</div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>GPU 是<strong>吞吐优化</strong>的：不靠跑得快，靠"永不闲着"——用海量并行线程掩盖显存延迟。</li>
+      <li>调度单位是 <strong>warp/wavefront</strong>（32/64 线程锁步）。同 warp 内<strong>分支分歧</strong>会让两条路径都执行——运行时分支常常不省。</li>
+      <li><strong>占用率</strong>决定延迟能否被藏住；它被寄存器/共享内存压力限制——臃肿着色器会变慢。</li>
+      <li>显存<strong>带宽大但延迟高</strong>；访问要<strong>合并</strong>才吃得满带宽。</li>
+      <li><strong>计算着色器 + 异步计算</strong>能填满图形管线的空闲单元——这是 RDG 自动异步调度的物理基础。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Fabian Giesen《<a href="https://fgiesen.wordpress.com/2011/07/09/a-trip-through-the-graphics-pipeline-2011-index/">A trip through the Graphics Pipeline 2011</a>》第 2、8 部分（着色器执行与并行）。延伸：《Real-Time Rendering》第 3 章「The Graphics Processing Unit」对 SIMT、占用率、延迟隐藏讲得最系统。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："占用率到底怎么算？""coalesced 访问的具体地址规则？""异步计算什么情况下反而更慢？" 随时找我展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0001-gpu-hardware-pipeline.html"><span class="nav-dir">← 上一课</span>0001 · GPU 硬件管线</a>
+    <a class="next" href="0003-graphics-api-contract.html"><span class="nav-dir">下一课 →</span>0003 · 图形 API 的契约</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 0 基础 · 懂了硬件"为何快"，下一课看 CPU 用什么"语言"驱动它。</footer>
+  </article>
+</div>
+</body>
+</html>

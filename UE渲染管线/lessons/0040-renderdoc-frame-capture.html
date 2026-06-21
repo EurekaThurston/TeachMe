@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0040 · RenderDoc 抓帧调试：从事件到 GBuffer</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<script src="../assets/quiz.js"></script>
+</head>
+<body>
+<div class="page">
+  <article>
+  <nav class="topbar">
+    <span class="course">UE 4.26 渲染管线</span>
+    <span class="crumb">Part 8 · 调试与性能</span>
+    <span class="spacer"></span>
+    <a href="../index.html">课程地图</a>
+    <a href="../reference/glossary.html">术语表</a>
+  </nav>
+
+  <p class="lesson-kicker">Part 8 · 调试与性能 · Lesson 0040</p>
+  <h1>RenderDoc 抓帧调试：从事件到 GBuffer</h1>
+  <p class="subtitle">一次 RenderDoc 抓帧，就是把本课程 Part 4–7 讲过的所有 Pass 完整地铺在你面前。这节课教你如何把事件树里的每个节点对应回 UE 源码中的 Pass，如何读 GBuffer 验证材质数据，如何追到具体的 PSO 和着色器——是调试"为什么这个像素颜色不对"的实战闭环。</p>
+
+  <div class="meta-row">
+    <span><b>时长</b> ~25 分钟</span>
+    <span><b>前置</b> 0005（帧全景）、0021–0030（各 Pass 原理）、0015/0016（RDG）</span>
+    <span><b>产出</b> 能独立抓取并解读 UE 4.26 帧；能定位 GBuffer 通道、追踪 draw call 到着色器</span>
+  </div>
+
+  <p class="lead">你学完了整条管线：Depth Prepass、Base Pass、Light Grid、Shadow、Lighting、SSAO/SSR、Translucency、TAA、Tonemap……但在代码和文字之间，有一层需要"亲眼看"才能打通的理解——那正是 RenderDoc 给的。抓帧工具不是黑盒神器；它只是把 GPU 驱动执行的每一条命令记录下来，让你逐帧、逐 Pass、逐 draw call 地回放和检查。你已经知道"这些 Pass 是什么"，现在学的是"在工具里在哪里找到它们，以及怎么读"。</p>
+
+  <h2><span class="num">1</span>附加 UE 进程并抓帧</h2>
+
+  <p>UE 4.26 最干净的抓帧方式是让 RenderDoc 在启动时<strong>注入</strong>，而不是事后附加——这样确保交换链也被拦截。有三种路径：</p>
+
+  <table>
+    <thead><tr><th>方式</th><th>步骤</th><th>适用场景</th></tr></thead>
+    <tbody>
+      <tr><td><b>RenderDoc 直接启动</b></td><td>在 RenderDoc 的 "Launch Application" 填入 UE Editor 或 Standalone 可执行文件路径与命令行参数，然后 Launch。</td><td>最可靠，PIE 和独立包均可</td></tr>
+      <tr><td><b>UE 内置 RenderDoc 插件</b></td><td>在 Edit → Plugins 搜索并启用 "RenderDoc" 插件，重启编辑器。工具栏出现相机图标；点击抓取当前 PIE 帧。</td><td>迭代快，无需切窗口</td></tr>
+      <tr><td><b>事后附加（Attach）</b></td><td>UE 已在运行，在 RenderDoc 选 "Attach to Running Instance"。</td><td>可行但有时拦截不到交换链</td></tr>
+    </tbody>
+  </table>
+
+  <p>抓帧快捷键默认 <kbd>F12</kbd>（RenderDoc 窗口需在前台，或用插件图标）。抓到后 RenderDoc 会弹出捕获列表，双击打开。</p>
+
+  <div class="callout warn">
+    <span class="label">注意 · 启动参数</span>
+    <p>调试时建议在 UE 启动命令行加 <code>-d3ddebug</code>（开启 D3D Debug Layer，会在 RenderDoc 的 Errors &amp; Warnings 里显示更多校验信息）和 <code>-norhithread</code>（禁用 RHI 线程，命令提交变同步，事件顺序更直观）。生产性能测试时<strong>不要</strong>加这两个参数，它们会严重影响帧时间。</p>
+  </div>
+
+  <h2><span class="num">2</span>事件树：Pass 名从哪里来</h2>
+
+  <p>打开捕获文件，左侧是 <strong>Event Browser</strong>（事件浏览器）。你会看到一棵树，节点名形如 <code>BeginPass</code>、<code>ShadowDepths</code>、<code>BasePass</code>、<code>Lights</code>……这些名字完全来自 UE 源码里的作用域标记宏，与 Pass 实现一一对应。</p>
+
+  <div class="callout knowledge">
+    <span class="label">原理 · SCOPED_DRAW_EVENT 与 RDG_EVENT_SCOPE</span>
+    <p>UE 4.26 中有两套打标签的机制。</p>
+    <p><strong>非 RDG Pass</strong> 用 <code>SCOPED_DRAW_EVENT(RHICmdList, SomePassName)</code>（定义在 <span class="file">Engine/Source/Runtime/RenderCore/Public/DrawDebugInfo.h</span>）。它在构造时向命令列表插入一条 <code>BeginEvent</code>、析构时插入 <code>EndEvent</code>；D3D12 RHI 把它翻译成 <code>PIXBeginEvent</code>/<code>PIXEndEvent</code>，RenderDoc 截到这对标记就生成对应的树节点。</p>
+    <p><strong>RDG Pass</strong> 用 <code>RDG_EVENT_SCOPE(GraphBuilder, "SomePassName")</code>（定义在 <span class="file">Engine/Source/Runtime/RenderCore/Public/RenderGraphUtils.h</span>）。RDG 编译执行时，Pass 执行 lambda 里会自动插入同样的 BeginEvent/EndEvent，所以 RDG Pass 的名字也出现在事件树里。</p>
+    <p>结论：<strong>事件树节点名 = UE 源码里 <code>SCOPED_DRAW_EVENT</code>/<code>RDG_EVENT_SCOPE</code> 的字符串参数</strong>。你在源码里 grep 节点名，就能精确找到对应代码。</p>
+  </div>
+
+  <p>以下是典型帧里你会看到的顶级节点，以及它们对应的课程章节：</p>
+
+  <table>
+    <thead><tr><th>事件树节点</th><th>对应 UE Pass</th><th>本课程章节</th></tr></thead>
+    <tbody>
+      <tr><td><code>PrePass</code> / <code>DepthPrepass</code></td><td>Depth Prepass，只写深度</td><td>0022</td></tr>
+      <tr><td><code>BasePass</code></td><td>Base Pass，写 GBuffer（MRT）</td><td>0023</td></tr>
+      <tr><td><code>ShadowDepths</code></td><td>CSM + 点/聚光投影阴影深度图</td><td>0026</td></tr>
+      <tr><td><code>Lights</code> / <code>DirectLighting</code></td><td>延迟光照，读 GBuffer 叠光照</td><td>0025</td></tr>
+      <tr><td><code>AmbientOcclusion</code></td><td>SSAO</td><td>0027</td></tr>
+      <tr><td><code>Reflections</code></td><td>SSR / 反射捕获 IBL</td><td>0027 / 0028</td></tr>
+      <tr><td><code>Translucency</code></td><td>半透明前向渲染</td><td>0029</td></tr>
+      <tr><td><code>PostProcessing</code></td><td>TAA、Bloom、Eye Adaptation、Tonemap</td><td>0031–0035</td></tr>
+      <tr><td><code>ScreenSpaceReflections</code></td><td>SSR</td><td>0027</td></tr>
+      <tr><td><code>LightCompositionTasks</code></td><td>次表面散射后处理合成等</td><td>0023</td></tr>
+    </tbody>
+  </table>
+
+  <p class="marginnote">UE 4.26 中部分 Pass 仍处于从传统 <code>SCOPED_DRAW_EVENT</code> 向 RDG <code>RDG_EVENT_SCOPE</code> 迁移的中间态。两种宏在事件树里看起来完全一样，区别在源码层面。</p>
+
+  <h2><span class="num">3</span>检查 GBuffer：验证材质数据</h2>
+
+  <p>在事件树里展开 <code>BasePass</code>，找到任意一个 draw call 并选中，切换到 <strong>Texture Viewer</strong>（纹理查看器）面板。此时右上角 "Outputs" 标签会显示当前 draw 绑定的多个 <span class="term">渲染目标</span>——这正是 GBuffer 的各张 RT。</p>
+
+  <p>UE 4.26 默认 GBuffer 布局（见 0021）在抓帧里映射如下：</p>
+
+  <table>
+    <thead><tr><th>RT 槽位</th><th>格式（典型）</th><th>存储内容</th><th>视觉特征</th></tr></thead>
+    <tbody>
+      <tr><td><code>GBufferA</code> / SV_Target0</td><td>R8G8B8A8</td><td>世界法线（RGB，编码）+ Shading Model ID（A）</td><td>彩色法线图，背景区域全黑</td></tr>
+      <tr><td><code>GBufferB</code> / SV_Target1</td><td>R8G8B8A8</td><td>金属度（R）、高光度（G）、粗糙度（B）、各向异性/特殊（A）</td><td>通道分离看最清晰</td></tr>
+      <tr><td><code>GBufferC</code> / SV_Target2</td><td>R8G8B8A8 或 B8G8R8A8</td><td>基础色（Base Color）RGB + AO（A）</td><td>接近漫反射颜色的外观</td></tr>
+      <tr><td><code>GBufferD</code> / SV_Target3</td><td>R8G8B8A8</td><td>自定义数据（毛发、次表面参数等）；不用时为 0</td><td>通常较暗/均匀</td></tr>
+      <tr><td><code>GBufferE</code> / SV_Target4</td><td>R8G8B8A8</td><td>预计算阴影系数（Precomputed Shadow Mask）</td><td>白/黑区域明显</td></tr>
+      <tr><td>Depth Buffer</td><td>D32 或 D24S8</td><td>场景深度（Prepass 已写入）</td><td>越远越亮（取决于视角）</td></tr>
+      <tr><td>Velocity / Motion Buffer</td><td>R16G16</td><td>屏幕空间运动向量（TAA 用）</td><td>运动区域有颜色，静止为黑</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · 为什么 BasePass 结束时看深度已经有内容</span>
+    <p>因为 Depth Prepass（0022）已经在 BasePass 之前把深度缓冲写满了。如果你选中 BasePass 第一个 draw 之前的帧状态，就会看到深度图里的完整场景；BasePass 的每个 draw 利用 Early-Z 跳过了被遮挡的片元——只向 GBuffer RT 写入通过深度测试的可见像素。这正是 0022 讲的"Prepass 的收益在 BasePass 兑现"。</p>
+  </div>
+
+  <p>在纹理查看器里，你可以：</p>
+  <ul>
+    <li>点击 "R/G/B/A" 按钮单独查看某个通道——这是检查粗糙度、金属度最直观的方式。</li>
+    <li>右键选 "Save Texture" 导出为图片——用于 bug 截图留存。</li>
+    <li>调整 "Range" 滑杆——深度图通常需要收窄范围才能看出细节。</li>
+    <li>在 "Previous" / "After" 模式下对比 draw 执行前后 RT 变化，精确确认是哪个 draw 写入了特定区域。</li>
+  </ul>
+
+  <h2><span class="num">4</span>选中一个 draw call：读 Pipeline State</h2>
+
+  <p>在事件树里选中任意一个 draw call，切换到 <strong>Pipeline State</strong> 面板。这个面板把当次绘制的完整 <span class="term">PSO</span> 展示出来，分几个子页：</p>
+
+  <ul>
+    <li><strong>IA（Input Assembler）</strong>：顶点缓冲绑定、顶点步长、索引缓冲。可以验证网格的顶点布局（位置、法线、UV 各在哪个 slot）。</li>
+    <li><strong>VS / PS</strong>：当前绑定的顶点/像素着色器。点击着色器名旁边的"View"按钮，可直接看反编译后的 DXBC/DXIL，也可看 HLSL 反汇编。</li>
+    <li><strong>RS（Rasterizer）</strong>：Cull Mode、Fill Mode、深度偏差（ShadowDepth Pass 会有非零 depth bias）。</li>
+    <li><strong>OM（Output Merger）</strong>：绑定的 RT 数量和格式、Blend State、Depth-Stencil State。BasePass 的 OM 应显示 4–6 个活跃 RT，ShadowDepth Pass 的 OM 只有一个深度 RT（无颜色 RT）。</li>
+    <li><strong>资源绑定（Resources）</strong>：Texture2D / Buffer / SamplerState 的完整列表。可以验证材质纹理是否正确绑定、是否错误引用了前一帧残留资源。</li>
+  </ul>
+
+  <div class="callout knowledge">
+    <span class="label">源码锚点 · UE 的着色器与 RenderDoc 的对应</span>
+    <p>UE 的着色器经由虚拟着色器路径系统（<code>GetShaderFilename()</code>，<span class="file">Shaders/Private/</span> 目录下 <code>.usf</code> 文件）编译成 DXBC。RenderDoc 显示的是 DXBC 反汇编或 DXIL，你无法直接看到 <code>.usf</code> 源码。但可以：① 在 UE Editor 里用 <code>r.ShaderDevelopmentMode 1</code> + <code>r.DumpShaderDebugInfo 1</code> 让 UE 把编译后着色器及中间 HLSL dump 到磁盘（路径形如 <code>Saved/ShaderDebugInfo/</code>）；② 用 RenderDoc 里的 "Edit Shader" 功能测试 HLSL 修改，但这仅是调试用途，不影响引擎持久状态。此外，<code>r.BasePassForceFullyRoughSurface 1</code> 可以强制所有材质粗糙度=1（镜面为0），快速确认高光异常是否来自材质数据。</p>
+  </div>
+
+  <h2><span class="num">5</span>顶点输入检查：网格数据验证</h2>
+
+  <p>选中 draw call，点击 Pipeline State → IA 区域的 "Mesh View" 按钮（或 Mesh Viewer 面板），RenderDoc 会展示原始顶点数据和光栅化后的三角形预览。典型用途：</p>
+
+  <ul>
+    <li>验证<strong>蒙皮网格</strong>骨骼变换后的顶点位置是否正确（异常的 skinning 会产生顶点飞出/穿模）。</li>
+    <li>检查<strong>法线切线</strong>方向——法线朝向错误会直接导致 GBuffer 法线通道数据错乱，进而影响光照。</li>
+    <li>核实<strong>顶点工厂</strong>（Vertex Factory，见 0018）的输出：实例化绘制时，每个实例的位置/变换是否通过 <code>GPUScene</code>（见 0020）正确填充。在 IA 面板展开 Vertex Buffer 列表，实例数据通常在单独的 slot 里（步长为 per-instance）。</li>
+  </ul>
+
+  <h2><span class="num">6</span>追到具体着色器：HLSL 反汇编阅读要点</h2>
+
+  <p>在 Pipeline State 的 PS 区域点击 "View"，RenderDoc 显示反汇编 HLSL（DXBC 阶段）。阅读技巧：</p>
+
+  <ul>
+    <li><strong>寄存器映射</strong>：常量缓冲 <code>cb0</code>、<code>cb1</code>… 对应 UE 里的 <code>FViewUniformParameters</code>（<code>cb0</code>）、逐图元数据等。纹理 <code>t0</code>、<code>t1</code>… 对应 HLSL 的 <code>Texture2D</code> 绑定，在 Resources 面板里可以看到它们具体绑定了哪张贴图。</li>
+    <li><strong>sample 指令</strong>：<code>sample_indexable</code> / <code>sample_b</code> 是纹理采样。如果你看到大量 <code>sample</code> 指令，说明该着色器纹理访问多——这往往是带宽瓶颈的信号。</li>
+    <li><strong>数学密度</strong>：大量 <code>mad</code>（Multiply-Add）指令说明着色器数学运算多，可能是 ALU-bound。</li>
+    <li>UE 的 <strong>Ubershader</strong> 机制在 4.26 里通过 <code>SF_</code>（Shader Feature）宏静态分支，最终编译出的 DXBC 不含 dynamic branch，只有 flat 指令流——反汇编看起来没有显式 <code>if</code> 语句，而是大量预展开的 MAD/条件 MOV。</li>
+  </ul>
+
+  <div class="callout insight">
+    <span class="label">关键洞见 · ShadowDepth Pass 的 PS 为空</span>
+    <p>在事件树里找到 <code>ShadowDepths</code>，选中其中一个 draw。切到 Pipeline State → PS 区域，你会发现 PS 处于 "Disabled" 或绑定了一个极简着色器（仅 <code>return</code>）。这正是 0026 讲的原理：纯深度通道不需要像素着色输出，只靠 OM 的深度写入——硬件用 Early-Z 跳过 PS 完全合法，大幅降低阴影图生成的 GPU 开销。</p>
+  </div>
+
+  <h2><span class="num">7</span>实战 TA 调试流程</h2>
+
+  <p>把上面的工具能力串成一个面向"这个像素颜色为什么不对"的诊断流程：</p>
+
+  <div class="pipeline">
+    <div class="stage"><span class="s-name">① 抓帧</span><span class="s-sub">PIE + 插件或 RenderDoc 直接启动</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">② 定位 Pass</span><span class="s-sub">事件树 → BasePass / Lights / Post</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">③ 读 GBuffer</span><span class="s-sub">纹理查看器逐通道验证材质数据</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">④ 找 draw call</span><span class="s-sub">在问题区域 pick → 选中对应 draw</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">⑤ 查 PSO</span><span class="s-sub">验证 RT 绑定、Blend State、着色器</span></div>
+    <span class="flow-arrow">›</span>
+    <div class="stage"><span class="s-name">⑥ 读着色器</span><span class="s-sub">DXBC 反汇编 + 资源绑定定位错误贴图/参数</span></div>
+  </div>
+
+  <figure>
+    <figcaption>TA 调试的六步闭环。每一步都与本课程的特定章节对应：步骤 ② 对应 0005/0021-0030，步骤 ③ 对应 0021，步骤 ⑤ 对应 0003（PSO 概念）和 0001（OM 阶段），步骤 ⑥ 对应各 Pass 的 HLSL 实现。</figcaption>
+  </figure>
+
+  <p>常见 bug 与工具里的症状：</p>
+
+  <table>
+    <thead><tr><th>症状</th><th>在 RenderDoc 里找哪里</th><th>根因方向</th></tr></thead>
+    <tbody>
+      <tr><td>某物体光照全黑</td><td>GBufferA 法线全零 / 法线朝向背面</td><td>法线贴图格式错误、Vertex Factory 切线生成问题</td></tr>
+      <tr><td>材质粗糙度异常光亮</td><td>GBufferB.B 通道接近 0</td><td>粗糙度纹理通道接反（R 通道 vs B 通道）或纹理未连接</td></tr>
+      <tr><td>阴影漏光 / 自遮挡</td><td>ShadowDepths → RS → Depth Bias 值</td><td>Shadow Bias 设置不合适（见 0026）</td></tr>
+      <tr><td>半透明物体不透明</td><td>Translucency Pass → OM → Blend State</td><td>材质 Blend Mode 设置错误或 PSO 未开混合</td></tr>
+      <tr><td>TAA 拖影过重</td><td>Velocity Buffer 检查运动向量</td><td>动态物体未输出正确的 Velocity（见 0031）</td></tr>
+      <tr><td>某 Pass 的 draw call 数量异常多</td><td>展开 Pass 计数子节点数</td><td>合批未生效、GPU Scene 禁用（见 0020）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="label">注意 · 4.26 与更新版本的差异</span>
+    <p>本课所有 Pass 名称和 GBuffer 布局严格对应 UE 4.26。若你用的是编辑器构建而非 Shipping，事件名会更丰富（Debug builds 下 <code>SCOPED_DRAW_EVENT</code> 始终激活；Shipping 下部分标记被编译掉）。如果在 UE5 里打开同样的工作流，会看到 Nanite / Lumen / VSM 等新节点，本课范围内不讨论。</p>
+  </div>
+
+  <div class="quiz" data-answer="2">
+    <span class="q-tag">检索练习</span>
+    <p class="q-text">在 RenderDoc 事件树里，UE 的 Pass 名称（如"BasePass"、"ShadowDepths"）来自于源码中的什么机制？</p>
+    <button class="q-opt">来自 UE 在 CPU 端构建 <code>FMeshDrawCommand</code> 时写入的名称</button>
+    <button class="q-opt">来自着色器文件（.usf）顶部的注释字符串</button>
+    <button class="q-opt">来自 <code>SCOPED_DRAW_EVENT</code> / <code>RDG_EVENT_SCOPE</code> 宏插入命令列表的 BeginEvent/EndEvent 标记</button>
+    <div class="q-feedback"
+      data-ok="对。这两个宏在 RHI 命令流里插入 PIXBeginEvent/PIXEndEvent 等 GPU 注解，RenderDoc 把它们解析成事件树层级。搜索宏的字符串参数就能在源码里精确定位 Pass。"
+      data-no="再想：RenderDoc 能看到的名称，必然是在命令录制时写入命令流的。负责这件事的是 SCOPED_DRAW_EVENT 和 RDG_EVENT_SCOPE——它们在构造/析构时分别插入 BeginEvent / EndEvent。"></div>
+  </div>
+
+  <details class="recall">
+    <summary>不看表，依次说出 UE 4.26 GBuffer 的 A/B/C 通道各存什么，以及为什么 BasePass 开始前深度缓冲就已经有内容了。</summary>
+    <div class="answer">
+      <p><strong>GBufferA</strong>（SV_Target0）：世界空间法线（RGB，编码到 [0,1]）+ Shading Model ID（Alpha）。</p>
+      <p><strong>GBufferB</strong>（SV_Target1）：金属度（R）、高光度 Specular（G）、粗糙度（B）、自定义/次表面数据（A）。</p>
+      <p><strong>GBufferC</strong>（SV_Target2）：基础色 Base Color（RGB）+ AO（A）。</p>
+      <p>深度缓冲在 BasePass 开始前就有内容，是因为 <strong>Depth Prepass</strong>（0022）先于 BasePass 运行，用极简着色器对所有不透明物体写了一遍深度——这是 Early-Z 策略，让 BasePass 的材质着色器只在最前面的可见片元上跑，消除 overdraw。</p>
+    </div>
+  </details>
+
+  <div class="takeaways">
+    <h3>带走这几条</h3>
+    <ul>
+      <li>RenderDoc 事件树名称 = UE 源码中 <code>SCOPED_DRAW_EVENT</code> / <code>RDG_EVENT_SCOPE</code> 的字符串参数，可直接 grep 到源码位置。</li>
+      <li>事件树里的节点层级与本课程 Part 5–6 的 Pass 顺序一一对应：PrePass → BasePass → ShadowDepths → Lights → SSAO/SSR → Translucency → PostProcessing。</li>
+      <li>纹理查看器里可逐通道读取 GBuffer RT，验证法线/粗糙度/基础色是否从材质正确写入。</li>
+      <li>Pipeline State 面板暴露完整 <span class="term">PSO</span>：RT 绑定、Blend State、Depth-Stencil、着色器反汇编——是追踪"为什么输出不对"的直接证据。</li>
+      <li>ShadowDepth Pass 的 PS 为空（或 disabled）是设计如此，不是 bug——深度通道不需要颜色输出。</li>
+    </ul>
+  </div>
+
+  <div class="callout source">
+    <span class="label">主源 · 先读这个</span>
+    <p>Kostas Anagnostou，<a href="https://interplayoflight.wordpress.com/2017/10/25/how-unreal-renders-a-frame/">《How Unreal Renders a Frame》part 1–3</a>——文章本身就是用 RenderDoc 抓帧逐 Pass 还原 UE 一帧的产物，与本节课互为补充。配套：<a href="https://unrealartoptimization.github.io/book/profiling/passes/">Unreal Art Optimization —— "Unreal's Rendering Passes"</a>（TA 视角的 Pass 解读，包含 RenderDoc 截图）；<a href="https://techartaid.com/posts/ue4-render-passes/">Tech Art Aid —— "Understanding UE4 Rendering Passes"</a>。</p>
+  </div>
+
+  <div class="ask-teacher">
+    <b>卡住了就问我。</b> 比如："RenderDoc 里找不到 BasePass 节点——可能是什么原因？""GBufferB 的 Alpha 通道显示的值是什么意思？""Velocity Buffer 为零是正常的吗？" 我是你的老师，随时展开。
+  </div>
+
+  <nav class="lesson-nav">
+    <a class="prev" href="0039-gpu-timeline-scanout.html"><span class="nav-dir">← 上一课</span>0039 · GPU 时间线与扫描输出</a>
+    <a class="next" href="0041-profilegpu-stat-gpu.html"><span class="nav-dir">下一课 →</span>0041 · ProfileGPU 与 GPU 时间统计</a>
+  </nav>
+
+  <footer class="lesson-foot">UE 4.26 渲染管线 · Part 8 调试与性能 · 工具与管线的第一次真正握手——把课程里的每个 Pass 名落到可操作的工具坐标系上。</footer>
+  </article>
+</div>
+</body>
+</html>

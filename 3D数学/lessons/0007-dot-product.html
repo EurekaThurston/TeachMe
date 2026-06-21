@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 课 · 点积 dot:同向程度与光照</title>
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-kicker">3D 数学 for VFX · 第 7 课 · 模块 1 向量</div>
+<h1>点积 dot:一个乘加,读出「多同向」</h1>
+<p class="subtitle">点积是整个 shader 世界最常用的运算,没有之一。兰伯特光照、菲涅尔、阴影、遮罩——核心都是它。这一课让你看到:<strong>dot 就是在量「两个方向有多同向」</strong>。</p>
+
+<div class="callout callout-key">
+  <span class="label">本课目标(一个收获)</span>
+  你能同时握住点积的两副面孔:<strong>代数</strong> <code>a·b = ax·bx + ay·by + az·bz</code>(逐项乘再相加,结果是一个<strong>标量</strong>);<strong>几何</strong> <code>a·b = |a||b|cosθ</code>。并会用符号读关系:<strong>>0 同侧、=0 垂直、<0 反向</strong>;单位向量时 a·b 直接就是 cos 夹角。
+</div>
+
+<h2>两个公式,同一件事</h2>
+<p>
+点积有两种算法,结果一模一样,但各有用处:
+</p>
+<div class="formula">代数:<span class="vec">a</span>·<span class="vec">b</span> = ax·bx + ay·by + az·bz　（好算,GPU 一条指令）</div>
+<div class="formula">几何:<span class="vec">a</span>·<span class="vec">b</span> = |a| |b| cos θ　（好懂,θ 是两向量夹角）</div>
+<p>
+代数式告诉你<strong>怎么算</strong>(几个乘加),几何式告诉你<strong>它意味着什么</strong>(和夹角的 cos 成正比)。把两式连起来,就能<strong>反求夹角</strong>:<code>cosθ = a·b / (|a||b|)</code>。如果 a、b 都已归一化(长度 1),那干脆 <code>a·b = cosθ</code>,一步到位。
+</p>
+
+<h2>符号就是关系:同向 / 垂直 / 反向</h2>
+<p>
+点积最实用的地方是<strong>看符号</strong>。因为 |a||b| 总是正的,a·b 的正负完全由 cosθ 决定:
+</p>
+<table class="tbl">
+  <tr><th>a·b</th><th>cosθ</th><th>夹角</th><th>几何含义</th></tr>
+  <tr><td>&gt; 0</td><td>正</td><td>&lt; 90°</td><td>大致<strong>同向</strong>(同一侧)</td></tr>
+  <tr><td>= 0</td><td>0</td><td>= 90°</td><td>恰好<strong>垂直</strong></td></tr>
+  <tr><td>&lt; 0</td><td>负</td><td>&gt; 90°</td><td>大致<strong>反向</strong>(对侧)</td></tr>
+</table>
+<p>拖动下面的 a、b,盯住 <code>a·b</code> 的数值和夹角:让它们越靠拢,dot 越大;转到垂直,dot 归零;转到对着干,dot 变负。橙色虚线是 a 在 b 上的<strong>投影</strong>——点积的另一种几何解读:「a 在 b 方向上有多长的影子」×|b|。</p>
+<div class="lab">
+  <canvas id="play7"></canvas>
+  <div class="readout" id="read7"></div>
+</div>
+
+<h2>杀手级应用:N·L 兰伯特光照</h2>
+<p>
+一个表面被光照得多亮,取决于它<strong>多正对光源</strong>。正对(法线指着光)最亮,侧着变暗,背着光全黑。这正是「两个方向多同向」——点积量身定做的活:
+</p>
+<pre><code><span class="kw">float3</span> N = <span class="fn">normalize</span>(worldNormal); <span class="cmt">// 表面朝向(单位向量)</span>
+<span class="kw">float3</span> L = <span class="fn">normalize</span>(toLight);     <span class="cmt">// 指向光源的方向(单位向量)</span>
+<span class="kw">float</span> diffuse = <span class="fn">saturate</span>(<span class="fn">dot</span>(N, L)); <span class="cmt">// =cosθ,正对=1 侧面=0 背光被 saturate 夹成 0</span>
+</code></pre>
+<p>
+<code>dot(N,L)</code> 因为两者是单位向量,直接等于 cos(夹角):正对时 1(全亮)、90° 时 0、背光时负数。最后 <code>saturate</code> 把负的背光夹成 0(不可能负亮度)。这一行就是<strong>兰伯特漫反射</strong>,实时渲染最基础的光照模型——你现在能从头解释它了。
+</p>
+<div class="callout callout-hlsl">
+  <span class="label">点积的 TA 工具箱</span>
+  <ul style="margin:0.3rem 0 0">
+    <li><strong>菲涅尔边缘光</strong>:<code>1 - saturate(dot(N, V))</code>(V=看向相机的方向)。正对相机→dot≈1→菲涅尔≈0;边缘→dot≈0→菲涅尔≈1,于是边缘发亮。</li>
+    <li><strong>朝向遮罩</strong>:只想让「朝上的面」长草/积雪?<code>saturate(dot(N, float3(0,0,1)))</code> 当遮罩。</li>
+    <li><strong>|a|² = dot(a, a)</strong>:平方长度,比远近省掉开方(上一课提过)。</li>
+    <li><strong>投影</strong>:a 在单位向量 b 上的投影长度 = <code>dot(a, b)</code>。分解速度到某个轴常用。</li>
+  </ul>
+</div>
+
+<h2>常见误区</h2>
+<ul>
+  <li><strong>以为点积结果是向量。</strong> 点积出来是<strong>一个标量(数)</strong>,不是向量。要垂直向量请用叉积(下一课)。</li>
+  <li><strong>没归一化就把 dot 当 cosθ。</strong> 只有单位向量时 a·b 才等于 cosθ。法线/光向先 normalize,否则光照亮度被长度污染。</li>
+  <li><strong>忘了 saturate 背光。</strong> 背光时 dot 是负数,直接当亮度会出现「负光」诡异结果。漫反射要 saturate(dot) 夹到 0。</li>
+  <li><strong>菲涅尔方向搞反。</strong> 菲涅尔要的是「边缘亮」,用 <code>1 - dot(N,V)</code>;直接 <code>dot(N,V)</code> 是「正面亮」,正好相反。</li>
+</ul>
+
+<h2>练一练 · 立刻反馈</h2>
+<div class="quiz" id="quiz7"></div>
+
+<div class="primary-source">
+  <span class="label">主推资源(看一个就好)</span>
+  <a href="https://www.youtube.com/watch?v=LyGKycYT2v0" target="_blank">3Blue1Brown — Dot products and duality(Essence of Linear Algebra 第 9 章)</a>
+  —— 把「为什么逐项乘加会等于 |a||b|cosθ」用投影讲透。看完点积对你不再是黑箱公式,而是一个有画面的操作。
+</div>
+
+<div class="ask-teacher">
+  <strong>有疑问就问我。</strong> 想让我把你材质里某个 dot 节点翻译成它在量「谁和谁多同向」?或者手把手搭一个菲涅尔 / 朝上积雪遮罩?直接问。
+</div>
+
+<div class="lesson-footer">
+  <p>下一课预告:<strong>叉积 cross</strong>——点积给标量,叉积给一个<strong>同时垂直于两者的向量</strong>。算三角面法线、搭切线空间、判左右手,全靠它。模块 1 的收尾。</p>
+  <p>总纲:<a href="../SYLLABUS.html">课程总纲</a> · <a href="../reference/glossary.html">术语表</a> · <a href="../RESOURCES.md">资源</a></p>
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script src="../assets/math-tools.js"></script>
+<script>
+VecPlayground("play7", {
+  readoutId: "read7",
+  show: ["dot", "angle", "proj"],
+  vectors: [
+    { name: "a", x: 4, y: 1, color: "#c0392b", draggable: true },
+    { name: "b", x: 2, y: 3, color: "#2e7d32", draggable: true }
+  ]
+});
+renderQuiz("quiz7", [
+  {
+    q: "点积 a·b 的运算结果是?",
+    options: ["一个标量(数)", "一个垂直向量", "一个矩阵", "一个单位向量"],
+    correct: 0,
+    why: "点积逐项乘加,结果是一个数(标量)。要得到垂直向量得用叉积。"
+  },
+  {
+    q: "几何公式 a·b = |a||b|cosθ 里,当 a·b = 0 时两向量?",
+    options: ["互相垂直", "完全同向", "完全反向", "长度都为 0"],
+    correct: 0,
+    why: "|a||b| 为正,a·b=0 只能是 cosθ=0,即夹角 90°,两向量垂直。"
+  },
+  {
+    q: "什么时候 a·b 直接等于 cosθ?",
+    options: ["a 和 b 都是单位向量时", "任何时候都成立", "a、b 垂直时", "a、b 平行时"],
+    correct: 0,
+    why: "a·b=|a||b|cosθ。只有 |a|=|b|=1 时它才纯粹等于 cosθ。所以光照要先归一化。"
+  },
+  {
+    q: "兰伯特漫反射 saturate(dot(N,L)) 里,saturate 的作用是?",
+    options: ["把背光的负值夹成 0", "让正面更亮", "归一化法线", "求两点距离"],
+    correct: 0,
+    why: "背光时 dot 为负,亮度不能为负。saturate 把 [负,1] 夹进 [0,1],背光面变全黑。"
+  },
+  {
+    q: "想做「边缘发亮」的菲涅尔,正确写法是?",
+    options: ["1 − saturate(dot(N, V))", "saturate(dot(N, V))", "dot(N, L) 直接用", "length(N − V)"],
+    correct: 0,
+    why: "正对相机 dot(N,V)≈1,边缘≈0。要边缘亮就取 1−dot:正面≈0、边缘≈1。直接 dot 是正面亮,正好反。"
+  },
+  {
+    q: "只让「朝上的表面」长草,最简洁的遮罩是?",
+    options: ["saturate(dot(N, float3(0,0,1)))", "length(N)", "dot(N, N)", "normalize(N)"],
+    correct: 0,
+    why: "N 与世界上方向 (0,0,1) 的点积=表面朝上的程度:朝上→1,侧面→0,朝下→负被夹成 0。正好当朝向遮罩。"
+  }
+]);
+</script>
+</body>
+</html>
